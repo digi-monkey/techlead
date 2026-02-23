@@ -81,15 +81,20 @@ export function resolveDefaults() {
 /**
  * Minimal argv parser.
  *
+ * @param {string[]} argv         - argument list (process.argv.slice(2))
+ * @param {Set<string>} boolFlags - keys that are boolean flags and take no value
+ *
  * Rules:
- * - First token (argv[0]) is the sub-command.
+ * - First token (argv[0]) is the sub-command, unless it starts with "--" in
+ *   which case command is empty and parsing begins from index 0.
  * - `--key value`  → options["key"] = "value"
  * - `--key=value`  → options["key"] = "value"
- * - `--flag`       → flags.add("flag")  (when next token starts with "--" or is absent)
+ * - `--flag`       → flags.add("flag")  only when "flag" ∈ boolFlags
+ * - `--key` with no value and key ∉ boolFlags → throws (prevents silent regression)
  *
  * No positional arguments beyond the sub-command are supported.
  */
-export function parseArgv(argv) {
+export function parseArgv(argv, boolFlags = new Set(["json", "help"])) {
   // If the first token looks like a flag (starts with "--"), leave command
   // empty and start parsing from index 0 so that e.g. `--help` is handled
   // as a boolean flag rather than silently becoming the command name.
@@ -121,13 +126,26 @@ export function parseArgv(argv) {
     }
 
     const key = token.slice(2);
-    const next = argv[i + 1];
 
-    // Boolean flag: no next token, or next token is itself a flag.
-    if (!next || next.startsWith("--")) {
+    if (boolFlags.has(key)) {
+      // Guard: if the next token looks like a value (does not start with "--"),
+      // the caller likely wrote `--flag value` expecting a key=value pair against
+      // a boolean flag.  Silently skipping the value causes a hard-to-debug
+      // regression where the value is dropped.  Reject it explicitly instead.
+      const nextAfterBool = argv[i + 1];
+      if (nextAfterBool !== undefined && !nextAfterBool.startsWith("--")) {
+        throw new Error(
+          `--${key} is a boolean flag and takes no value; got unexpected token '${nextAfterBool}'. Use --${key} alone or remove the trailing token.`
+        );
+      }
       parsed.flags.add(key);
       i += 1;
       continue;
+    }
+
+    const next = argv[i + 1];
+    if (!next || next.startsWith("--")) {
+      throw new Error(`Missing value for --${key}`);
     }
 
     parsed.options[key] = next;

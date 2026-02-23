@@ -414,7 +414,7 @@ async function spawnTracks(parsed) {
 }
 
 async function main() {
-  const parsed = parseArgv(process.argv.slice(2));
+  const parsed = parseArgv(process.argv.slice(2), new Set(["json", "help", "dry-run", "skip-state-update"]));
   if (!parsed.command || parsed.flags.has("help") || parsed.command === "help") {
     printHelp();
     return 0;

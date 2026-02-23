@@ -520,7 +520,7 @@ function printSummary(state) {
 
 function main() {
   const argv = process.argv.slice(2);
-  const parsed = parseArgv(argv);
+  const parsed = parseArgv(argv, new Set(["json", "help", "reset-fail-count"]));
 
   if (!parsed.command || parsed.flags.has("help") || parsed.command === "help") {
     printHelp();
