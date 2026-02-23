@@ -1,7 +1,7 @@
 {
   "version": 1,
   "projectPrefix": "AP",
-  "updatedAt": "2026-02-23T19:23:49.511Z",
+  "updatedAt": "2026-02-23T19:31:34.947Z",
   "tasks": [
     {
       "id": "AP-001",
@@ -220,6 +220,64 @@
       "failCount": 0,
       "reason": "",
       "verification": "All gates passed: 41/41 unit tests, 18/18 CLI flow MUSTs, validate:distribution. Init smoke test confirmed scripts/ correctly copied to target project. Dry-run path verified. Mirror drift check removed. templates/scripts/ deleted.",
+      "notes": "",
+      "review": {
+        "implementer": "",
+        "security": "",
+        "qa": "",
+        "domain": "",
+        "architect": ""
+      },
+      "testing": {
+        "flow": "",
+        "mustPassRate": "",
+        "shouldPassRate": ""
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "AP-009",
+      "title": "Add Strategic Decomposition phase to protocol for high-level goals",
+      "priority": "P1",
+      "state": "Done",
+      "owner": "",
+      "source": "human direction",
+      "createdAt": "2026-02-23",
+      "startedAt": "2026-02-23T19:27:41.026Z",
+      "completedAt": "2026-02-23T19:31:31.618Z",
+      "lastFailedAt": "",
+      "failCount": 0,
+      "reason": "",
+      "verification": "Strategic Decomposition section added to both protocol files. Specifies strategic vs tactical detection, parallel dimension-scan with independence constraint, structured audit report format, convergence step with run-journal schema, and transition back to tactical loop. Concurrency follows existing Concurrency Contract. Guards are bounded. npm run check:all and npm run validate:distribution pass.",
+      "notes": "",
+      "review": {
+        "implementer": "",
+        "security": "",
+        "qa": "",
+        "domain": "",
+        "architect": ""
+      },
+      "testing": {
+        "flow": "",
+        "mustPassRate": "",
+        "shouldPassRate": ""
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "AP-010",
+      "title": "Add mandatory post-sprint independent adversarial review phase to protocol",
+      "priority": "P1",
+      "state": "Done",
+      "owner": "",
+      "source": "human direction",
+      "createdAt": "2026-02-23",
+      "startedAt": "2026-02-23T19:27:41.095Z",
+      "completedAt": "2026-02-23T19:31:34.946Z",
+      "lastFailedAt": "",
+      "failCount": 0,
+      "reason": "",
+      "verification": "Sprint Completion Gate section added to both protocol files. Specifies adversarial reviewer setup (fresh context, diff-only), manager-assigned specific perspective grounded in what changed, structured finding report format, CRITICAL-blocks / WARNING-requires-disposition enforcement, and guard with control-downgrade semantics (not just disclosure) when fresh context is unavailable. npm run check:all and npm run validate:distribution pass.",
       "notes": "",
       "review": {
         "implementer": "",

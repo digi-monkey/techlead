@@ -91,6 +91,75 @@ Resolve next task via CLI
 
 ---
 
+## Strategic Decomposition
+
+When the user's goal is high-level or vague — e.g. "bring this to commercial quality", "make this production-ready", "get this ready to ship" — a direct jump to tactical tasks is premature. The goal must first be decomposed into concrete dimensions before the normal sprint loop begins.
+
+### Detecting Strategic vs Tactical Goals
+
+A goal is **strategic** when it:
+- Names a desired state rather than a specific change (e.g. "production-ready" vs "add rate limiting to the auth endpoint")
+- Spans multiple independent quality axes simultaneously
+- Cannot be expressed as a single bounded task without loss of scope
+
+A goal is **tactical** when it names a concrete, bounded change. Tactical goals enter the normal Decision Loop directly.
+
+If ambiguous, treat the goal as strategic. A false positive costs one decomposition cycle; a false negative produces an incomplete sprint.
+
+### Parallel Dimension-Scan Phase
+
+When a strategic goal is detected:
+
+1. **Determine dimensions from the goal.** The model identifies which quality axes are implicated by examining the goal statement, the codebase state, and the intended users or operators. Dimensions are not drawn from a fixed list — they emerge from what the goal actually demands. Each dimension must be independent: it has its own failure modes, its own evidence, and its own remediation space.
+
+2. **Launch concurrent dimension-scan sub-agents.** Assign one sub-agent per dimension. Each sub-agent receives:
+   - Its dimension name and a goal-derived framing of what "done" looks like for that dimension
+   - The relevant file paths and codebase context for that dimension
+   - An independent constraint set specific to its dimension
+   - A mandate to perform a current-state audit: assess actual state, identify gaps, and produce concrete findings
+
+   Concurrency follows the same Concurrency Contract as the rest of the protocol: model-native tool orchestration by default. The experimental parallel runner (`va-parallel-runner.mjs`) requires explicit human opt-in. If model-native concurrency is unavailable, serialize the dimension scans — the independence constraint still holds; just run them sequentially without letting earlier results influence later ones.
+
+3. **Constraint: no dimension may consult another dimension's findings during the scan.** Independence is the source of value. Cross-contamination produces correlated blind spots.
+
+4. **Each sub-agent returns a structured audit report:**
+
+   ```
+   Dimension: <name>
+   Current state: <honest assessment>
+   Gaps:
+     - CRITICAL: <finding> — <concrete remediation>
+     - WARNING: <finding> — <concrete remediation>
+     - PASS: <finding>
+   Proposed tasks: <ordered list of concrete, bounded tasks>
+   ```
+
+### Convergence Step
+
+After all dimension scans complete:
+
+1. Aggregate all proposed tasks from all dimensions into a single candidate backlog.
+2. Deduplicate tasks that address the same underlying gap from different angles — keep the most precise formulation.
+3. Assign priorities based on: severity of gap (CRITICAL > WARNING), cross-dimension leverage (a task that unblocks multiple dimensions rises), and irreversibility (state that becomes harder to fix later rises).
+4. Produce a prioritized backlog of concrete, bounded tasks ready to enter the normal sprint loop.
+5. Record the decomposition in `run-journal.md` using this structure:
+
+   ```
+   Strategic decomposition: <goal statement>
+   Dimensions scanned: <list>
+   Aggregate finding: <one sentence per dimension — CRITICAL/WARNING/PASS>
+   Priority rationale: <how the final ordering was determined>
+   Backlog tasks added: <count and IDs>
+   ```
+
+### Transition Back to Tactical Loop
+
+After convergence, the sprint backlog is populated with concrete tasks. The normal Decision Loop resumes from the top. No special mode persists — strategic decomposition is a one-time bootstrap phase triggered by goal type, not a recurring state.
+
+> **Guard**: If the convergence step cannot reduce the candidate backlog to a finite ordered list, the goal scope is too large for one sprint. Partition the goal into sequential milestones and decompose only the first milestone.
+
+---
+
 ## Concurrency Contract
 
 Parallel execution is encouraged when tasks are independent.
@@ -256,6 +325,59 @@ If the review completion condition is met but the model cannot confirm it with c
 2. Re-examine the constraint set — a missing constraint is the most common source of false assurance
 3. Add a perspective that directly challenges the anchor
 4. If the completion condition still cannot be confirmed after three re-anchoring attempts, treat remaining uncertainty as irreducible and escalate to human
+
+---
+
+## Sprint Completion Gate
+
+Before declaring any sprint Done, an independent adversarial review must run. This gate exists to prevent self-validation bias: the sprint team, having implemented the changes, is structurally blind to certain failure modes. A fresh-context adversarial reviewer closes that gap.
+
+### Reviewer Setup
+
+Launch a new sub-agent with no prior context about what was done this sprint. The reviewer receives only:
+
+1. The git diff of the sprint (all changes since the sprint started)
+2. The current state of every file that was modified
+
+The reviewer must not be told what the sprint intended to accomplish. The diff is the only evidence.
+
+### Perspective Assignment
+
+The manager must assign a specific adversarial perspective based on what the sprint actually changed — not a generic "code reviewer". The perspective is derived by examining the diff and asking: who would be most damaged by a latent flaw here, and what would they be watching for?
+
+Examples:
+- Sprint added a new CLI command → perspective: "a developer who will automate this command in a CI pipeline and has been burned by silent failures before"
+- Sprint modified auth or token handling → perspective: "a security engineer doing a post-incident review after a credentials leak"
+- Sprint changed a public-facing protocol or spec → perspective: "an adopter who built a tool on top of this protocol and just had a dependency break without warning"
+- Sprint updated documentation or guidelines → perspective: "a new team member following these instructions on their first day, with no existing context to fill gaps"
+
+The perspective must name a real stake the reviewer has in the output. "Adversarial reviewer" is not a valid perspective — it is a structural role. The perspective specifies the viewpoint from which the reviewer attacks.
+
+### Reviewer Mandate
+
+The adversarial reviewer must:
+
+1. Read the diff and changed files with the assigned perspective held in mind
+2. Assume the sprint team was competent but blind to something specific — find what
+3. Return a structured finding report:
+
+   ```
+   Perspective: <specific assigned perspective>
+   CRITICAL findings:
+     - <finding> — <why it matters from this perspective> — <what must change>
+   WARNING findings:
+     - <finding> — <risk> — <recommended action>
+   PASS:
+     - <what was checked and found sound>
+   ```
+
+### Gate Enforcement
+
+- **CRITICAL findings block sprint completion.** They re-enter the task loop as new `Backlog` tasks tagged with the sprint ID, and the sprint state remains `In Progress` until resolved.
+- **WARNING findings** must have a recorded disposition: fixed, or explicitly accepted with rationale written into `run-journal.md`.
+- **PASS with no CRITICAL or unresolved WARNING** = gate clears. Sprint may advance to Done.
+
+> **Guard**: The adversarial reviewer must be a genuinely fresh context — it must not have access to the sprint team's reasoning, intent statements, or prior chat. If the review is being run by the same agent that implemented the sprint, the agent must reason exclusively from the diff and changed files, deliberately suppressing implementation knowledge. Flag in `run-journal.md` when this condition is met imperfectly. **When flagged, treat all PASS findings from that review as WARNING pending a genuinely fresh-context review** — the flag is not a disclosure, it is a control downgrade.
 
 ---
 
