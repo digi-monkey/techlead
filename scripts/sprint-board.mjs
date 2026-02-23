@@ -15,6 +15,8 @@ const PRIORITY_WEIGHT = { P0: 0, P1: 1, P2: 2, P3: 3 };
 const DEFAULT_MAX_PARALLEL = 2;
 
 const DEFAULTS = resolveDefaults();
+const DEFAULT_PITFALLS_FILE = ".va-auto-pilot/pitfalls.json";
+const VALID_FAILURE_TYPES = ["gate", "acceptance", "review"];
 
 function printHelp() {
   console.log(`sprint-board
@@ -27,6 +29,9 @@ Usage:
   node scripts/sprint-board.mjs add --title <text> --priority <P0|P1|P2|P3> [options]
   node scripts/sprint-board.mjs update --id <TASK-ID> [--state <state>] [options]
   node scripts/sprint-board.mjs journal --task <TASK-ID> --summary <text> [options]
+  node scripts/sprint-board.mjs pitfall --task <TASK-ID> --failure-type <gate|acceptance|review> --attempted <text> --hypothesis <text> [--missing-context <text>]
+  node scripts/sprint-board.mjs pitfall --resolve <PF-ID> --resolution <text>
+  node scripts/sprint-board.mjs pitfall --list [--unresolved] [--json]
 
 Options (add):
   --title <text>            (required) Task title
@@ -52,16 +57,32 @@ Options (update):
   --note <text>
   --depends-on <ID1,ID2,...>
   --reset-fail-count        Reset failCount to 0 (use after fixing a failed task)
+  --failure-type <gate|acceptance|review>  Structured failure category (when --state Failed)
+  --attempted <text>        What was attempted before the failure
+  --hypothesis <text>       Why the failure likely occurred
+  --missing-context <text>  Context that was absent and contributed to the failure
 
 Options (journal):
   --files <comma-separated paths>
   --signals <comma-separated signals>
+
+Options (pitfall):
+  --task <TASK-ID>          Task this pitfall is associated with
+  --failure-type <type>     gate | acceptance | review
+  --attempted <text>        What was attempted
+  --hypothesis <text>       Why it failed
+  --missing-context <text>  Missing context (optional)
+  --resolve <PF-ID>         Resolve an existing pitfall entry
+  --resolution <text>       Resolution text (used with --resolve)
+  --list                    List pitfall entries
+  --unresolved              Filter --list to unresolved entries only
 
 Global options:
   --max-parallel <n>
   --state-file <path>
   --board-file <path>
   --journal-file <path>
+  --pitfalls-file <path>
 `);
 }
 
@@ -133,7 +154,13 @@ function normalizeTask(task) {
       mustPassRate: String(task.testing?.mustPassRate ?? ""),
       shouldPassRate: String(task.testing?.shouldPassRate ?? "")
     },
-    dependsOn: normalizeDependsOn(task.dependsOn)
+    dependsOn: normalizeDependsOn(task.dependsOn),
+    failureDetail: task.failureDetail != null ? {
+      failureType: String(task.failureDetail.failureType ?? ""),
+      attempted: String(task.failureDetail.attempted ?? ""),
+      hypothesis: String(task.failureDetail.hypothesis ?? ""),
+      missingContext: String(task.failureDetail.missingContext ?? "")
+    } : undefined
   };
 }
 
@@ -471,6 +498,24 @@ function updateTask(state, options, flags) {
     if (task.state === "Failed") {
       task.failCount += 1;
       task.lastFailedAt = nowIso();
+
+      // Capture structured failure metadata when provided.
+      const failureType = options["failure-type"];
+      const attempted = options.attempted;
+      const hypothesis = options.hypothesis;
+      const missingContext = options["missing-context"];
+
+      if (failureType || attempted || hypothesis || missingContext) {
+        if (failureType && !VALID_FAILURE_TYPES.includes(failureType)) {
+          throw new Error(`Invalid --failure-type '${failureType}'. Expected one of: ${VALID_FAILURE_TYPES.join(", ")}`);
+        }
+        task.failureDetail = {
+          failureType: failureType ?? "",
+          attempted: attempted ?? "",
+          hypothesis: hypothesis ?? "",
+          missingContext: missingContext ?? ""
+        };
+      }
     }
 
     if (task.state === "Done") {
@@ -555,7 +600,7 @@ function appendJournal(filePath, options) {
   fs.appendFileSync(filePath, `${prefix}${lines.join("\n")}\n`, "utf8");
 }
 
-function printSummary(state) {
+function printSummary(state, pitfallsFile) {
   const counts = Object.fromEntries(VALID_STATES.map((name) => [name, 0]));
   for (const task of state.tasks) {
     if (counts[task.state] === undefined) continue;
@@ -565,6 +610,15 @@ function printSummary(state) {
   console.log("Sprint Summary");
   for (const name of VALID_STATES) {
     console.log(`${name.padEnd(11, " ")}: ${counts[name]}`);
+  }
+
+  // Show unresolved pitfall count so the log is visible at every cycle start.
+  try {
+    const pitfalls = readPitfalls(pitfallsFile);
+    const unresolved = pitfalls.entries.filter((e) => e.resolvedAt === null || e.resolvedAt === "").length;
+    console.log(`Pitfalls   : ${unresolved} unresolved (${pitfalls.entries.length} total)`);
+  } catch {
+    // Pitfalls file unreadable — non-fatal for summary.
   }
 
   const next = findNextTask(state.tasks);
@@ -588,9 +642,99 @@ function printSummary(state) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pitfall guide
+// ---------------------------------------------------------------------------
+
+function readPitfalls(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return { version: 1, entries: [] };
+  }
+  const raw = fs.readFileSync(filePath, "utf8");
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`Cannot parse pitfalls file: ${filePath} — ${e.message}`);
+  }
+  if (!Array.isArray(data.entries)) {
+    throw new Error(`Invalid pitfalls file: 'entries' must be an array`);
+  }
+  return data;
+}
+
+function writePitfalls(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function nextPitfallId(entries) {
+  let max = 0;
+  for (const entry of entries) {
+    const match = String(entry.id ?? "").match(/^PF-(\d+)$/);
+    if (match) {
+      const num = Number.parseInt(match[1], 10);
+      if (num > max) max = num;
+    }
+  }
+  return `PF-${String(max + 1).padStart(3, "0")}`;
+}
+
+function addPitfall(pitfallsFile, options) {
+  const taskId = requireOption(options, "task");
+  const failureType = requireOption(options, "failure-type");
+  const attempted = requireOption(options, "attempted");
+  const hypothesis = requireOption(options, "hypothesis");
+
+  if (!VALID_FAILURE_TYPES.includes(failureType)) {
+    throw new Error(`Invalid --failure-type '${failureType}'. Expected one of: ${VALID_FAILURE_TYPES.join(", ")}`);
+  }
+
+  const data = readPitfalls(pitfallsFile);
+  const id = nextPitfallId(data.entries);
+  const entry = {
+    id,
+    taskId,
+    failureType,
+    attempted,
+    hypothesis,
+    missingContext: options["missing-context"] ?? "",
+    resolution: "",
+    resolvedAt: null,
+    createdAt: nowIso()
+  };
+  data.entries.push(entry);
+  writePitfalls(pitfallsFile, data);
+  return entry;
+}
+
+function resolvePitfall(pitfallsFile, options) {
+  const pfId = requireOption(options, "resolve");
+  const resolution = requireOption(options, "resolution");
+
+  const data = readPitfalls(pitfallsFile);
+  const entry = data.entries.find((e) => e.id === pfId);
+  if (!entry) {
+    throw new Error(`Pitfall not found: ${pfId}`);
+  }
+  entry.resolution = resolution;
+  entry.resolvedAt = nowIso();
+  writePitfalls(pitfallsFile, data);
+  return entry;
+}
+
+function listPitfalls(pitfallsFile, options, flags) {
+  const data = readPitfalls(pitfallsFile);
+  let entries = data.entries;
+  if (flags && flags.has("unresolved")) {
+    entries = entries.filter((e) => e.resolvedAt === null || e.resolvedAt === "");
+  }
+  return entries;
+}
+
 function main() {
   const argv = process.argv.slice(2);
-  const parsed = parseArgv(argv, new Set(["json", "help", "reset-fail-count"]));
+  const parsed = parseArgv(argv, new Set(["json", "help", "reset-fail-count", "unresolved", "list"]));
 
   if (!parsed.command || parsed.flags.has("help") || parsed.command === "help") {
     printHelp();
@@ -600,6 +744,7 @@ function main() {
   const stateFile = path.resolve(parsed.options["state-file"] ?? DEFAULTS.stateFile);
   const boardFile = path.resolve(parsed.options["board-file"] ?? DEFAULTS.boardFile);
   const journalFile = path.resolve(parsed.options["journal-file"] ?? DEFAULTS.journalFile);
+  const pitfallsFile = path.resolve(parsed.options["pitfalls-file"] ?? DEFAULT_PITFALLS_FILE);
 
   if (parsed.command === "journal") {
     appendJournal(journalFile, parsed.options);
@@ -610,7 +755,7 @@ function main() {
   const state = readState(stateFile);
 
   if (parsed.command === "summary") {
-    printSummary(state);
+    printSummary(state, pitfallsFile);
     return;
   }
 
@@ -692,6 +837,46 @@ function main() {
     console.log(`Task updated: ${task.id} -> ${task.state}`);
     console.log(`State file: ${path.relative(process.cwd(), stateFile)}`);
     console.log(`Board file: ${path.relative(process.cwd(), boardFile)}`);
+    return;
+  }
+
+  if (parsed.command === "pitfall") {
+    // --resolve: mark an existing entry resolved
+    if (parsed.options.resolve) {
+      const entry = resolvePitfall(pitfallsFile, parsed.options);
+      console.log(`Pitfall resolved: ${entry.id}`);
+      console.log(`Pitfalls file: ${path.relative(process.cwd(), pitfallsFile)}`);
+      return;
+    }
+
+    // --list: print entries
+    if (parsed.flags.has("list")) {
+      const entries = listPitfalls(pitfallsFile, parsed.options, parsed.flags);
+      if (parsed.flags.has("json")) {
+        console.log(JSON.stringify(entries, null, 2));
+      } else {
+        if (entries.length === 0) {
+          console.log("No pitfall entries found.");
+        } else {
+          const unresolvedCount = entries.filter((e) => e.resolvedAt === null || e.resolvedAt === "").length;
+          console.log(`${entries.length} entries, ${unresolvedCount} unresolved`);
+          for (const e of entries) {
+            const resolved = e.resolvedAt ? `resolved ${String(e.resolvedAt).slice(0, 10)}` : "unresolved";
+            console.log(`${e.id} [${e.taskId}] [${e.failureType}] ${resolved}`);
+            console.log(`  attempted: ${e.attempted}`);
+            console.log(`  hypothesis: ${e.hypothesis}`);
+            if (e.missingContext) console.log(`  missingContext: ${e.missingContext}`);
+            if (e.resolution) console.log(`  resolution: ${e.resolution}`);
+          }
+        }
+      }
+      return;
+    }
+
+    // default: add a new pitfall entry
+    const entry = addPitfall(pitfallsFile, parsed.options);
+    console.log(`Pitfall recorded: ${entry.id}`);
+    console.log(`Pitfalls file: ${path.relative(process.cwd(), pitfallsFile)}`);
     return;
   }
 

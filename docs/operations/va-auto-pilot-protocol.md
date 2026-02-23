@@ -59,9 +59,10 @@ Never delete human-written content.
 At the start of each cycle:
 
 1. Read `docs/todo/run-journal.md`.
-2. Check `Codebase Signals` first.
-3. Reuse existing signals before inventing new conventions.
-4. Append one execution entry at the end of each cycle.
+2. Read `.va-auto-pilot/pitfalls.json` — identify unresolved entries relevant to the current task (by task ID match, failure type, or keyword overlap). Inject matching unresolved pitfalls into delegation prompts under **Hard constraints**.
+3. Check `Codebase Signals` first.
+4. Reuse existing signals before inventing new conventions.
+5. Append one execution entry at the end of each cycle.
 
 ---
 
@@ -208,6 +209,18 @@ Rules:
 1. Do not hand-edit generated rows in `docs/todo/sprint.md`.
 2. Update `.va-auto-pilot/sprint-state.json` through CLI whenever possible.
 3. Keep `run-journal.md` append-only.
+4. When marking a task `Failed`, record a pitfall entry alongside the state update:
+   ```bash
+   node scripts/sprint-board.mjs update --id AP-001 --state "Failed" \
+     --failure-type <gate|acceptance|review> --attempted "..." --hypothesis "..."
+   node scripts/sprint-board.mjs pitfall --task AP-001 \
+     --failure-type <gate|acceptance|review> --attempted "..." --hypothesis "..." \
+     [--missing-context "..."]
+   ```
+   The pitfall entry is the durable, queryable record. Resolve it when the failure is fixed:
+   ```bash
+   node scripts/sprint-board.mjs pitfall --resolve PF-001 --resolution "..."
+   ```
 
 ---
 
@@ -220,6 +233,7 @@ Every implementation delegation must include:
 3. Hard constraints (architecture, security, naming, limits)
 4. Completion gates (`npm run check:all`)
 5. A no-how clause: do not prescribe implementation steps
+6. If `.va-auto-pilot/pitfalls.json` contains unresolved entries matching the current task by task ID, failure type, or keyword overlap — include them verbatim in the **Hard constraints** section with the heading `Known pitfalls to avoid`.
 
 ---
 

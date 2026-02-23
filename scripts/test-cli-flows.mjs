@@ -12,6 +12,8 @@
  *                       --state-file pointing to the copy (avoids polluting real state)
  *   isolated_journal  - if true, create a temp journal file and pass
  *                       --journal-file pointing to it
+ *   isolated_pitfalls - if true, create a temp pitfalls file and pass
+ *                       --pitfalls-file pointing to it
  *
  * Assertion types supported:
  *   exit_code: <n>              — exit code must equal n
@@ -35,6 +37,7 @@ import { parse as parseYaml } from "yaml";
 const ROOT = process.cwd();
 const REAL_STATE_FILE = path.join(ROOT, ".va-auto-pilot", "sprint-state.json");
 const REAL_JOURNAL_FILE = path.join(ROOT, "docs", "todo", "run-journal.md");
+const REAL_PITFALLS_FILE = path.join(ROOT, ".va-auto-pilot", "pitfalls.json");
 
 // ---------------------------------------------------------------------------
 // Assertion evaluator
@@ -135,6 +138,17 @@ function makeTempJournalFile() {
   return tmpJournal;
 }
 
+function makeTempPitfallsFile() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "va-cli-pitfalls-"));
+  const tmpPitfalls = path.join(tmpDir, "pitfalls.json");
+  if (fs.existsSync(REAL_PITFALLS_FILE)) {
+    fs.copyFileSync(REAL_PITFALLS_FILE, tmpPitfalls);
+  } else {
+    fs.writeFileSync(tmpPitfalls, JSON.stringify({ version: 1, entries: [] }, null, 2) + "\n", "utf8");
+  }
+  return tmpPitfalls;
+}
+
 // ---------------------------------------------------------------------------
 // Flow executor
 // ---------------------------------------------------------------------------
@@ -153,6 +167,11 @@ function runFlow(flow) {
   if (flow.isolated_journal) {
     const tmpJournal = makeTempJournalFile();
     finalArgs = [...finalArgs, "--journal-file", tmpJournal];
+  }
+
+  if (flow.isolated_pitfalls) {
+    const tmpPitfalls = makeTempPitfallsFile();
+    finalArgs = [...finalArgs, "--pitfalls-file", tmpPitfalls];
   }
 
   const spawnEnv = { ...process.env, ...env };

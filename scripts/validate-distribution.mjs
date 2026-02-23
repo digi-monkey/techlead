@@ -49,6 +49,7 @@ const requiredFiles = [
   "scripts/lib/sprint-utils.mjs",
   "docs/todo/run-journal.md",
   "templates/.va-auto-pilot/sprint-state.json",
+  "templates/.va-auto-pilot/pitfalls.json",
   "templates/docs/todo/run-journal.md",
   ".github/workflows/deploy-website.yml",
   "docs/operations/va-auto-pilot-protocol.md"
