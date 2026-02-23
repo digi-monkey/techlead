@@ -313,8 +313,12 @@ function toRawUrl(owner, repo, branch, filePath) {
   return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
 }
 
-function toBlobUrl(owner, repo, branch, filePath) {
+function toTreeUrl(owner, repo, branch, filePath) {
   return `https://github.com/${owner}/${repo}/tree/${branch}/${filePath}`;
+}
+
+function toBlobUrl(owner, repo, branch, filePath) {
+  return `https://github.com/${owner}/${repo}/blob/${branch}/${filePath}`;
 }
 
 function setText(id, value) {
@@ -555,7 +559,7 @@ function renderDynamicContent() {
   const repo = repoMeta || inferred.repo || "va-auto-pilot";
 
   const repoUrl = `https://github.com/${owner}/${repo}`;
-  const skillDirUrl = toBlobUrl(owner, repo, branch, "skills/va-auto-pilot");
+  const skillDirUrl = toTreeUrl(owner, repo, branch, "skills/va-auto-pilot");
   const skillRawUrl = toRawUrl(owner, repo, branch, "skills/va-auto-pilot/SKILL.md");
   const claudeCommandRawUrl = toRawUrl(owner, repo, branch, "skills/va-auto-pilot/claude-command.md");
   const compareDocPath =
