@@ -17,6 +17,7 @@
 8. CLI-first execution: prefer deterministic commands over manual operations.
 9. Frontier model first: use the strongest available model for high-impact tasks.
 10. Closed-loop quality is mandatory: build -> review -> acceptance -> commit.
+11. Perspectives emerge from constraints and anchors — never from fixed role lists. Wrong perspectives mean wrong anchors; change both.
 
 ---
 
@@ -187,18 +188,74 @@ Pass criteria:
 
 ## Multi-Perspective Review
 
-Run independent reviews from four lenses:
+### Design Philosophy
 
-1. `Security Engineer`
-2. `QA Engineer`
-3. `{{DOMAIN_ROLE_NAME}}`
-4. `Architect`
+Perspectives are not predetermined roles — they are views from specific constraint intersections that expose distinct failure modes. The right perspectives emerge from identifying real constraints and anchors first. A fixed list of roles is valid only if each role was derived from the constraint and anchor analysis for this task and each exposes failure modes the others miss.
 
-Use this prompt for the domain role:
+When a review stall occurs, the problem is most often in anchor or perspective selection, not the implementation. See [When Review Cycles Stall](#when-review-cycles-stall) for the bounded procedure governing anchor revision.
 
-```
-{{DOMAIN_EXPERT_PROMPT}}
-```
+### Dynamic Perspective Selection
+
+The model determines which perspectives to apply for each task.
+
+**Step 1: Identify real constraints**
+
+What hard boundaries govern this task? Examples: security invariants, performance budgets, API contracts, backward compatibility, data privacy, state-machine integrity.
+
+**Step 2: Identify anchors**
+
+What must remain true after this change? An anchor is the invariant that cannot be violated. Anchor selection determines whether subsequent analysis converges. A weak or misspecified anchor is the most common cause of false assurance.
+
+> **Guard**: If no clear anchor can be identified after applying the constraint list, stop and request human clarification before beginning review. Do not start a review cycle without a confirmed anchor.
+
+**Step 3: Let perspectives emerge**
+
+Given the constraints and anchors, ask: which expert views would expose the most critical failure modes? Perspectives must be specific to this task, not generic role labels. Each must probe failure modes the others miss.
+
+**Perspective count heuristic**: Start with 2. Add one perspective for each: external API surface affected, security boundary crossed, persistent state modified, multiple components touched. Cap at 5.
+
+Examples — table entries are category-level sketches; instantiate each with task-specific framing in the actual review prompt (e.g., not "Threat modeler" but "Threat modeler focused on the new token refresh endpoint's exposure to replay attacks"):
+
+| Change type | Possible perspectives |
+|-------------|----------------------|
+| CLI tool update | Correctness auditor, API consumer, Operator (failure modes) |
+| Auth/security change | Threat modeler, Compliance reviewer, Regression auditor |
+| Data pipeline | Data integrity auditor, Privacy/compliance, SRE |
+| UX feature | Accessibility engineer, Performance auditor, Product consistency |
+| Protocol/spec change | Adopter (downstream impact), Implementer (ambiguity), Adversarial reader |
+
+**Step 4: Anchor-grounded review prompt**
+
+Every review prompt must explicitly state:
+
+1. What changed and why (the git diff scope and design rationale)
+2. The hard constraints that apply
+3. The anchor — the invariant that must hold
+4. The reviewer's specific perspective and the concrete failure modes they are probing
+
+### Review Completion Condition
+
+Review is complete when all of the following are true:
+- All selected perspectives have been applied
+- No `CRITICAL`, `BUG`, or `ANCHOR VIOLATION` findings remain open
+- Every `WARNING` / `RISK` finding has a recorded disposition (fixed or explicitly accepted with rationale)
+
+**Iteration cap**: If `CRITICAL` findings persist after 3 complete review cycles (each cycle = all perspectives re-applied), stop and escalate to human.
+
+### Finding Policy
+
+- `CRITICAL` / `BUG` / `ANCHOR VIOLATION`: must fix, then re-run the full perspective set before proceeding
+- `WARNING` / `RISK`: record and decide — fix or document accepted risk
+- Style / preference: non-blocking
+
+### When Review Cycles Stall
+
+If the review completion condition is met but the model cannot confirm it with confidence:
+
+1. Re-examine the anchor — it may be too weak or misspecified
+2. Re-examine the constraint set — a missing constraint is the most common source of false assurance
+3. Add a perspective that directly challenges the anchor
+4. If the completion condition still cannot be confirmed after three re-anchoring attempts, treat remaining uncertainty as irreducible and escalate to human
 
 ---
 

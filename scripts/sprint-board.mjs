@@ -2,67 +2,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  nowIso,
+  resolveDefaults,
+  parseArgv,
+  requireOption
+} from "./lib/sprint-utils.mjs";
 
 const VALID_STATES = ["Backlog", "In Progress", "Review", "Testing", "Failed", "Done"];
 const NEXT_ORDER = ["Failed", "Testing", "Review", "In Progress", "Backlog"];
 const PRIORITY_WEIGHT = { P0: 0, P1: 1, P2: 2, P3: 3 };
 const DEFAULT_MAX_PARALLEL = 2;
 
-function stripYamlValue(value) {
-  return value.replace(/^["']/, "").replace(/["']$/, "").trim();
-}
-
-function readSprintPathsFromConfig(configPath) {
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-
-  const raw = fs.readFileSync(configPath, "utf8");
-  const lines = raw.split(/\r?\n/);
-  const sprint = {};
-  let inSprint = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const sectionMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*$/);
-    if (sectionMatch) {
-      inSprint = sectionMatch[1] === "sprint";
-      continue;
-    }
-
-    if (!inSprint) continue;
-
-    const keyMatch = line.match(/^\s{2}([A-Za-z][A-Za-z0-9_-]*):\s*(.+)\s*$/);
-    if (!keyMatch) continue;
-
-    const key = keyMatch[1];
-    const value = stripYamlValue(keyMatch[2]);
-    sprint[key] = value;
-  }
-
-  return sprint;
-}
-
-const sprintFromConfig = readSprintPathsFromConfig(
-  path.resolve(process.cwd(), ".va-auto-pilot/config.yaml")
-);
-
-const DEFAULTS = {
-  stateFile:
-    process.env.AUTO_PILOT_SPRINT_STATE_FILE ??
-    sprintFromConfig.stateFile ??
-    ".va-auto-pilot/sprint-state.json",
-  boardFile:
-    process.env.AUTO_PILOT_SPRINT_BOARD_FILE ??
-    sprintFromConfig.boardFile ??
-    "docs/todo/sprint.md",
-  journalFile:
-    process.env.AUTO_PILOT_RUN_JOURNAL_FILE ??
-    sprintFromConfig.runJournalFile ??
-    "docs/todo/run-journal.md"
-};
+const DEFAULTS = resolveDefaults();
 
 function printHelp() {
   console.log(`sprint-board
@@ -92,6 +44,7 @@ Options (update):
   --architect <text>
   --note <text>
   --depends-on <ID1,ID2,...>
+  --reset-fail-count        Reset failCount to 0 (use after fixing a failed task)
 
 Options (journal):
   --files <comma-separated paths>
@@ -103,53 +56,6 @@ Global options:
   --board-file <path>
   --journal-file <path>
 `);
-}
-
-function parseArgv(argv) {
-  const parsed = {
-    command: argv[0] ?? "",
-    options: {},
-    flags: new Set()
-  };
-
-  let i = 1;
-  while (i < argv.length) {
-    const token = argv[i];
-
-    if (!token.startsWith("--")) {
-      i += 1;
-      continue;
-    }
-
-    if (token === "--json" || token === "--help") {
-      parsed.flags.add(token.slice(2));
-      i += 1;
-      continue;
-    }
-
-    if (token.includes("=")) {
-      const [key, value] = token.slice(2).split("=");
-      parsed.options[key] = value ?? "";
-      i += 1;
-      continue;
-    }
-
-    const key = token.slice(2);
-    const value = argv[i + 1];
-
-    if (!value || value.startsWith("--")) {
-      throw new Error(`Missing value for --${key}`);
-    }
-
-    parsed.options[key] = value;
-    i += 2;
-  }
-
-  return parsed;
-}
-
-function nowIso() {
-  return new Date().toISOString();
 }
 
 function shortDate(raw) {
@@ -327,6 +233,65 @@ function writeBoard(boardFile, state) {
   fs.writeFileSync(boardFile, markdown, "utf8");
 }
 
+/**
+ * Detects dependency cycles using DFS.
+ *
+ * Returns an array of cycle descriptions (empty if no cycles).
+ * Each description is a string like "A -> B -> C -> A".
+ */
+function detectCycles(tasks) {
+  const adjById = new Map();
+  for (const task of tasks) {
+    adjById.set(task.id, task.dependsOn ?? []);
+  }
+
+  // 0 = unvisited, 1 = in stack, 2 = done
+  const color = new Map();
+  const parent = new Map();
+  const cycles = [];
+
+  function dfs(nodeId) {
+    color.set(nodeId, 1);
+
+    for (const depId of (adjById.get(nodeId) ?? [])) {
+      if (!adjById.has(depId)) continue; // unknown dep, skip
+
+      if (color.get(depId) === 1) {
+        // Back edge found — reconstruct the cycle path
+        const path = [depId];
+        let cur = nodeId;
+        while (cur !== depId) {
+          path.unshift(cur);
+          cur = parent.get(cur);
+          if (cur === undefined) break; // safety guard
+        }
+        path.unshift(depId);
+        cycles.push(path.join(" -> "));
+        continue;
+      }
+
+      if (!color.has(depId) || color.get(depId) === 0) {
+        parent.set(depId, nodeId);
+        dfs(depId);
+      }
+    }
+
+    color.set(nodeId, 2);
+  }
+
+  for (const task of tasks) {
+    if (!color.has(task.id) || color.get(task.id) === 0) {
+      dfs(task.id);
+    }
+  }
+
+  return cycles;
+}
+
+function isDependencySatisfied(task, doneIds) {
+  return task.dependsOn.every((dependencyId) => doneIds.has(dependencyId));
+}
+
 function findNextTask(tasks) {
   const doneIds = new Set(
     tasks
@@ -358,11 +323,15 @@ function findNextTask(tasks) {
   return null;
 }
 
-function isDependencySatisfied(task, doneIds) {
-  return task.dependsOn.every((dependencyId) => doneIds.has(dependencyId));
-}
-
 function buildParallelPlan(tasks, maxParallel) {
+  // Guard: report cycles before planning to prevent silent deadlocks.
+  const cycles = detectCycles(tasks);
+  if (cycles.length > 0) {
+    throw new Error(
+      `Dependency cycle(s) detected in sprint state:\n${cycles.map((c) => `  ${c}`).join("\n")}\nFix dependsOn fields before running a parallel plan.`
+    );
+  }
+
   const primary = findNextTask(tasks);
   if (!primary) return null;
 
@@ -410,15 +379,7 @@ function buildParallelPlan(tasks, maxParallel) {
   };
 }
 
-function requireOption(options, key) {
-  const value = options[key];
-  if (!value) {
-    throw new Error(`Missing required option --${key}`);
-  }
-  return value;
-}
-
-function updateTask(state, options) {
+function updateTask(state, options, flags) {
   const id = requireOption(options, "id");
   const task = state.tasks.find((item) => item.id === id);
 
@@ -445,6 +406,14 @@ function updateTask(state, options) {
     if (task.state === "Done") {
       task.completedAt = nowIso();
     }
+  }
+
+  // --reset-fail-count: used after a human fixes a failed task and wants
+  // to re-enter the loop without the 3-failure stop condition triggering.
+  if (flags && flags.has("reset-fail-count")) {
+    task.failCount = 0;
+    task.lastFailedAt = "";
+    task.reason = options.reason ?? task.reason;
   }
 
   if (options.title) task.title = options.title;
@@ -637,7 +606,7 @@ function main() {
   }
 
   if (parsed.command === "update") {
-    const task = updateTask(state, parsed.options);
+    const task = updateTask(state, parsed.options, parsed.flags);
     writeState(stateFile, state);
     writeBoard(boardFile, state);
     console.log(`Task updated: ${task.id} -> ${task.state}`);

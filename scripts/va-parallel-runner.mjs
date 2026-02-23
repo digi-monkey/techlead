@@ -3,71 +3,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import {
+  nowIso,
+  resolveDefaults,
+  parseArgv,
+  requireOption
+} from "./lib/sprint-utils.mjs";
 
 const VALID_STATES = new Set(["Backlog", "In Progress", "Review", "Testing", "Failed", "Done"]);
 const DEFAULT_MAX_WORKERS = 4;
 const DEFAULT_LOG_DIR = ".va-auto-pilot/parallel-runs";
+// Default track timeout: 10 minutes.  Override with --track-timeout <ms>.
+const DEFAULT_TRACK_TIMEOUT_MS = 600_000;
 
-function stripYamlValue(value) {
-  return value.replace(/^["']/, "").replace(/["']$/, "").trim();
-}
-
-function readSprintPathsFromConfig(configPath) {
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-
-  const raw = fs.readFileSync(configPath, "utf8");
-  const lines = raw.split(/\r?\n/);
-  const sprint = {};
-  let inSprint = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const sectionMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*$/);
-    if (sectionMatch) {
-      inSprint = sectionMatch[1] === "sprint";
-      continue;
-    }
-
-    if (!inSprint) continue;
-
-    const keyMatch = line.match(/^\s{2}([A-Za-z][A-Za-z0-9_-]*):\s*(.+)\s*$/);
-    if (!keyMatch) continue;
-
-    const key = keyMatch[1];
-    const value = stripYamlValue(keyMatch[2]);
-    sprint[key] = value;
-  }
-
-  return sprint;
-}
-
-const sprintFromConfig = readSprintPathsFromConfig(
-  path.resolve(process.cwd(), ".va-auto-pilot/config.yaml")
-);
-
-const DEFAULTS = {
-  stateFile:
-    process.env.AUTO_PILOT_SPRINT_STATE_FILE ??
-    sprintFromConfig.stateFile ??
-    ".va-auto-pilot/sprint-state.json",
-  boardFile:
-    process.env.AUTO_PILOT_SPRINT_BOARD_FILE ??
-    sprintFromConfig.boardFile ??
-    "docs/todo/sprint.md",
-  journalFile:
-    process.env.AUTO_PILOT_RUN_JOURNAL_FILE ??
-    sprintFromConfig.runJournalFile ??
-    "docs/todo/run-journal.md"
-};
+const DEFAULTS = resolveDefaults();
 
 function printHelp() {
-  console.log(`va-parallel-runner (experimental)
-
-This helper is opt-in. Default VA Auto-Pilot path is model-native parallel orchestration + gate synchronization.
+  console.log(`va-parallel-runner
 
 Usage:
   node scripts/va-parallel-runner.mjs spawn --plan-file <path> [options]
@@ -76,6 +28,7 @@ Options:
   --plan-file <path>          Parallel plan JSON from sprint-board plan command
   --agent-cmd <template>      Command template for tracks, supports {taskId}
   --max-workers <n>           Max concurrent track workers (default: ${DEFAULT_MAX_WORKERS})
+  --track-timeout <ms>        Per-track timeout in milliseconds (default: ${DEFAULT_TRACK_TIMEOUT_MS})
   --log-dir <path>            Track log directory (default: ${DEFAULT_LOG_DIR})
   --state-file <path>         Sprint state file path
   --board-file <path>         Sprint board markdown path
@@ -92,73 +45,14 @@ Plan shape:
   "dependencyGraph": {"AP-002":[],"AP-003":["AP-001"]},
   "syncPoints": ["quality-gates"]
 }
+
+Note on quality gates:
+  The parallel runner records subprocess exit codes but does NOT itself run
+  quality gates (build / review / acceptance).  Each agent command is expected
+  to run the required gates as part of its own execution before exiting 0.
+  A successful exit only moves the task to Review state; the manager agent
+  must still complete the multi-perspective review and acceptance stages.
 `);
-}
-
-function parseArgv(argv) {
-  const parsed = {
-    command: argv[0] ?? "",
-    options: {},
-    flags: new Set()
-  };
-
-  let i = 1;
-  while (i < argv.length) {
-    const token = argv[i];
-
-    if (!token.startsWith("--")) {
-      i += 1;
-      continue;
-    }
-
-    if (token === "--json" || token === "--help" || token === "--dry-run" || token === "--skip-state-update") {
-      parsed.flags.add(token.slice(2));
-      i += 1;
-      continue;
-    }
-
-    if (token.includes("=")) {
-      const [key, value] = token.slice(2).split("=");
-      parsed.options[key] = value ?? "";
-      i += 1;
-      continue;
-    }
-
-    const key = token.slice(2);
-    const value = argv[i + 1];
-    if (!value || value.startsWith("--")) {
-      throw new Error(`Missing value for --${key}`);
-    }
-
-    parsed.options[key] = value;
-    i += 2;
-  }
-
-  return parsed;
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function requireOption(options, key) {
-  const value = options[key];
-  if (!value) {
-    throw new Error(`Missing required option --${key}`);
-  }
-  return value;
-}
-
-function readJsonFile(filePath) {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`File not found: ${filePath}`);
-  }
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function writeJsonFile(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function normalizeTrack(track) {
@@ -177,7 +71,10 @@ function normalizeTrack(track) {
 }
 
 function readPlan(planFile) {
-  const raw = readJsonFile(planFile);
+  if (!fs.existsSync(planFile)) {
+    throw new Error(`File not found: ${planFile}`);
+  }
+  const raw = JSON.parse(fs.readFileSync(planFile, "utf8"));
   const tracks = Array.isArray(raw.parallelTracks) ? raw.parallelTracks.map(normalizeTrack) : [];
   return {
     primaryTaskId: String(raw.primaryTaskId ?? ""),
@@ -206,17 +103,44 @@ function appendLog(logFile, message) {
   fs.appendFileSync(logFile, message, "utf8");
 }
 
-function runTrack(track, command, logFile) {
+/**
+ * Runs a single track command in a subprocess with an optional timeout.
+ *
+ * If the timeout expires the process is killed (SIGTERM, then SIGKILL after
+ * 5 s) and the track is recorded as failed with reason "timeout".
+ *
+ * @param {object} track      - { taskId, command }
+ * @param {string} command    - resolved shell command
+ * @param {string} logFile    - path to the track log file
+ * @param {number} timeoutMs  - max allowed run time in ms (0 = unlimited)
+ */
+function runTrack(track, command, logFile, timeoutMs) {
   const startedAt = Date.now();
   appendLog(
     logFile,
-    `[${nowIso()}] task=${track.taskId}\ncommand: ${command}\n---\n`
+    `[${nowIso()}] task=${track.taskId}\ncommand: ${command}\ntimeout: ${timeoutMs > 0 ? `${timeoutMs}ms` : "none"}\n---\n`
   );
 
   return new Promise((resolve) => {
     const child = spawn("bash", ["-lc", command], {
       env: { ...process.env, VA_TASK_ID: track.taskId }
     });
+
+    let timedOut = false;
+    let killTimer = null;
+
+    if (timeoutMs > 0) {
+      killTimer = setTimeout(() => {
+        timedOut = true;
+        appendLog(logFile, `\n[${nowIso()}] timeout after ${timeoutMs}ms — sending SIGTERM\n`);
+        child.kill("SIGTERM");
+
+        // Force-kill after 5 s if still running.
+        setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* already exited */ }
+        }, 5_000);
+      }, timeoutMs);
+    }
 
     child.stdout.on("data", (chunk) => {
       appendLog(logFile, chunk.toString());
@@ -227,18 +151,20 @@ function runTrack(track, command, logFile) {
     });
 
     child.on("close", (code, signal) => {
+      if (killTimer) clearTimeout(killTimer);
       const durationMs = Date.now() - startedAt;
       appendLog(
         logFile,
-        `\n---\n[${nowIso()}] exit code=${code ?? -1} signal=${signal ?? "-"} durationMs=${durationMs}\n`
+        `\n---\n[${nowIso()}] exit code=${code ?? -1} signal=${signal ?? "-"} durationMs=${durationMs}${timedOut ? " (TIMEOUT)" : ""}\n`
       );
       resolve({
         taskId: track.taskId,
         command,
-        success: code === 0,
+        success: code === 0 && !timedOut,
         exitCode: code ?? -1,
         signal: signal ?? "",
         durationMs,
+        timedOut,
         logFile
       });
     });
@@ -276,12 +202,20 @@ function normalizeStateTask(task) {
 }
 
 function readState(stateFile) {
-  const raw = readJsonFile(stateFile);
+  if (!fs.existsSync(stateFile)) {
+    throw new Error(`State file not found: ${stateFile}`);
+  }
+  const raw = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   if (!Array.isArray(raw.tasks)) {
     throw new Error("Invalid sprint state file: tasks must be an array");
   }
   raw.tasks = raw.tasks.map(normalizeStateTask);
   return raw;
+}
+
+function writeJsonFile(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function renderBoard(stateFile, boardFile) {
@@ -306,7 +240,7 @@ function appendJournalEntry(journalFile, payload) {
   );
   lines.push(`- Primary Task: ${payload.primaryTaskId || "-"}`);
   lines.push(
-    `- Tracks: ${payload.results.map((item) => `${item.taskId}:${item.success ? "PASS" : "FAIL"}`).join(", ")}`
+    `- Tracks: ${payload.results.map((item) => `${item.taskId}:${item.success ? "PASS" : item.timedOut ? "TIMEOUT" : "FAIL"}`).join(", ")}`
   );
   if (payload.syncPoints.length > 0) {
     lines.push(`- Sync Points: ${payload.syncPoints.join(", ")}`);
@@ -315,6 +249,9 @@ function appendJournalEntry(journalFile, payload) {
   for (const result of payload.results) {
     lines.push(`  - \`${result.logFile}\``);
   }
+  lines.push(
+    "- Note: exit-0 moves task to Review; manager agent must still run multi-perspective review and acceptance gates."
+  );
   lines.push("---");
 
   fs.mkdirSync(path.dirname(journalFile), { recursive: true });
@@ -349,6 +286,9 @@ function applyStateTransitions(state, tracks, resultsByTaskId) {
     if (!task || !result) continue;
 
     if (result.success) {
+      // Subprocess exited 0.  The agent is responsible for having run
+      // build / review / acceptance gates before exiting.  We move to
+      // Review so the manager agent can complete multi-perspective review.
       task.state = "Review";
       task.reason = "";
       continue;
@@ -357,7 +297,9 @@ function applyStateTransitions(state, tracks, resultsByTaskId) {
     task.state = "Failed";
     task.failCount += 1;
     task.lastFailedAt = timestamp;
-    task.reason = `parallel track exited with code ${result.exitCode}`;
+    task.reason = result.timedOut
+      ? `parallel track timed out after ${result.durationMs}ms`
+      : `parallel track exited with code ${result.exitCode}`;
   }
 
   state.updatedAt = timestamp;
@@ -389,10 +331,17 @@ async function spawnTracks(parsed) {
   }
 
   const agentTemplate = parsed.options["agent-cmd"] ?? "";
+
   const rawMaxWorkers = parsed.options["max-workers"] ?? String(DEFAULT_MAX_WORKERS);
   const maxWorkers = Number.parseInt(String(rawMaxWorkers), 10);
   if (!Number.isFinite(maxWorkers) || maxWorkers <= 0) {
     throw new Error("Invalid --max-workers value. Expected a positive integer.");
+  }
+
+  const rawTimeout = parsed.options["track-timeout"] ?? String(DEFAULT_TRACK_TIMEOUT_MS);
+  const trackTimeoutMs = Number.parseInt(String(rawTimeout), 10);
+  if (!Number.isFinite(trackTimeoutMs) || trackTimeoutMs < 0) {
+    throw new Error("Invalid --track-timeout value. Expected a non-negative integer (ms).");
   }
 
   const logDir = path.resolve(parsed.options["log-dir"] ?? DEFAULT_LOG_DIR);
@@ -410,13 +359,14 @@ async function spawnTracks(parsed) {
       exitCode: 0,
       signal: "",
       durationMs: 0,
+      timedOut: false,
       logFile: path.join(logDir, `${track.taskId}.log`),
       dryRun: true
     }));
   } else {
     results = await runWithWorkerPool(tracks, maxWorkers, async (track) => {
       const logFile = path.join(logDir, `${track.taskId}.log`);
-      return runTrack(track, track.command, logFile);
+      return runTrack(track, track.command, logFile, trackTimeoutMs);
     });
   }
 
@@ -450,7 +400,7 @@ async function spawnTracks(parsed) {
       `Tracks : ${summary.results.length === 0 ? "-" : summary.results.map((item) => item.taskId).join(", ")}`
     );
     for (const result of summary.results) {
-      const marker = result.success ? "PASS" : "FAIL";
+      const marker = result.timedOut ? "TIMEOUT" : result.success ? "PASS" : "FAIL";
       console.log(
         `- ${result.taskId}: ${marker} (exit=${result.exitCode}, ${Math.round(result.durationMs / 1000)}s)`
       );

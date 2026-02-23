@@ -1,22 +1,22 @@
 {
   "version": 1,
   "projectPrefix": "AP",
-  "updatedAt": "2026-02-23",
+  "updatedAt": "2026-02-23T18:28:31.056Z",
   "tasks": [
     {
       "id": "AP-001",
-      "title": "Replace with your first deliverable",
+      "title": "Upgrade multi-perspective review to dynamic perspective selection",
       "priority": "P1",
-      "state": "Backlog",
-      "owner": "VA Auto-Pilot",
+      "state": "Done",
+      "owner": "Claude Code",
       "source": "bootstrap",
       "createdAt": "2026-02-23",
-      "startedAt": "",
-      "completedAt": "",
+      "startedAt": "2026-02-23T18:23:45.854Z",
+      "completedAt": "2026-02-23T18:28:31.055Z",
       "lastFailedAt": "",
       "failCount": 0,
       "reason": "",
-      "verification": "",
+      "verification": "Two cross-reviews (adversarial + protocol designer), 6 CRITICALs resolved, templates synced",
       "notes": "",
       "review": {
         "implementer": "",
@@ -29,7 +29,8 @@
         "flow": "feature-smoke",
         "mustPassRate": "",
         "shouldPassRate": ""
-      }
+      },
+      "dependsOn": []
     }
   ]
 }

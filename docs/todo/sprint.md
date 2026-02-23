@@ -42,9 +42,9 @@
 ## Done
 | ID | Task | Completed | Verification |
 |----|------|-----------|--------------|
-| - | - | - | - |
+| AP-001 | Upgrade multi-perspective review to dynamic perspective selection | 2026-02-23 | Two cross-reviews (adversarial + protocol designer), 6 CRITICALs resolved, templates synced |
 
 ## Backlog
 | Priority | ID | Task | Depends On | Owner | Source |
 |----------|----|------|------------|-------|--------|
-| P1 | AP-001 | Replace with your first deliverable | - | VA Auto-Pilot | bootstrap |
+| - | - | - | - | - | - |
