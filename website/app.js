@@ -1,12 +1,12 @@
 const I18N = {
   en: {
-    "meta.title": "VA Auto-Pilot | Built for Frontier Models",
+    "meta.title": "VA Auto-Pilot | The loop frontier models deserve",
     "meta.description":
-      "VA Auto-Pilot is an autonomous engineering loop built for frontier models. Set goals, constraints, and acceptance criteria. Let the strongest model find the path.",
+      "Stop babysitting your AI. VA Auto-Pilot sets goals, runs the sprint in parallel, reviews adversarially, and delivers — powered by the frontier model you already trust.",
     "meta.ogDescription":
-      "Built for frontier models. Scales with model capability. Set goals and constraints — let the strongest model find the path.",
+      "Finally. An engineering loop that trusts the model as much as you do. Set objectives. Review outcomes. The model handles the rest.",
     "meta.twitterDescription":
-      "Autonomous engineering loop built for frontier models. Constraint-derived perspectives. CLI-enforced correctness gates. Scales with model capability.",
+      "The loop frontier models deserve. Goals in. Reviewed, tested, committed output out. No prompt engineering required.",
 
     "nav.philosophy": "Philosophy",
     "nav.loop": "Loop",
@@ -15,45 +15,39 @@ const I18N = {
 
     "cta.repo": "Repository",
     "cta.install": "Install VA Auto-Pilot Skill",
-    "cta.viewLoop": "Explore the Loop",
+    "cta.viewLoop": "See It Run",
 
-    "hero.eyebrow": "Built for Frontier Models",
-    "hero.title": "Scales with model capability. Set goals and constraints — let the strongest model find the path.",
+    "hero.eyebrow": "For engineers who trust their model",
+    "hero.title": "The loop frontier models deserve.",
     "hero.lead":
-      "VA Auto-Pilot does not compensate for model weakness. It sets the bar high, then trusts the frontier model to reach it. As models improve, the framework improves with them.",
-    "hero.signal1": "Frontier-model-first by design",
-    "hero.signal2": "Perspectives derived from constraints, not role lists",
-    "hero.signal3": "CLI-enforced correctness gates",
+      "You set the objective. The model plans the sprint, runs it in parallel, reviews its own work adversarially, and delivers. You review outcomes, not implementation steps.",
+    "hero.signal1": "Requires Claude Opus 4 / GPT-5 class models",
+    "hero.signal2": "Goals in — reviewed, committed output out",
+    "hero.signal3": "Gets stronger as the model does",
 
-    "philosophy.eyebrow": "Core Architecture",
-    "philosophy.title": "Six ideas that make this framework different",
-    "philosophy.card1.title": "Perspectives emerge from constraints — never from role lists",
+    "philosophy.eyebrow": "Design Bets",
+    "philosophy.title": "Three decisions that change what automation feels like",
+    "philosophy.card1.title": "You don't write prompts anymore.",
     "philosophy.card1.body":
-      "First identify real constraints and anchors. Then ask: which expert views expose the most critical failure modes for this specific change? Perspectives are derived, not assigned. This is why reviews sharpen over time.",
-    "philosophy.card2.title": "The manager delegates — it never implements",
+      "You state an objective, hard constraints, and what done looks like. The model finds the path — no step-by-step instructions, no second-guessing its judgment. This is what strong models are actually good at.",
+    "philosophy.card2.title": "The model reviews its own work and can't fool itself.",
     "philosophy.card2.body":
-      "The manager's value is knowing what must be true, not how to make it true. Implementation is always delegated with objective, constraints, and completion gate. The sub-agent decides the path.",
-    "philosophy.card3.title": "CLI-first is a correctness guarantee",
+      "Before each review, the framework identifies the real constraints and anchors for this specific change. Review perspectives emerge from that analysis — never from a fixed role list. A fresh-context adversarial reviewer closes the sprint, having seen only the diff. Self-validation bias has no room to accumulate.",
+    "philosophy.card3.title": "When the model gets stronger, the framework gets better. No rewrites.",
     "philosophy.card3.body":
-      "Quality gates run via deterministic CLI commands. The model cannot argue past them. npm run check:all either passes or it does not. This separates \"I think it's done\" from \"it is done.\"",
-    "philosophy.card4.title": "Frontier-model-first is a scaling property",
-    "philosophy.card4.body":
-      "This framework does not compensate for model weakness. It designs for strength. As frontier models get more capable, the framework gets better — no rewrites required. Use a weak model and it will fail. That is intentional.",
-    "philosophy.card5.title": "Failure knowledge compounds",
-    "philosophy.card5.body":
-      "Structured failure metadata — hypotheses, missing context, attempted fixes — is captured and injected into future delegations as hard constraints. Each failure makes subsequent delegations more precise. The system gets harder to fool over time.",
+      "Every other framework designs around model weakness — breaking work into tiny steps to keep fragile models on track. This one designs for strength. Capability improvements land automatically. The framework has no ceiling.",
 
     "loop.eyebrow": "Execution Loop",
-    "loop.title": "Strategic decomposition, then tactical sprint, then adversarial gate",
-    "loop.detailKicker": "Current State",
-    "loop.autoplayPause": "Pause Autoplay",
-    "loop.autoplayPlay": "Resume Autoplay",
+    "loop.title": "Watch the states tell a story",
+    "loop.detailKicker": "What happens here",
+    "loop.autoplayPause": "Pause",
+    "loop.autoplayPlay": "Resume",
 
-    "demo.eyebrow": "Animated Demo",
-    "demo.title": "Watch one autonomous cycle — from goal to commit",
+    "demo.eyebrow": "Live Execution",
+    "demo.title": "The three moments that matter",
     "demo.terminalTitle": "Execution Stream",
     "demo.run": "Run Again",
-    "demo.promptKicker": "Goal-First Directive Example",
+    "demo.promptKicker": "What you actually type",
 
     "commands.eyebrow": "Distribution & Commands",
     "commands.title": "Install once, delegate continuously",
@@ -65,13 +59,13 @@ const I18N = {
     "commands.claudeUse": "Claude invocation",
 
     "compare.eyebrow": "Honest Positioning",
-    "compare.title": "Who this is for — and who it is not for",
-    "compare.va.title": "VA Auto-Pilot is for you if",
+    "compare.title": "Not for everyone. Exactly right for some.",
+    "compare.va.title": "This is for you if",
     "compare.va.body":
-      "You run frontier-grade models and want a framework that scales with their capability. You need guaranteed quality gates, adversarial sprint reviews, and a loop that gets smarter from failure. You're willing to accept framework protocol in exchange for compounding guarantees.",
-    "compare.notfor.title": "VA Auto-Pilot is not for you if",
+      "You run Claude Opus 4, GPT-5, or Gemini Ultra class models and you're frustrated that every agent framework still treats them like they need supervision. You want to set objectives and review outcomes — not manage prompts. You need quality guarantees that don't rely on your own review attention. You're ready to accept framework protocol in exchange for an execution loop that compounds over time.",
+    "compare.notfor.title": "This is NOT for you if",
     "compare.notfor.body":
-      "You're using a weak or mid-tier model — the framework won't compensate. You want to control every implementation step. You want minimal ceremony and fast iteration without gates. Or you're running a small, bounded task that a single prompt handles fine.",
+      "You're running anything below Claude Opus 4 / GPT-5 class — the framework will not compensate for a weaker model, and tasks will fail in ways that waste your time. You need to control every implementation step. You want zero-ceremony fast iteration. Or your task is small enough that a single well-written prompt is faster.",
     "compare.link": "Read full comparison",
 
     "credits.eyebrow": "Credits",
@@ -79,7 +73,7 @@ const I18N = {
     "credits.body":
       "Authors: Vadaski, Codex. Acknowledgements: Claude and the Vera project, where many practical patterns were distilled and validated.",
 
-    "footer.tagline": "Built for frontier models. Scales with model capability. Gets smarter from failure.",
+    "footer.tagline": "The loop frontier models deserve. Gets stronger as the model does.",
 
     "common.copy": "Copy",
     "common.copyLink": "Copy Link",
@@ -88,82 +82,87 @@ const I18N = {
     "common.copyFail": "Copy failed"
   },
   zh: {
-    "meta.title": "VA Auto-Pilot | 为最前沿模型而生",
+    "meta.title": "VA Auto-Pilot | \u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF",
     "meta.description":
-      "VA Auto-Pilot 是为最前沿模型而建的自治工程闭环。给出目标、约束与验收标准，让最强的模型找到路径。",
+      "\u505C\u6B62\u76D1\u7BA1\u4F60\u7684 AI\u3002VA Auto-Pilot \u8BBE\u5B9A\u76EE\u6807\u3001\u5E76\u53D1\u6267\u884C\u51B2\u523A\u3001\u5BF9\u6297\u6027\u5BA1\u67E5\u81EA\u8EAB\u5DE5\u4F5C\u5E76\u4EA4\u4ED8\u7ED3\u679C\u2014\u2014\u7531\u4F60\u5DF2\u7ECF\u4FE1\u4EFB\u7684\u524D\u6CBF\u6A21\u578B\u9A71\u52A8\u3002",
     "meta.ogDescription":
-      "为最前沿模型而生。随模型能力扩展。给出目标与约束——让最强模型找到路径。",
-    "meta.twitterDescription": "为前沿模型而建的自治工程闭环。约束推导视角，CLI 强制正确性门禁，随模型能力扩展。",
+      "\u7EC8\u4E8E\u3002\u4E00\u4E2A\u548C\u4F60\u4E00\u6837\u4FE1\u4EFB\u6A21\u578B\u7684\u5DE5\u7A0B\u95ED\u73AF\u3002\u7ED9\u51FA\u76EE\u6807\u3002\u5BA1\u67E5\u7ED3\u679C\u3002\u6A21\u578B\u5904\u7406\u5176\u4F59\u3002",
+    "meta.twitterDescription":
+      "\u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF\u3002\u76EE\u6807\u8F93\u5165\uff0C\u7ECF\u8FC7\u5BA1\u67E5\u3001\u6D4B\u8BD5\u3001\u63D0\u4EA4\u7684\u7ED3\u679C\u8F93\u51FA\u3002\u65E0\u9700\u63D0\u793A\u8BCD\u5DE5\u7A0B\u3002",
 
-    "nav.philosophy": "设计哲学",
-    "nav.loop": "闭环",
-    "nav.commands": "命令",
-    "nav.compare": "定位",
+    "nav.philosophy": "\u8BBE\u8BA1\u54F2\u5B66",
+    "nav.loop": "\u95ED\u73AF",
+    "nav.commands": "\u547D\u4EE4",
+    "nav.compare": "\u5B9A\u4F4D",
 
-    "cta.repo": "仓库",
-    "cta.install": "安装 VA Auto-Pilot Skill",
-    "cta.viewLoop": "查看执行闭环",
+    "cta.repo": "\u4ED3\u5E93",
+    "cta.install": "\u5B89\u88C5 VA Auto-Pilot Skill",
+    "cta.viewLoop": "\u770B\u5B83\u8FD0\u884C",
 
-    "hero.eyebrow": "为最前沿模型而生",
-    "hero.title": "随模型能力扩展。给出目标与约束——让最强模型找到路径。",
-    "hero.lead": "VA Auto-Pilot 不为模型能力不足做补偿。它设定高标准，然后信任前沿模型达到它。模型越强，框架越好。",
-    "hero.signal1": "前沿模型优先，由设计决定",
-    "hero.signal2": "视角从约束推导，而非角色列表分配",
-    "hero.signal3": "CLI 强制正确性门禁",
+    "hero.eyebrow": "\u4E3A\u4FE1\u4EFB\u6A21\u578B\u7684\u5DE5\u7A0B\u5E08\u800C\u751F",
+    "hero.title": "\u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF\u3002",
+    "hero.lead":
+      "\u4F60\u7ED9\u51FA\u76EE\u6807\u3002\u6A21\u578B\u89C4\u5212\u51B2\u523A\u3001\u5E76\u53D1\u6267\u884C\u3001\u5BF9\u6297\u6027\u5BA1\u67E5\u81EA\u8EAB\u5DE5\u4F5C\u5E76\u4EA4\u4ED8\u7ED3\u679C\u3002\u4F60\u5BA1\u67E5\u7ED3\u679C\uff0C\u800C\u4E0D\u662F\u5B9E\u73B0\u6B65\u9AA4\u3002",
+    "hero.signal1": "\u9700\u8981 Claude Opus 4 / GPT-5 \u7EA7\u522B\u6A21\u578B",
+    "hero.signal2": "\u76EE\u6807\u8F93\u5165\u2014\u2014\u7ECF\u5BA1\u67E5\u7684\u63D0\u4EA4\u8F93\u51FA",
+    "hero.signal3": "\u968F\u6A21\u578B\u53D8\u5F3A\u800C\u53D8\u5F3A",
 
-    "philosophy.eyebrow": "核心架构",
-    "philosophy.title": "让这个框架与众不同的六个设计",
-    "philosophy.card1.title": "视角从约束中浮现，而不是从角色列表中分配",
-    "philosophy.card1.body": "首先识别真实的约束与锚点，再问：哪些专家视角能暴露这次特定变更的最关键失败模式？视角是推导出来的，不是指派的。这就是审查随时间变得更精准的原因。",
-    "philosophy.card2.title": "管理者委派——而不是实现",
-    "philosophy.card2.body": "管理 Agent 的价值在于知道什么必须为真，而不是怎么实现。实现总是以目标、约束和完成门禁委派给子 Agent。子 Agent 决定路径。",
-    "philosophy.card3.title": "CLI 优先是正确性保证",
-    "philosophy.card3.body": "质量门禁通过确定性 CLI 命令执行。模型无法用言辞绕过。npm run check:all 只有通过或不通过。这把「我认为做好了」和「确实做好了」分开。",
-    "philosophy.card4.title": "前沿模型优先是一种扩展属性",
-    "philosophy.card4.body": "这个框架不为模型弱点做补偿，而是为强度做设计。随着前沿模型越来越强，框架越来越好——不需要任何改写。用弱模型它会失败，这是有意为之。",
-    "philosophy.card5.title": "失败知识会复利",
-    "philosophy.card5.body": "结构化的失败元数据——假设、缺失上下文、尝试过的修复——被捕获并注入未来的委派中作为硬约束。每一次失败让后续委派更加精准。系统随时间越来越难被愚弄。",
+    "philosophy.eyebrow": "\u8BBE\u8BA1\u8D4C\u6CE8",
+    "philosophy.title": "\u4E09\u4E2A\u6539\u53D8\u81EA\u52A8\u5316\u611F\u53D7\u7684\u51B3\u7B56",
+    "philosophy.card1.title": "\u4F60\u4E0D\u518D\u5199\u63D0\u793A\u8BCD\u4E86\u3002",
+    "philosophy.card1.body":
+      "\u4F60\u8BF4\u660E\u4E00\u4E2A\u76EE\u6807\u3001\u786C\u6027\u7EA6\u675F\u548C\u5B8C\u6210\u6807\u51C6\u3002\u6A21\u578B\u627E\u5230\u8DEF\u5F84\u2014\u2014\u6CA1\u6709\u9010\u6B65\u6307\u4EE4\uff0C\u4E0D\u66FF\u5B83\u505A\u5224\u65AD\u3002\u8FD9\u624D\u662F\u5F3A\u6A21\u578B\u771F\u6B63\u64C5\u957F\u7684\u3002",
+    "philosophy.card2.title": "\u6A21\u578B\u5BA1\u67E5\u81EA\u8EAB\u5DE5\u4F5C\uff0C\u4E14\u65E0\u6CD5\u6B3A\u9A97\u81EA\u5DF1\u3002",
+    "philosophy.card2.body":
+      "\u6BCF\u6B21\u5BA1\u67E5\u524D\uff0C\u6846\u67B6\u5148\u8BC6\u522B\u8FD9\u6B21\u5177\u4F53\u53D8\u66F4\u7684\u771F\u5B9E\u7EA6\u675F\u4E0E\u9526\u70B9\u3002\u5BA1\u67E5\u89C6\u89D2\u4ECE\u8FD9\u4E2A\u5206\u6790\u4E2D\u6D6E\u73B0\u2014\u2014\u4ECE\u4E0D\u662F\u56FA\u5B9A\u89D2\u8272\u5217\u8868\u3002\u51B2\u523A\u7ED3\u675F\u65F6\uff0C\u4E00\u4E2A\u5168\u65B0\u4E0A\u4E0B\u6587\u7684\u5BF9\u6297\u6027\u5BA1\u67E5\u5458\u53EA\u770B diff \u8FDB\u884C\u6536\u5C3E\u5BA1\u67E5\u3002\u81EA\u6211\u9A8C\u8BC1\u504F\u5DEE\u65E0\u7A74\u53EF\u949F\u3002",
+    "philosophy.card3.title": "\u6A21\u578B\u53D8\u5F3A\uff0C\u6846\u67B6\u5373\u53D8\u597D\u3002\u65E0\u9700\u6539\u5199\u3002",
+    "philosophy.card3.body":
+      "\u5176\u4ED6\u6846\u67B6\u90FD\u5728\u56F4\u7ED5\u6A21\u578B\u5F31\u70B9\u8BBE\u8BA1\u2014\u2014\u628A\u5DE5\u4F5C\u62C6\u6210\u5C0F\u6B65\u9AA4\u4EE5\u63A7\u5236\u8106\u5F31\u6A21\u578B\u3002\u8FD9\u4E2A\u6846\u67B6\u4E3A\u5F3A\u5EA6\u800C\u8BBE\u8BA1\u3002\u6A21\u578B\u80FD\u529B\u63D0\u5347\u81EA\u52A8\u8F6C\u5316\u4E3A\u8F93\u51FA\u63D0\u5347\u3002\u6CA1\u6709\u5929\u82B1\u677F\u3002",
 
-    "loop.eyebrow": "执行闭环",
-    "loop.title": "战略拆解，然后战术冲刺，然后对抗性门禁",
-    "loop.detailKicker": "当前状态",
-    "loop.autoplayPause": "暂停自动播放",
-    "loop.autoplayPlay": "继续自动播放",
+    "loop.eyebrow": "\u6267\u884C\u95ED\u73AF",
+    "loop.title": "\u770B\u72B6\u6001\u8BB2\u8FF0\u4E00\u4E2A\u6545\u4E8B",
+    "loop.detailKicker": "\u8FD9\u91CC\u53D1\u751F\u4E86\u4EC0\u4E48",
+    "loop.autoplayPause": "\u6682\u505C",
+    "loop.autoplayPlay": "\u7EE7\u7EED",
 
-    "demo.eyebrow": "动画演示",
-    "demo.title": "观看一轮自治执行——从目标到提交",
-    "demo.terminalTitle": "执行流",
-    "demo.run": "重新演示",
-    "demo.promptKicker": "目标优先指令示例",
+    "demo.eyebrow": "\u5B9E\u65F6\u6267\u884C",
+    "demo.title": "\u4E09\u4E2A\u5173\u952E\u65F6\u523B",
+    "demo.terminalTitle": "\u6267\u884C\u6D41",
+    "demo.run": "\u91CD\u65B0\u6F14\u793A",
+    "demo.promptKicker": "\u4F60\u5B9E\u9645\u8F93\u5165\u7684\u5185\u5BB9",
 
-    "commands.eyebrow": "分发与命令",
-    "commands.title": "一次安装，持续委派",
-    "commands.skillDirLabel": "Skill 目录链接（Codex skill-installer）",
-    "commands.skillRawLabel": "Skill 直链（任意 Agent）",
-    "commands.codexInstall": "Codex 安装",
-    "commands.codexUse": "Codex 调用",
-    "commands.claudeInstall": "Claude 安装",
-    "commands.claudeUse": "Claude 调用",
+    "commands.eyebrow": "\u5206\u53D1\u4E0E\u547D\u4EE4",
+    "commands.title": "\u4E00\u6B21\u5B89\u88C5\uff0C\u6301\u7EED\u59D4\u6D3E",
+    "commands.skillDirLabel": "Skill \u76EE\u5F55\u94FE\u63A5\uFF08Codex skill-installer\uFF09",
+    "commands.skillRawLabel": "Skill \u76F4\u94FE\uFF08\u4EFB\u610F Agent\uFF09",
+    "commands.codexInstall": "Codex \u5B89\u88C5",
+    "commands.codexUse": "Codex \u8C03\u7528",
+    "commands.claudeInstall": "Claude \u5B89\u88C5",
+    "commands.claudeUse": "Claude \u8C03\u7528",
 
-    "compare.eyebrow": "诚实的定位",
-    "compare.title": "适合谁——以及不适合谁",
-    "compare.va.title": "VA Auto-Pilot 适合你，如果",
-    "compare.va.body": "你在用前沿级别的模型，想要一个随能力扩展的框架。你需要有保证的质量门禁、对抗性冲刺审查，以及一个从失败中变聪明的闭环。你愿意接受框架协议，换取复利式的质量保证。",
-    "compare.notfor.title": "VA Auto-Pilot 不适合你，如果",
-    "compare.notfor.body": "你用的是弱或中等模型——框架不会替你补能力。你想控制每一个实现步骤。你想要轻量流程和没有门禁的快速迭代。或者你只是在处理一个单条提示词就能搞定的小任务。",
-    "compare.link": "阅读完整对比",
+    "compare.eyebrow": "\u8BDA\u5B9E\u5B9A\u4F4D",
+    "compare.title": "\u4E0D\u9002\u5408\u6240\u6709\u4EBA\u3002\u5BF9\u67D0\u4E9B\u4EBA\u6B63\u597D\u3002",
+    "compare.va.title": "\u9002\u5408\u4F60\uff0C\u5982\u679C",
+    "compare.va.body":
+      "\u4F60\u5728\u7528 Claude Opus 4\u3001GPT-5 \u6216 Gemini Ultra \u7EA7\u522B\u7684\u6A21\u578B\uff0C\u5BF9\u6BCF\u4E2A Agent \u6846\u67B6\u4ECD\u628A\u5B83\u4EEC\u5F53\u6210\u9700\u8981\u76D1\u7BA1\u7684\u5DE5\u5177\u611F\u5230\u53BF\u5026\u3002\u4F60\u60F3\u8BBE\u5B9A\u76EE\u6807\u5E76\u5BA1\u67E5\u7ED3\u679C\u2014\u2014\u800C\u4E0D\u662F\u7BA1\u7406\u63D0\u793A\u8BCD\u3002\u4F60\u9700\u8981\u4E0D\u4F9D\u8D56\u81EA\u8EAB\u5BA1\u67E5\u6CE8\u610F\u529B\u7684\u8D28\u91CF\u4FDD\u8BC1\u3002\u4F60\u613F\u610F\u63A5\u53D7\u6846\u67B6\u534F\u8BAE\uff0C\u4EE5\u6362\u53D6\u968F\u65F6\u95F4\u590D\u5229\u7684\u6267\u884C\u95ED\u73AF\u3002",
+    "compare.notfor.title": "\u4E0D\u9002\u5408\u4F60\uff0C\u5982\u679C",
+    "compare.notfor.body":
+      "\u4F60\u7528\u7684\u4EFB\u4F55\u6A21\u578B\u4F4E\u4E8E Claude Opus 4 / GPT-5 \u7EA7\u522B\u2014\u2014\u6846\u67B6\u4E0D\u4F1A\u8865\u507F\u8F83\u5F31\u6A21\u578B\u7684\u4E0D\u8DB3\uff0C\u4EFB\u52A1\u5C06\u4EE5\u6D6A\u8D39\u4F60\u65F6\u95F4\u7684\u65B9\u5F0F\u5931\u8D25\u3002\u4F60\u9700\u8981\u63A7\u5236\u6BCF\u4E2A\u5B9E\u73B0\u6B65\u9AA4\u3002\u4F60\u60F3\u8981\u96F6\u4EEA\u5F0F\u5FEB\u901F\u8FED\u4EE3\u3002\u6216\u8005\u4F60\u7684\u4EFB\u52A1\u5C0F\u5230\u4E00\u6761\u63D0\u793A\u8BCD\u5C31\u80FD\u641E\u5B9A\u3002",
+    "compare.link": "\u9605\u8BFB\u5B8C\u6574\u5BF9\u6BD4",
 
-    "credits.eyebrow": "作者与致谢",
-    "credits.title": "由 Vadaski 与 Codex 共创",
-    "credits.body": "作者：Vadaski、Codex。致谢：Claude 与 Vera 项目，许多可复用工程模式在其中被沉淀并验证。",
+    "credits.eyebrow": "\u4F5C\u8005\u4E0E\u81F4\u8C22",
+    "credits.title": "\u7531 Vadaski \u4E0E Codex \u5171\u521B",
+    "credits.body":
+      "\u4F5C\u8005\uFF1AVadaski\u3001Codex\u3002\u81F4\u8C22\uFF1AClaude \u4E0E Vera \u9879\u76EE\uff0C\u8BB8\u591A\u53EF\u590D\u7528\u5DE5\u7A0B\u6A21\u5F0F\u5728\u5176\u4E2D\u88AB\u6C89\u6DC0\u5E76\u9A8C\u8BC1\u3002",
 
-    "footer.tagline": "为最前沿模型而生。随模型能力扩展。从失败中变得更强。",
+    "footer.tagline":
+      "\u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF\u3002\u968F\u6A21\u578B\u53D8\u5F3A\u800C\u53D8\u5F3A\u3002",
 
-    "common.copy": "复制",
-    "common.copyLink": "复制链接",
-    "common.copyCmd": "复制命令",
-    "common.copied": "已复制",
-    "common.copyFail": "复制失败"
+    "common.copy": "\u590D\u5236",
+    "common.copyLink": "\u590D\u5236\u94FE\u63A5",
+    "common.copyCmd": "\u590D\u5236\u547D\u4EE4",
+    "common.copied": "\u5DF2\u590D\u5236",
+    "common.copyFail": "\u590D\u5236\u5931\u8D25"
   }
 };
 
@@ -171,55 +170,55 @@ const STATE_DETAILS = {
   en: [
     {
       title: "Backlog",
-      body: "For high-level goals, a Strategic Decomposition phase runs first: parallel sub-agents each audit one independent dimension of the problem — security, performance, correctness, UX — without cross-contamination. Their findings converge into a prioritized backlog of bounded tasks. Only then does the tactical sprint begin.",
-      checks: ["Goal classified: strategic or tactical", "Dimensions scanned independently", "Backlog populated with concrete, bounded tasks"]
+      body: "The model reads your objective and decides whether it requires strategic decomposition. For complex goals, it launches parallel sub-agents that each audit one independent dimension — security, performance, correctness — without cross-contamination. Their findings converge into a prioritized backlog. The model is a better project planner than most humans when given the right framing. The framework gives it that framing.",
+      checks: ["Goal classified: strategic or tactical", "Parallel dimension scan if strategic", "Bounded tasks committed to backlog before any execution begins"]
     },
     {
       title: "In Progress",
-      body: "Implementation runs under objective + constraints only. No implementation steps are prescribed — the sub-agent decides the path. This is deliberate: strong models reason well from objectives, poorly from step-by-step instructions that second-guess their judgment. Independent tracks run in parallel.",
-      checks: ["Objective and constraints delegated — no how", "Independent tracks parallelized", "CLI-first execution; no self-certification"]
+      body: "The model plans the sprint. It receives an objective and constraints — no implementation steps, no prescribed approach. Strong models reason well from objectives; they reason poorly from instructions that second-guess their judgment. Independent tracks run in parallel. The manager never touches implementation. Its only job: know what must be true when done.",
+      checks: ["Objective + constraints delegated — no how", "Parallel tracks where dependency graph allows", "Model decides path; manager validates outcome"]
     },
     {
       title: "Review",
-      body: "Before review begins, the manager identifies real constraints and anchors for this specific change. Perspectives emerge from that analysis — not from a fixed role list. Each perspective probes failure modes the others miss. A generic role list gives generic assurance. Constraint-derived perspectives give specific assurance.",
-      checks: ["Constraints and anchors identified first", "Perspectives derived — not assigned", "Each perspective probes distinct failure modes"]
+      body: "Before review, the manager identifies the real constraints and anchors for this specific change. Review perspectives emerge from that analysis — never from a generic role list. Each perspective is crafted to expose failure modes the others miss. This is why reviews sharpen over time: constraint-derived perspectives learn. A fixed role list never does.",
+      checks: ["Constraints and anchors identified first", "Perspectives derived from the specific change — not assigned from a list", "Each perspective probes distinct failure modes"]
     },
     {
       title: "Testing",
-      body: "Acceptance flows validate behavior against deterministic CLI gates. MUST assertions must be 100% — these are correctness requirements. SHOULD assertions enforce a quality floor at >= 80%. Parallel tracks synchronize here before any state promotion. The model cannot argue past a failing gate.",
-      checks: ["MUST = 100%", "SHOULD >= 80%", "Parallel tracks synchronize at gates before promotion"]
+      body: "Acceptance gates are deterministic CLI commands. The model cannot argue its way through a failing gate, declare success by assertion, or self-certify quality. MUST assertions require 100% — these are correctness requirements, not targets. SHOULD assertions enforce a quality floor at 80%. Parallel tracks synchronize here before any state can advance.",
+      checks: ["MUST = 100% (correctness requirements)", "SHOULD >= 80% (quality floor)", "Parallel tracks synchronize before state promotion — no partial advances"]
     },
     {
       title: "Done",
-      body: "Before a sprint reaches Done, a fresh-context adversarial reviewer runs — one who has seen only the diff, not what was intended. Their job: find what the sprint team was blind to. This is the Sprint Completion Gate. It exists to prevent self-validation bias from accumulating across sprints until a significant regression slips through.",
-      checks: ["Adversarial reviewer: fresh context, diff only", "CRITICAL findings block completion", "Commit created only after gate clears"]
+      body: "Every sprint ends with a fresh-context adversarial reviewer who has seen only the diff — not what was intended, not what was discussed. Their job: find what the sprint team was blind to. This is the Sprint Completion Gate. It exists because self-validation bias is structural, not a failure of care. The adversarial reviewer is structurally unable to be fooled by good intentions.",
+      checks: ["Adversarial reviewer: fresh context, diff only — no access to sprint intent", "CRITICAL findings block completion and re-enter backlog", "Commit created only after gate clears"]
     }
   ],
   zh: [
     {
       title: "Backlog",
-      body: "对于高层目标，首先运行战略拆解阶段：并行子 Agent 各自独立审计问题的一个维度——安全、性能、正确性、体验——各维度之间不交叉污染。所有发现汇聚成有优先级的有界任务待办。只有在此之后，战术冲刺才开始。",
-      checks: ["目标分类：战略级还是战术级", "各维度独立扫描", "待办填充为具体有界的任务"]
+      body: "\u6A21\u578B\u8BFB\u53D6\u4F60\u7684\u76EE\u6807\u5E76\u5224\u65AD\u662F\u5426\u9700\u8981\u6218\u7565\u62C6\u89E3\u3002\u5BF9\u4E8E\u590D\u6742\u76EE\u6807\uff0C\u5B83\u542F\u52A8\u5E76\u884C\u5B50 Agent \uff0C\u6BCF\u4E2A\u72EC\u7ACB\u5BF9\u4E00\u4E2A\u7EF4\u5EA6\u8FDB\u884C\u5BA1\u8BA1\u2014\u2014\u5404\u7EF4\u5EA6\u4E4B\u95F4\u4E0D\u4EA4\u53C9\u6C61\u67D3\u3002\u5B83\u4EEC\u7684\u53D1\u73B0\u6C47\u805A\u6210\u6709\u4F18\u5148\u7EA7\u7684\u5F85\u529E\u5217\u8868\u3002\u5728\u6B63\u786E\u7684\u8BBE\u5B9A\u4E0B\uff0C\u6A21\u578B\u6BD4\u5927\u591A\u6570\u4EBA\u66F4\u64C5\u957F\u9879\u76EE\u89C4\u5212\u3002\u6846\u67B6\u63D0\u4F9B\u8FD9\u4E2A\u8BBE\u5B9A\u3002",
+      checks: ["\u76EE\u6807\u5206\u7C7B\uFF1A\u6218\u7565\u7EA7\u8FD8\u662F\u6218\u672F\u7EA7", "\u6218\u7565\u76EE\u6807\u542F\u52A8\u5E76\u884C\u7EF4\u5EA6\u626B\u63CF", "\u6240\u6709\u4EFB\u52A1\u6709\u754C\u5316\u5E76\u5199\u5165\u5F85\u529E\u540E\u624D\u5F00\u59CB\u6267\u884C"]
     },
     {
       title: "In Progress",
-      body: "只基于目标与约束执行——不规定实现步骤，子 Agent 自己决定路径。这是有意为之的：强模型从目标出发推理很好，从替它做判断的步骤清单出发推理效果差。独立轨道并发推进。",
-      checks: ["只委派目标和约束——不给怎么做", "独立轨道并发执行", "CLI 优先；不允许自我认证"]
+      body: "\u6A21\u578B\u89C4\u5212\u51B2\u523A\u3002\u5B83\u63A5\u6536\u76EE\u6807\u548C\u7EA6\u675F\u2014\u2014\u6CA1\u6709\u5B9E\u73B0\u6B65\u9AA4\uff0C\u6CA1\u6709\u89C4\u5B9A\u65B9\u6CD5\u3002\u5F3A\u6A21\u578B\u4ECE\u76EE\u6807\u51FA\u53D1\u63A8\u7406\u5F97\u5F88\u597D\uff1B\u5B83\u4EEC\u4ECE\u66FF\u5B83\u505A\u5224\u65AD\u7684\u6B65\u9AA4\u6E05\u5355\u51FA\u53D1\u63A8\u7406\u5F97\u5F88\u5DEE\u3002\u72EC\u7ACB\u8F68\u9053\u5E76\u53D1\u63A8\u8FDB\u3002\u7BA1\u7406\u8005\u4ECE\u4E0D\u63A5\u89E6\u5B9E\u73B0\u3002",
+      checks: ["\u53EA\u59D4\u6D3E\u76EE\u6807\u548C\u7EA6\u675F\u2014\u2014\u4E0D\u89C4\u5B9A\u5982\u4F55\u5B9E\u73B0", "\u4F9D\u636E\u4F9D\u8D56\u56FE\u5E76\u53D1\u6267\u884C\u72EC\u7ACB\u8F68\u9053", "\u6A21\u578B\u51B3\u5B9A\u8DEF\u5F84\uff1B\u7BA1\u7406\u8005\u9A8C\u8BC1\u7ED3\u679C"]
     },
     {
       title: "Review",
-      body: "评审开始前，管理 Agent 先识别这次具体变更的真实约束与锚点。视角从这个分析中浮现——而不是从固定角色列表中分配。每个视角探测其他视角遗漏的失败模式。通用角色列表给出通用保证；约束推导视角给出针对性保证。",
-      checks: ["首先识别约束与锚点", "视角推导而来——不是指派", "每个视角探测不同失败模式"]
+      body: "\u5BA1\u67E5\u524D\uff0C\u7BA1\u7406\u8005\u5148\u8BC6\u522B\u8FD9\u6B21\u5177\u4F53\u53D8\u66F4\u7684\u771F\u5B9E\u7EA6\u675F\u4E0E\u9526\u70B9\u3002\u5BA1\u67E5\u89C6\u89D2\u4ECE\u8FD9\u4E2A\u5206\u6790\u4E2D\u6D6E\u73B0\u2014\u2014\u4ECE\u4E0D\u662F\u901A\u7528\u89D2\u8272\u5217\u8868\u3002\u6BCF\u4E2A\u89C6\u89D2\u88AB\u8BBE\u8BA1\u4E3A\u66B4\u9732\u5176\u4ED6\u89C6\u89D2\u9057\u6F0F\u7684\u5931\u8D25\u6A21\u5F0F\u3002\u8FD9\u5C31\u662F\u5BA1\u67E5\u968F\u65F6\u95F4\u53D8\u5F97\u66F4\u7B80\u9510\u7684\u539F\u56E0\u3002",
+      checks: ["\u5148\u8BC6\u522B\u7EA6\u675F\u4E0E\u9526\u70B9", "\u89C6\u89D2\u4ECE\u5177\u4F53\u53D8\u66F4\u63A8\u5BFC\u2014\u2014\u4E0D\u662F\u4ECE\u5217\u8868\u6307\u6D3E", "\u6BCF\u4E2A\u89C6\u89D2\u63A2\u6D4B\u4E0D\u540C\u5931\u8D25\u6A21\u5F0F"]
     },
     {
       title: "Testing",
-      body: "验收流通过确定性 CLI 门禁验证行为。MUST 断言必须 100% 通过——这是正确性要求。SHOULD 断言在 >= 80% 处强制质量下限。并发轨道在此同步，然后才能推进状态。模型无法用言辞绕过失败的门禁。",
-      checks: ["MUST = 100%", "SHOULD >= 80%", "并发轨道在门禁处同步后才推进状态"]
+      body: "\u9A8C\u6536\u95E8\u7981\u662F\u786E\u5B9A\u6027\u7684 CLI \u547D\u4EE4\u3002\u6A21\u578B\u65E0\u6CD5\u901A\u8FC7\u5931\u8D25\u7684\u95E8\u7981\u3001\u65E0\u6CD5\u901A\u8FC7\u8BED\u8A00\u5BA3\u79F0\u6210\u529F\u3001\u65E0\u6CD5\u81EA\u6211\u8BA4\u8BC1\u8D28\u91CF\u3002MUST \u65AD\u8A00\u9700 100% \u901A\u8FC7\u2014\u2014\u8FD9\u662F\u6B63\u786E\u6027\u8981\u6C42\uff0C\u4E0D\u662F\u76EE\u6807\u3002SHOULD \u65AD\u8A00\u5728 80% \u5904\u5F3A\u5236\u8D28\u91CF\u4E0B\u9650\u3002\u5E76\u53D1\u8F68\u9053\u5728\u6B64\u540C\u6B65\u3002",
+      checks: ["MUST = 100%\uFF08\u6B63\u786E\u6027\u8981\u6C42\uFF09", "SHOULD >= 80%\uFF08\u8D28\u91CF\u4E0B\u9650\uFF09", "\u5E76\u53D1\u8F68\u9053\u5728\u72B6\u6001\u63A8\u8FDB\u524D\u540C\u6B65\u2014\u2014\u4E0D\u5141\u8BB8\u90E8\u5206\u63A8\u8FDB"]
     },
     {
       title: "Done",
-      body: "冲刺到达 Done 之前，一个全新上下文的对抗性审查员运行——他只看到 diff，看不到意图是什么。他的工作：找到冲刺团队视而不见的东西。这是冲刺收尾门禁，防止自我验证偏差在冲刺间累积，直到一个重大回归悄悄通过。",
-      checks: ["对抗性审查员：全新上下文，只看 diff", "CRITICAL 发现阻断完成", "门禁通过后才创建提交"]
+      body: "\u6BCF\u4E2A\u51B2\u523A\u7ED3\u675F\u65F6\uff0C\u4E00\u4E2A\u5168\u65B0\u4E0A\u4E0B\u6587\u7684\u5BF9\u6297\u6027\u5BA1\u67E5\u5458\u8FD0\u884C\u2014\u2014\u4ED6\u53EA\u770B\u5230 diff\uFF0C\u770B\u4E0D\u5230\u610F\u56FE\u548C\u8BA8\u8BBA\u3002\u4ED6\u7684\u4EFB\u52A1\uFF1A\u627E\u5230\u51B2\u523A\u56E2\u961F\u89C6\u800C\u4E0D\u89C1\u7684\u4E1C\u897F\u3002\u8FD9\u662F\u51B2\u523A\u6536\u5C3E\u95E8\u7981\u3002\u5B83\u7684\u5B58\u5728\u662F\u56E0\u4E3A\u81EA\u6211\u9A8C\u8BC1\u504F\u5DEE\u662F\u7ED3\u6784\u6027\u7684\u95EE\u9898\u3002",
+      checks: ["\u5BF9\u6297\u6027\u5BA1\u67E5\u5458\uFF1A\u5168\u65B0\u4E0A\u4E0B\u6587\uff0C\u53EA\u770B diff", "CRITICAL \u53D1\u73B0\u963B\u65AD\u5B8C\u6210\u5E76\u91CD\u8FDB\u5F85\u529E", "\u95E8\u7981\u901A\u8FC7\u540E\u624D\u521B\u5EFA\u63D0\u4EA4"]
     }
   ]
 };
@@ -227,39 +226,59 @@ const STATE_DETAILS = {
 const DEMO_LINES = {
   en: [
     "$ va-auto-pilot",
-    "[manager] Read human-board + run-journal",
-    "[manager] Goal is strategic — running dimension scan",
-    "[scan] 3 parallel sub-agents: correctness / security / UX",
-    "[scan] dimensions converged -> 7 bounded tasks added to backlog",
-    "[manager] next -> AP-014: improve checkout reliability under 300ms p95",
-    "[delegation] objective + constraints delegated — no implementation steps",
-    "[manager] spawn 3 parallel CLI tracks (api / ui / tests)",
+    "[manager] Reading human-board + run-journal ...",
+    "[manager] Goal classified: strategic — launching parallel dimension scan",
+    "[moment 1] The model plans the sprint",
+    "[scan:correctness] auditing checkout edge cases ...",
+    "[scan:security] auditing auth token surface ...",
+    "[scan:ux] auditing activation funnel ...",
+    "[scan] 3 dimensions converged -> 9 bounded tasks written to backlog",
+    "[manager] Sprint plan committed. Starting AP-017: checkout reliability",
+    "[delegation] objective + hard constraints delegated — no implementation steps",
+    "[tracks] 3 parallel CLI tracks spawned (api / ui / tests)",
     "[gate] npm run check:all ... PASS",
-    "[gate] parallel outputs synchronized",
+    "[moment 2] Adversarial review catches something",
+    "[review] constraint: auth token must never log in plaintext",
+    "[review] anchor: no PII in any log output",
+    "[review:threat-model] CRITICAL: token appears in debug trace at line 847",
+    "[fix] removing debug trace — re-running review ...",
+    "[review:threat-model] PASS",
     "[gate] codex review --uncommitted ... PASS",
     "[gate] npm run validate:distribution ... PASS",
+    "[moment 3] Pitfall guide prevents a known failure",
+    "[pitfall-check] PF-003: p95 degradation under parallel load — injected as hard constraint",
     "[gate] Sprint Completion Gate: adversarial reviewer (diff only) ... PASS",
-    "[state] AP-014 -> Done",
-    "[journal] appended: failure hypothesis + pitfall entry",
-    "[loop] continue with next highest priority task"
+    "[state] AP-017 -> Done",
+    "[pitfall] resolved: PF-003 — constraint prevented recurrence",
+    "[loop] Next highest priority task ..."
   ],
   zh: [
     "$ va-auto-pilot",
-    "[manager] 读取 human-board + run-journal",
-    "[manager] 目标为战略级——运行维度扫描",
-    "[扫描] 3 个并行子 Agent：正确性 / 安全 / 体验",
-    "[扫描] 各维度汇聚 -> 7 个有界任务加入待办",
-    "[manager] next -> AP-014：在 p95<300ms 下提升结算稳定性",
-    "[委派] 目标+约束已委派——不规定实现步骤",
-    "[manager] 启动 3 条并发轨道（api / ui / tests）",
-    "[门禁] npm run check:all ... PASS",
-    "[门禁] 并发输出已同步",
-    "[门禁] codex review --uncommitted ... PASS",
-    "[门禁] npm run validate:distribution ... PASS",
-    "[门禁] 冲刺收尾门禁：对抗性审查（仅 diff）... PASS",
-    "[状态] AP-014 -> Done",
-    "[日志] 已追加：失败假设 + 陷阱条目",
-    "[循环] 进入下一优先级任务"
+    "[manager] \u8BFB\u53D6 human-board + run-journal ...",
+    "[manager] \u76EE\u6807\u5206\u7C7B\uFF1A\u6218\u7565\u7EA7\u2014\u2014\u542F\u52A8\u5E76\u884C\u7EF4\u5EA6\u626B\u63CF",
+    "[\u5173\u952E\u65F6\u523B 1] \u6A21\u578B\u89C4\u5212\u51B2\u523A",
+    "[\u626B\u63CF:\u6B63\u786E\u6027] \u5BA1\u8BA1\u7ED3\u7B97\u8FB9\u754C\u60C5\u51B5 ...",
+    "[\u626B\u63CF:\u5B89\u5168] \u5BA1\u8BA1\u8BA4\u8BC1\u4EE4\u724C\u9762\u5F71 ...",
+    "[\u626B\u63CF:\u4F53\u9A8C] \u5BA1\u8BA1\u6FC0\u6D3B\u6F0F\u6597 ...",
+    "[\u626B\u63CF] 3 \u4E2A\u7EF4\u5EA6\u6C47\u805A -> 9 \u4E2A\u6709\u754C\u4EFB\u52A1\u5199\u5165\u5F85\u529E",
+    "[manager] \u51B2\u523A\u8BA1\u5212\u5DF2\u63D0\u4EA4\u3002\u5F00\u59CB AP-017\uFF1A\u7ED3\u7B97\u7A33\u5B9A\u6027",
+    "[\u59D4\u6D3E] \u76EE\u6807+\u786C\u6027\u7EA6\u675F\u5DF2\u59D4\u6D3E\u2014\u2014\u4E0D\u89C4\u5B9A\u5B9E\u73B0\u6B65\u9AA4",
+    "[\u8F68\u9053] \u5DF2\u542F\u52A8 3 \u6761\u5E76\u53D1 CLI \u8F68\u9053\uFF08api / ui / tests\uFF09",
+    "[\u95E8\u7981] npm run check:all ... PASS",
+    "[\u5173\u952E\u65F6\u523B 2] \u5BF9\u6297\u6027\u5BA1\u67E5\u53D1\u73B0\u95EE\u9898",
+    "[\u5BA1\u67E5] \u7EA6\u675F\uFF1A\u8BA4\u8BC1\u4EE4\u724C\u7EF6\u4E0D\u80FD\u660E\u6587\u8BB0\u5F55\u65E5\u5FD7",
+    "[\u5BA1\u67E5] \u9526\u70B9\uFF1A\u6240\u6709\u65E5\u5FD7\u4E0D\u5F97\u5305\u542B PII",
+    "[\u5BA1\u67E5:\u5A01\u80C1\u5EFA\u6A21] CRITICAL\uFF1A\u4EE4\u724C\u51FA\u73B0\u5728\u7B2C 847 \u884C\u8C03\u8BD5\u8F68\u8FF9",
+    "[\u4FEE\u590D] \u79FB\u9664\u8C03\u8BD5\u8F68\u8FF9\u2014\u2014\u91CD\u65B0\u5BA1\u67E5 ...",
+    "[\u5BA1\u67E5:\u5A01\u80C1\u5EFA\u6A21] PASS",
+    "[\u95E8\u7981] codex review --uncommitted ... PASS",
+    "[\u95E8\u7981] npm run validate:distribution ... PASS",
+    "[\u5173\u952E\u65F6\u523B 3] \u9677\u9631\u6307\u5357\u9884\u9632\u5DF2\u77E5\u5931\u8D25",
+    "[\u9677\u9631\u68C0\u67E5] PF-003\uFF1A\u5E76\u53D1\u8D1F\u8F7D\u4E0B p95 \u964D\u7EA7\u2014\u2014\u5DF2\u4F5C\u4E3A\u786C\u6027\u7EA6\u675F\u6CE8\u5165",
+    "[\u95E8\u7981] \u51B2\u523A\u6536\u5C3E\u95E8\u7981\uFF1A\u5BF9\u6297\u6027\u5BA1\u67E5\uFF08\u4EC5 diff\uFF09... PASS",
+    "[\u72B6\u6001] AP-017 -> Done",
+    "[\u9677\u9631] \u5DF2\u89E3\u51B3\uFF1APF-003\u2014\u2014\u7EA6\u675F\u9632\u6B62\u4E86\u518D\u6B21\u53D1\u751F",
+    "[\u5FAA\u73AF] \u4E0B\u4E00\u4E2A\u6700\u9AD8\u4F18\u5148\u7EA7\u4EFB\u52A1 ..."
   ]
 };
 
@@ -267,31 +286,31 @@ const GOAL_PROMPTS = {
   en: `$va-auto-pilot
 
 Objective:
-Launch onboarding v2 that improves activation by >= 12%.
+Ship onboarding v2 with >= 12% activation lift.
 
 Constraints:
-- Keep architecture boundaries unchanged
+- No architecture boundary changes
 - No security regressions
-- Keep p95 response under 300ms
+- p95 latency stays under 300ms
 
 Acceptance:
-- typecheck/lint/test pass
-- review has no blocking findings
-- acceptance flow MUST 100%, SHOULD >= 80%`,
+- typecheck / lint / tests pass
+- codex review: no blocking findings
+- acceptance flow: MUST 100%, SHOULD >= 80%`,
   zh: `$va-auto-pilot
 
-目标：
-上线 onboarding v2，激活率提升 >= 12%。
+\u76EE\u6807\uFF1A
+\u4E0A\u7EBF onboarding v2\uFF0C\u6FC0\u6D3B\u7387\u63D0\u5347 >= 12%\u3002
 
-约束：
-- 不改变架构边界
-- 不引入安全回归
-- p95 响应保持在 300ms 内
+\u7EA6\u675F\uFF1A
+- \u4E0D\u6539\u53D8\u67B6\u6784\u8FB9\u754C
+- \u4E0D\u5F15\u5165\u5B89\u5168\u56DE\u5F52
+- p95 \u54CD\u5E94\u4FDD\u6301\u5728 300ms \u5185
 
-验收：
-- typecheck/lint/test 全通过
-- review 无阻断问题
-- 验收流 MUST 100%，SHOULD >= 80%`
+\u9A8C\u6536\uFF1A
+- typecheck / lint / test \u5168\u901A\u8FC7
+- codex review \u65E0\u963B\u65AD\u95EE\u9898
+- \u9A8C\u6536\u6D41 MUST 100%\uFF0CSHOULD >= 80%`
 };
 
 let currentLang = localStorage.getItem("va_auto_pilot_lang") === "zh" ? "zh" : "en";
@@ -589,7 +608,7 @@ function renderDynamicContent() {
   setText(
     "codexUseCmd",
     currentLang === "zh"
-      ? "$va-auto-pilot 在当前仓库按最高标准执行一轮闭环，不要我给实现步骤"
+      ? "$va-auto-pilot \u5728\u5F53\u524D\u4ED3\u5E93\u6309\u6700\u9AD8\u6807\u51C6\u6267\u884C\u4E00\u8F6E\u95ED\u73AF\uFF0C\u4E0D\u8981\u7ED9\u5B9E\u73B0\u6B65\u9AA4"
       : "$va-auto-pilot run one full loop in this repo with highest standards; do not ask me for implementation steps"
   );
 
