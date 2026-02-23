@@ -49,9 +49,6 @@ const requiredFiles = [
   "scripts/lib/sprint-utils.mjs",
   "docs/todo/run-journal.md",
   "templates/.va-auto-pilot/sprint-state.json",
-  "templates/scripts/sprint-board.mjs",
-  "templates/scripts/va-parallel-runner.mjs",
-  "templates/scripts/lib/sprint-utils.mjs",
   "templates/docs/todo/run-journal.md",
   ".github/workflows/deploy-website.yml",
   "docs/operations/va-auto-pilot-protocol.md"
@@ -157,29 +154,6 @@ if (fs.existsSync(sprintBoardPath)) {
     fail(
       `CLI smoke test failed: 'node scripts/sprint-board.mjs --help' exited ${result.status}.\n  stderr: ${String(result.stderr ?? "").slice(0, 200)}`
     );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 6. Template scripts must match their scripts/ counterparts
-//    (content equality — catches drift between the two copies)
-// ---------------------------------------------------------------------------
-
-const mirroredScripts = [
-  ["scripts/sprint-board.mjs", "templates/scripts/sprint-board.mjs"],
-  ["scripts/va-parallel-runner.mjs", "templates/scripts/va-parallel-runner.mjs"],
-  ["scripts/lib/sprint-utils.mjs", "templates/scripts/lib/sprint-utils.mjs"]
-];
-
-for (const [src, tpl] of mirroredScripts) {
-  const srcPath = path.join(root, src);
-  const tplPath = path.join(root, tpl);
-  if (!fs.existsSync(srcPath) || !fs.existsSync(tplPath)) continue;
-
-  const srcContent = fs.readFileSync(srcPath, "utf8");
-  const tplContent = fs.readFileSync(tplPath, "utf8");
-  if (srcContent !== tplContent) {
-    fail(`Template drift: ${tpl} differs from ${src}. Run 'cp ${src} ${tpl}' to sync.`);
   }
 }
 

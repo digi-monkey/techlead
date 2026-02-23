@@ -1,7 +1,7 @@
 {
   "version": 1,
   "projectPrefix": "AP",
-  "updatedAt": "2026-02-23T19:10:38.747Z",
+  "updatedAt": "2026-02-23T19:20:49.630Z",
   "tasks": [
     {
       "id": "AP-001",
@@ -210,11 +210,11 @@
       "id": "AP-008",
       "title": "Resolve templates/ dual-copy maintenance burden",
       "priority": "P2",
-      "state": "Backlog",
+      "state": "In Progress",
       "owner": "",
       "source": "human-board observation #2",
       "createdAt": "2026-02-23",
-      "startedAt": "",
+      "startedAt": "2026-02-23T19:20:49.629Z",
       "completedAt": "",
       "lastFailedAt": "",
       "failCount": 0,

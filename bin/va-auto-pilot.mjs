@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const templatesRoot = path.join(repoRoot, "templates");
+const scriptsRoot = path.join(repoRoot, "scripts");
 
 const DEFAULTS = {
   PROJECT_PREFIX: "TASK",
@@ -156,10 +157,11 @@ function resolveContext(opts) {
 }
 
 function writeTemplateFiles(targetDir, context, { force, dryRun }) {
-  const files = walkFiles(templatesRoot);
   const written = [];
 
-  for (const relativePath of files) {
+  // 1. Per-project template files (support {{TOKEN}} substitution).
+  const templateFiles = walkFiles(templatesRoot);
+  for (const relativePath of templateFiles) {
     const source = path.join(templatesRoot, relativePath);
     const destination = path.join(targetDir, relativePath);
 
@@ -179,6 +181,29 @@ function writeTemplateFiles(targetDir, context, { force, dryRun }) {
 
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.writeFileSync(destination, rendered, "utf8");
+    written.push({ destination, dryRun: false });
+  }
+
+  // 2. Scripts — copied verbatim from the package's own scripts/ directory.
+  //    These are the single source of truth; there is no separate templates/scripts/ copy.
+  const scriptFiles = walkFiles(scriptsRoot);
+  for (const relativePath of scriptFiles) {
+    const source = path.join(scriptsRoot, relativePath);
+    const destination = path.join(targetDir, "scripts", relativePath);
+
+    if (fs.existsSync(destination) && !force) {
+      throw new Error(
+        `Refusing to overwrite existing file: ${destination}. Use --force to overwrite.`
+      );
+    }
+
+    if (dryRun) {
+      written.push({ destination, dryRun: true });
+      continue;
+    }
+
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination);
     written.push({ destination, dryRun: false });
   }
 
