@@ -106,3 +106,13 @@
 ## 2026-02-23T19:31:54.606Z - AP-010
 - Summary: Added Sprint Completion Gate section to docs/operations/va-auto-pilot-protocol.md and templates/docs/operations/va-auto-pilot-protocol.md. Section runs before any sprint is declared Done. Key design decisions: reviewer receives only the git diff and changed file state — no intent context; manager must assign a specific perspective derived from what changed (examples show stake-based framing, not role labels); CRITICAL findings block completion and re-enter task loop; WARNING requires recorded disposition. Critical design fix from adversarial review (Sprint 4 post-sprint gate): the guard was a disclosure, not a control. Fixed: when fresh-context condition is flagged imperfect, all PASS findings are downgraded to WARNING pending genuine fresh-context review. This makes the imperfection consequential rather than cosmetic. Self-referential note: this sprint's adversarial review was run by the implementing agent (imperfect fresh-context). Per the new guard, PASS findings from that review are treated as WARNING. Flagged in this journal entry. All gates pass.
 ---
+
+## 2026-02-23T19:41:32.839Z - AP-011
+- Summary: Added retrospective failure log (pitfalls.json) and pitfall guide CLI to sprint-board.mjs. Structured failureDetail on update --state Failed. pitfall command: add/resolve/list with isolated_pitfalls test support. Pitfall count surfaced in sprint-board summary. Protocol updated: Operational Memory Contract (read pitfalls.json each cycle), State Update Contract (record pitfall on Failed), Delegation Contract (inject pitfalls into Hard constraints). Sprint Completion Gate adversarial review (reliability engineer / write-only log perspective) found 3 WARNINGs: two fixed (summary pitfall count, list summary line), one accepted (fuzzy keyword overlap in protocol is intentional flexibility).
+- Files: `scripts/sprint-board.mjs`, `scripts/test-cli-flows.mjs`, `scripts/validate-distribution.mjs`, `docs/operations/va-auto-pilot-protocol.md`, `templates/docs/operations/va-auto-pilot-protocol.md`, `templates/.va-auto-pilot/pitfalls.json`, `test-flows/pitfall-cli.yaml`
+- Signals:
+  - pitfall command uses --pitfalls-file for test isolation
+  - readPitfalls falls back to empty state if file missing
+  - failureDetail only written when at least one structured field is provided
+  - --list --json returns raw entries array
+---

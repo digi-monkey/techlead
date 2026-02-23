@@ -1,7 +1,7 @@
 {
   "version": 1,
   "projectPrefix": "AP",
-  "updatedAt": "2026-02-23T19:34:52.839Z",
+  "updatedAt": "2026-02-23T19:41:21.944Z",
   "tasks": [
     {
       "id": "AP-001",
@@ -297,16 +297,16 @@
       "id": "AP-011",
       "title": "Add retrospective failure log: capture structured failure metadata and pitfall guide",
       "priority": "P1",
-      "state": "In Progress",
+      "state": "Done",
       "owner": "",
       "source": "human direction",
       "createdAt": "2026-02-23",
       "startedAt": "2026-02-23T19:34:52.839Z",
-      "completedAt": "",
+      "completedAt": "2026-02-23T19:41:21.943Z",
       "lastFailedAt": "",
       "failCount": 0,
       "reason": "",
-      "verification": "",
+      "verification": "pitfall CLI (add/resolve/list), failureDetail on update --state Failed, templates/.va-auto-pilot/pitfalls.json, protocol updated (Operational Memory, State Update, Delegation contracts), pitfall count in summary, 9 new CLI flow tests pass, all 41 unit tests pass, validate:distribution passes",
       "notes": "",
       "review": {
         "implementer": "",
