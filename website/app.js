@@ -1,13 +1,15 @@
 const I18N = {
   en: {
-    "meta.title": "VA Auto-Pilot | The loop frontier models deserve",
+    "meta.title": "VA Auto-Pilot | Objective-First Engineering Loop",
     "meta.description":
-      "Stop babysitting your AI. VA Auto-Pilot sets goals, runs the sprint in parallel, reviews adversarially, and delivers — powered by the frontier model you already trust.",
+      "For engineering leaders using frontier models: objective and constraints in, merge-ready delivery out with deterministic quality gates.",
     "meta.ogDescription":
-      "Finally. An engineering loop that trusts the model as much as you do. Set objectives. Review outcomes. The model handles the rest.",
+      "Engineering leadership loop for frontier models: governed parallel execution, adversarial review, and deterministic release gates.",
     "meta.twitterDescription":
-      "The loop frontier models deserve. Goals in. Reviewed, tested, committed output out. No prompt engineering required.",
+      "Engineering-leadership AI loop: objective in, governed delivery out.",
 
+    "nav.menu": "Menu",
+    "nav.advantages": "Advantages",
     "nav.philosophy": "Philosophy",
     "nav.loop": "Loop",
     "nav.commands": "Commands",
@@ -17,40 +19,61 @@ const I18N = {
     "cta.install": "Install VA Auto-Pilot Skill",
     "cta.viewLoop": "See It Run",
 
-    "hero.eyebrow": "For engineers who trust their model",
-    "hero.title": "The loop frontier models deserve.",
+    "hero.eyebrow": "For engineering leaders responsible for delivery quality",
+    "hero.title": "Ship with AI speed and engineering-level control.",
     "hero.lead":
-      "You set the objective. The model plans the sprint, runs it in parallel, reviews its own work adversarially, and delivers. You review outcomes, not implementation steps.",
-    "hero.signal1": "Requires Claude Opus 4 / GPT-5 class models",
-    "hero.signal2": "Goals in — reviewed, committed output out",
-    "hero.signal3": "Gets stronger as the model does",
+      "Set objective, constraints, and release criteria. VA Auto-Pilot runs planning, parallel execution, adversarial review, and deterministic gates so your team reviews outcomes, not prompt minutiae.",
+    "hero.signal1": "Requires Claude Opus 4.6 or gpt-5.3-codex class models",
+    "hero.signal2": "Roadmap objective in -> audit-traceable commit out",
+    "hero.signal3": "Lower review load, higher release confidence",
 
-    "philosophy.eyebrow": "Design Bets",
-    "philosophy.title": "Three decisions that change what automation feels like",
-    "philosophy.card1.title": "You don't write prompts anymore.",
+    "advantages.eyebrow": "Manager Value",
+    "advantages.title": "Built for predictability, governance, and throughput",
+    "advantages.card1.title": "Predictable execution under AI autonomy",
+    "advantages.card1.body":
+      "State-driven workflow and explicit gates keep execution visible. No hidden agent drift, no unclear handoffs.",
+    "advantages.card2.title": "Risk control before merge",
+    "advantages.card2.body":
+      "Constraint-derived review perspectives plus fresh-context adversarial completion checks catch security, quality, and product risks earlier.",
+    "advantages.card3.title": "Higher throughput without process debt",
+    "advantages.card3.body":
+      "Parallel tracks accelerate complex work while keeping one governance contract across repositories.",
+    "advantages.outcome.title": "What engineering managers get",
+    "advantages.outcome.item1": "Shorter cycle time on multi-step initiatives",
+    "advantages.outcome.item2": "Fewer late-stage regressions and rollbacks",
+    "advantages.outcome.item3": "Clear intervention points when tasks stall or fail",
+
+    "philosophy.eyebrow": "Operating Thesis",
+    "philosophy.title": "Three principles for managing AI delivery at scale",
+    "philosophy.card1.title": "Manage intent and constraints, not keystrokes.",
     "philosophy.card1.body":
-      "You state an objective, hard constraints, and what done looks like. The model finds the path — no step-by-step instructions, no second-guessing its judgment. This is what strong models are actually good at.",
-    "philosophy.card2.title": "The model reviews its own work and can't fool itself.",
+      "Leaders define outcomes and boundaries; models decide implementation paths where they are strongest.",
+    "philosophy.card2.title": "Quality is enforced by protocol.",
     "philosophy.card2.body":
-      "Before each review, the framework identifies the real constraints and anchors for this specific change. Review perspectives emerge from that analysis — never from a fixed role list. A fresh-context adversarial reviewer closes the sprint, having seen only the diff. Self-validation bias has no room to accumulate.",
-    "philosophy.card3.title": "When the model gets stronger, the framework gets better. No rewrites.",
+      "Testing and review are structural states, not optional rituals. Progress is blocked until gates pass.",
+    "philosophy.card3.title": "Model progress should compound into org leverage.",
     "philosophy.card3.body":
-      "Every other framework designs around model weakness — breaking work into tiny steps to keep fragile models on track. This one designs for strength. Capability improvements land automatically. The framework has no ceiling.",
+      "As Opus 4.6 / gpt-5.3-codex capability improves, the same protocol yields better delivery without rewriting process.",
 
-    "loop.eyebrow": "Execution Loop",
-    "loop.title": "Watch the states tell a story",
-    "loop.detailKicker": "What happens here",
+    "loop.eyebrow": "Governed Execution",
+    "loop.title": "Operational states your team can trust",
+    "loop.detailKicker": "Manager signal",
     "loop.autoplayPause": "Pause",
     "loop.autoplayPlay": "Resume",
+    "loop.state.backlog": "Backlog",
+    "loop.state.inProgress": "In Progress",
+    "loop.state.review": "Review",
+    "loop.state.testing": "Testing",
+    "loop.state.done": "Done",
 
-    "demo.eyebrow": "Live Execution",
-    "demo.title": "The three moments that matter",
-    "demo.terminalTitle": "Execution Stream",
+    "demo.eyebrow": "Execution Trace",
+    "demo.title": "Three manager-critical moments",
+    "demo.terminalTitle": "Execution & Governance Log",
     "demo.run": "Run Again",
-    "demo.promptKicker": "What you actually type",
+    "demo.promptKicker": "What the manager provides",
 
-    "commands.eyebrow": "Distribution & Commands",
-    "commands.title": "Install once, delegate continuously",
+    "commands.eyebrow": "Rollout",
+    "commands.title": "Install once, standardize execution across repos",
     "commands.skillDirLabel": "Skill directory (for Codex skill-installer)",
     "commands.skillRawLabel": "Direct skill URL (for any agent)",
     "commands.codexInstall": "Codex install",
@@ -58,22 +81,22 @@ const I18N = {
     "commands.claudeInstall": "Claude install",
     "commands.claudeUse": "Claude invocation",
 
-    "compare.eyebrow": "Honest Positioning",
-    "compare.title": "Not for everyone. Exactly right for some.",
-    "compare.va.title": "This is for you if",
+    "compare.eyebrow": "Fit Check",
+    "compare.title": "Best when you own delivery outcomes, not just code generation",
+    "compare.va.title": "This fits your team if",
     "compare.va.body":
-      "You run Claude Opus 4, GPT-5, or Gemini Ultra class models and you're frustrated that every agent framework still treats them like they need supervision. You want to set objectives and review outcomes — not manage prompts. You need quality guarantees that don't rely on your own review attention. You're ready to accept framework protocol in exchange for an execution loop that compounds over time.",
-    "compare.notfor.title": "This is NOT for you if",
+      "You lead teams shipping production systems, run Opus 4.6 / gpt-5.3-codex class models, and need auditability, release gates, and reliable merge readiness.",
+    "compare.notfor.title": "This likely does not fit if",
     "compare.notfor.body":
-      "You're running anything below Claude Opus 4 / GPT-5 class — the framework will not compensate for a weaker model, and tasks will fail in ways that waste your time. You need to control every implementation step. You want zero-ceremony fast iteration. Or your task is small enough that a single well-written prompt is faster.",
+      "You need full manual control of implementation steps, prefer zero-ceremony iteration, or run below Opus 4.6 / gpt-5.3-codex class capability.",
     "compare.link": "Read full comparison",
 
     "credits.eyebrow": "Credits",
-    "credits.title": "Built by Vadaski & Codex",
+    "credits.title": "Built by Vadaski, Codex & Claude",
     "credits.body":
-      "Authors: Vadaski, Codex. Acknowledgements: Claude and the Vera project, where many practical patterns were distilled and validated.",
+      "Co-creators: Vadaski, Codex, Claude. Acknowledgements: the Vera project, where practical patterns were distilled and validated.",
 
-    "footer.tagline": "The loop frontier models deserve. Gets stronger as the model does.",
+    "footer.tagline": "For engineering leaders: governed frontier-model execution from objective to merge.",
 
     "common.copy": "Copy",
     "common.copyLink": "Copy Link",
@@ -82,87 +105,109 @@ const I18N = {
     "common.copyFail": "Copy failed"
   },
   zh: {
-    "meta.title": "VA Auto-Pilot | \u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF",
+    "meta.title": "VA Auto-Pilot | 目标优先的工程闭环",
     "meta.description":
-      "\u505C\u6B62\u76D1\u7BA1\u4F60\u7684 AI\u3002VA Auto-Pilot \u8BBE\u5B9A\u76EE\u6807\u3001\u5E76\u53D1\u6267\u884C\u51B2\u523A\u3001\u5BF9\u6297\u6027\u5BA1\u67E5\u81EA\u8EAB\u5DE5\u4F5C\u5E76\u4EA4\u4ED8\u7ED3\u679C\u2014\u2014\u7531\u4F60\u5DF2\u7ECF\u4FE1\u4EFB\u7684\u524D\u6CBF\u6A21\u578B\u9A71\u52A8\u3002",
+      "面向工程负责人的前沿模型执行闭环：目标与约束输入，经过并行执行、对抗审查与确定性门禁，输出可合并交付。",
     "meta.ogDescription":
-      "\u7EC8\u4E8E\u3002\u4E00\u4E2A\u548C\u4F60\u4E00\u6837\u4FE1\u4EFB\u6A21\u578B\u7684\u5DE5\u7A0B\u95ED\u73AF\u3002\u7ED9\u51FA\u76EE\u6807\u3002\u5BA1\u67E5\u7ED3\u679C\u3002\u6A21\u578B\u5904\u7406\u5176\u4F59\u3002",
+      "工程负责人可治理的前沿模型执行系统：并行推进、对抗审查、确定性发布门禁。",
     "meta.twitterDescription":
-      "\u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF\u3002\u76EE\u6807\u8F93\u5165\uff0C\u7ECF\u8FC7\u5BA1\u67E5\u3001\u6D4B\u8BD5\u3001\u63D0\u4EA4\u7684\u7ED3\u679C\u8F93\u51FA\u3002\u65E0\u9700\u63D0\u793A\u8BCD\u5DE5\u7A0B\u3002",
+      "工程负责人视角：目标输入，治理化并行执行，可信提交输出。",
 
-    "nav.philosophy": "\u8BBE\u8BA1\u54F2\u5B66",
-    "nav.loop": "\u95ED\u73AF",
-    "nav.commands": "\u547D\u4EE4",
-    "nav.compare": "\u5B9A\u4F4D",
+    "nav.menu": "菜单",
+    "nav.advantages": "优势",
+    "nav.philosophy": "理念",
+    "nav.loop": "闭环",
+    "nav.commands": "命令",
+    "nav.compare": "定位",
 
-    "cta.repo": "\u4ED3\u5E93",
-    "cta.install": "\u5B89\u88C5 VA Auto-Pilot Skill",
-    "cta.viewLoop": "\u770B\u5B83\u8FD0\u884C",
+    "cta.repo": "仓库",
+    "cta.install": "安装 VA Auto-Pilot Skill",
+    "cta.viewLoop": "查看执行",
 
-    "hero.eyebrow": "\u4E3A\u4FE1\u4EFB\u6A21\u578B\u7684\u5DE5\u7A0B\u5E08\u800C\u751F",
-    "hero.title": "\u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF\u3002",
+    "hero.eyebrow": "面向对交付质量负责的工程负责人",
+    "hero.title": "兼顾 AI 速度与工程级可控交付。",
     "hero.lead":
-      "\u4F60\u7ED9\u51FA\u76EE\u6807\u3002\u6A21\u578B\u89C4\u5212\u51B2\u523A\u3001\u5E76\u53D1\u6267\u884C\u3001\u5BF9\u6297\u6027\u5BA1\u67E5\u81EA\u8EAB\u5DE5\u4F5C\u5E76\u4EA4\u4ED8\u7ED3\u679C\u3002\u4F60\u5BA1\u67E5\u7ED3\u679C\uff0C\u800C\u4E0D\u662F\u5B9E\u73B0\u6B65\u9AA4\u3002",
-    "hero.signal1": "\u9700\u8981 Claude Opus 4 / GPT-5 \u7EA7\u522B\u6A21\u578B",
-    "hero.signal2": "\u76EE\u6807\u8F93\u5165\u2014\u2014\u7ECF\u5BA1\u67E5\u7684\u63D0\u4EA4\u8F93\u51FA",
-    "hero.signal3": "\u968F\u6A21\u578B\u53D8\u5F3A\u800C\u53D8\u5F3A",
+      "你定义目标、约束和发布标准。VA Auto-Pilot 负责规划、并行执行、对抗审查和确定性门禁，让团队把精力放在结果判断而不是提示词细节。",
+    "hero.signal1": "要求 Claude Opus 4.6 或 gpt-5.3-codex 级模型",
+    "hero.signal2": "路线目标输入 -> 可审计提交输出",
+    "hero.signal3": "降低审查负担，提高发布信心",
 
-    "philosophy.eyebrow": "\u8BBE\u8BA1\u8D4C\u6CE8",
-    "philosophy.title": "\u4E09\u4E2A\u6539\u53D8\u81EA\u52A8\u5316\u611F\u53D7\u7684\u51B3\u7B56",
-    "philosophy.card1.title": "\u4F60\u4E0D\u518D\u5199\u63D0\u793A\u8BCD\u4E86\u3002",
+    "advantages.eyebrow": "负责人价值",
+    "advantages.title": "为可预测交付、风险治理与吞吐提升而设计",
+    "advantages.card1.title": "AI 自主执行下的可预测性",
+    "advantages.card1.body":
+      "状态机与显式门禁让执行过程可见，减少 Agent 漂移与交接不清。",
+    "advantages.card2.title": "合并前风险前置控制",
+    "advantages.card2.body":
+      "由约束推导的审查视角加上新上下文对抗收尾，提前暴露安全、质量和产品风险。",
+    "advantages.card3.title": "提升吞吐而不引入流程债务",
+    "advantages.card3.body":
+      "并行轨道加速复杂任务，同时在多仓库维持统一治理协议。",
+    "advantages.outcome.title": "工程负责人会直接得到",
+    "advantages.outcome.item1": "多阶段任务的周期显著缩短",
+    "advantages.outcome.item2": "后期回归与回滚更少",
+    "advantages.outcome.item3": "任务阻塞或失败时有清晰干预点",
+
+    "philosophy.eyebrow": "运行原则",
+    "philosophy.title": "面向规模化 AI 交付管理的三条原则",
+    "philosophy.card1.title": "管目标与边界，不管每一步实现。",
     "philosophy.card1.body":
-      "\u4F60\u8BF4\u660E\u4E00\u4E2A\u76EE\u6807\u3001\u786C\u6027\u7EA6\u675F\u548C\u5B8C\u6210\u6807\u51C6\u3002\u6A21\u578B\u627E\u5230\u8DEF\u5F84\u2014\u2014\u6CA1\u6709\u9010\u6B65\u6307\u4EE4\uff0C\u4E0D\u66FF\u5B83\u505A\u5224\u65AD\u3002\u8FD9\u624D\u662F\u5F3A\u6A21\u578B\u771F\u6B63\u64C5\u957F\u7684\u3002",
-    "philosophy.card2.title": "\u6A21\u578B\u5BA1\u67E5\u81EA\u8EAB\u5DE5\u4F5C\uff0C\u4E14\u65E0\u6CD5\u6B3A\u9A97\u81EA\u5DF1\u3002",
+      "负责人定义终局与约束，模型在最擅长的空间内选择实现路径。",
+    "philosophy.card2.title": "质量必须由协议强制。",
     "philosophy.card2.body":
-      "\u6BCF\u6B21\u5BA1\u67E5\u524D\uff0C\u6846\u67B6\u5148\u8BC6\u522B\u8FD9\u6B21\u5177\u4F53\u53D8\u66F4\u7684\u771F\u5B9E\u7EA6\u675F\u4E0E\u9526\u70B9\u3002\u5BA1\u67E5\u89C6\u89D2\u4ECE\u8FD9\u4E2A\u5206\u6790\u4E2D\u6D6E\u73B0\u2014\u2014\u4ECE\u4E0D\u662F\u56FA\u5B9A\u89D2\u8272\u5217\u8868\u3002\u51B2\u523A\u7ED3\u675F\u65F6\uff0C\u4E00\u4E2A\u5168\u65B0\u4E0A\u4E0B\u6587\u7684\u5BF9\u6297\u6027\u5BA1\u67E5\u5458\u53EA\u770B diff \u8FDB\u884C\u6536\u5C3E\u5BA1\u67E5\u3002\u81EA\u6211\u9A8C\u8BC1\u504F\u5DEE\u65E0\u7A74\u53EF\u949F\u3002",
-    "philosophy.card3.title": "\u6A21\u578B\u53D8\u5F3A\uff0C\u6846\u67B6\u5373\u53D8\u597D\u3002\u65E0\u9700\u6539\u5199\u3002",
+      "测试与审查是硬状态，不是可选流程；门禁不过，状态不推进。",
+    "philosophy.card3.title": "模型进步应直接转化为组织杠杆。",
     "philosophy.card3.body":
-      "\u5176\u4ED6\u6846\u67B6\u90FD\u5728\u56F4\u7ED5\u6A21\u578B\u5F31\u70B9\u8BBE\u8BA1\u2014\u2014\u628A\u5DE5\u4F5C\u62C6\u6210\u5C0F\u6B65\u9AA4\u4EE5\u63A7\u5236\u8106\u5F31\u6A21\u578B\u3002\u8FD9\u4E2A\u6846\u67B6\u4E3A\u5F3A\u5EA6\u800C\u8BBE\u8BA1\u3002\u6A21\u578B\u80FD\u529B\u63D0\u5347\u81EA\u52A8\u8F6C\u5316\u4E3A\u8F93\u51FA\u63D0\u5347\u3002\u6CA1\u6709\u5929\u82B1\u677F\u3002",
+      "随着 Opus 4.6 / gpt-5.3-codex 能力提升，同一协议可持续提升结果质量，无需重写流程。",
 
-    "loop.eyebrow": "\u6267\u884C\u95ED\u73AF",
-    "loop.title": "\u770B\u72B6\u6001\u8BB2\u8FF0\u4E00\u4E2A\u6545\u4E8B",
-    "loop.detailKicker": "\u8FD9\u91CC\u53D1\u751F\u4E86\u4EC0\u4E48",
-    "loop.autoplayPause": "\u6682\u505C",
-    "loop.autoplayPlay": "\u7EE7\u7EED",
+    "loop.eyebrow": "治理化执行",
+    "loop.title": "团队可以信任的五个状态",
+    "loop.detailKicker": "负责人信号",
+    "loop.autoplayPause": "暂停",
+    "loop.autoplayPlay": "继续",
+    "loop.state.backlog": "待办",
+    "loop.state.inProgress": "执行中",
+    "loop.state.review": "审查",
+    "loop.state.testing": "测试",
+    "loop.state.done": "完成",
 
-    "demo.eyebrow": "\u5B9E\u65F6\u6267\u884C",
-    "demo.title": "\u4E09\u4E2A\u5173\u952E\u65F6\u523B",
-    "demo.terminalTitle": "\u6267\u884C\u6D41",
-    "demo.run": "\u91CD\u65B0\u6F14\u793A",
-    "demo.promptKicker": "\u4F60\u5B9E\u9645\u8F93\u5165\u7684\u5185\u5BB9",
+    "demo.eyebrow": "执行轨迹",
+    "demo.title": "三个工程负责人最关心的时刻",
+    "demo.terminalTitle": "执行与治理日志",
+    "demo.run": "重新演示",
+    "demo.promptKicker": "负责人实际提供的输入",
 
-    "commands.eyebrow": "\u5206\u53D1\u4E0E\u547D\u4EE4",
-    "commands.title": "\u4E00\u6B21\u5B89\u88C5\uff0C\u6301\u7EED\u59D4\u6D3E",
-    "commands.skillDirLabel": "Skill \u76EE\u5F55\u94FE\u63A5\uFF08Codex skill-installer\uFF09",
-    "commands.skillRawLabel": "Skill \u76F4\u94FE\uFF08\u4EFB\u610F Agent\uFF09",
-    "commands.codexInstall": "Codex \u5B89\u88C5",
-    "commands.codexUse": "Codex \u8C03\u7528",
-    "commands.claudeInstall": "Claude \u5B89\u88C5",
-    "commands.claudeUse": "Claude \u8C03\u7528",
+    "commands.eyebrow": "落地推广",
+    "commands.title": "安装一次，在多仓库统一执行标准",
+    "commands.skillDirLabel": "Skill 目录链接（Codex skill-installer）",
+    "commands.skillRawLabel": "Skill 直链（任意 Agent）",
+    "commands.codexInstall": "Codex 安装",
+    "commands.codexUse": "Codex 调用",
+    "commands.claudeInstall": "Claude 安装",
+    "commands.claudeUse": "Claude 调用",
 
-    "compare.eyebrow": "\u8BDA\u5B9E\u5B9A\u4F4D",
-    "compare.title": "\u4E0D\u9002\u5408\u6240\u6709\u4EBA\u3002\u5BF9\u67D0\u4E9B\u4EBA\u6B63\u597D\u3002",
-    "compare.va.title": "\u9002\u5408\u4F60\uff0C\u5982\u679C",
+    "compare.eyebrow": "适配判断",
+    "compare.title": "当你对交付结果负责时，它最有价值",
+    "compare.va.title": "适合你的团队，如果",
     "compare.va.body":
-      "\u4F60\u5728\u7528 Claude Opus 4\u3001GPT-5 \u6216 Gemini Ultra \u7EA7\u522B\u7684\u6A21\u578B\uff0C\u5BF9\u6BCF\u4E2A Agent \u6846\u67B6\u4ECD\u628A\u5B83\u4EEC\u5F53\u6210\u9700\u8981\u76D1\u7BA1\u7684\u5DE5\u5177\u611F\u5230\u53BF\u5026\u3002\u4F60\u60F3\u8BBE\u5B9A\u76EE\u6807\u5E76\u5BA1\u67E5\u7ED3\u679C\u2014\u2014\u800C\u4E0D\u662F\u7BA1\u7406\u63D0\u793A\u8BCD\u3002\u4F60\u9700\u8981\u4E0D\u4F9D\u8D56\u81EA\u8EAB\u5BA1\u67E5\u6CE8\u610F\u529B\u7684\u8D28\u91CF\u4FDD\u8BC1\u3002\u4F60\u613F\u610F\u63A5\u53D7\u6846\u67B6\u534F\u8BAE\uff0C\u4EE5\u6362\u53D6\u968F\u65F6\u95F4\u590D\u5229\u7684\u6267\u884C\u95ED\u73AF\u3002",
-    "compare.notfor.title": "\u4E0D\u9002\u5408\u4F60\uff0C\u5982\u679C",
+      "你在负责生产级系统交付，使用 Opus 4.6 / gpt-5.3-codex 级模型，并且需要可审计、可门禁、可稳定合并的执行闭环。",
+    "compare.notfor.title": "大概率不适合，如果",
     "compare.notfor.body":
-      "\u4F60\u7528\u7684\u4EFB\u4F55\u6A21\u578B\u4F4E\u4E8E Claude Opus 4 / GPT-5 \u7EA7\u522B\u2014\u2014\u6846\u67B6\u4E0D\u4F1A\u8865\u507F\u8F83\u5F31\u6A21\u578B\u7684\u4E0D\u8DB3\uff0C\u4EFB\u52A1\u5C06\u4EE5\u6D6A\u8D39\u4F60\u65F6\u95F4\u7684\u65B9\u5F0F\u5931\u8D25\u3002\u4F60\u9700\u8981\u63A7\u5236\u6BCF\u4E2A\u5B9E\u73B0\u6B65\u9AA4\u3002\u4F60\u60F3\u8981\u96F6\u4EEA\u5F0F\u5FEB\u901F\u8FED\u4EE3\u3002\u6216\u8005\u4F60\u7684\u4EFB\u52A1\u5C0F\u5230\u4E00\u6761\u63D0\u793A\u8BCD\u5C31\u80FD\u641E\u5B9A\u3002",
-    "compare.link": "\u9605\u8BFB\u5B8C\u6574\u5BF9\u6BD4",
+      "你必须人工控制每个实现步骤、追求零仪式试错，或当前模型能力低于 Opus 4.6 / gpt-5.3-codex 等级。",
+    "compare.link": "阅读完整对比",
 
-    "credits.eyebrow": "\u4F5C\u8005\u4E0E\u81F4\u8C22",
-    "credits.title": "\u7531 Vadaski \u4E0E Codex \u5171\u521B",
+    "credits.eyebrow": "作者与致谢",
+    "credits.title": "由 Vadaski、Codex、Claude 共创",
     "credits.body":
-      "\u4F5C\u8005\uFF1AVadaski\u3001Codex\u3002\u81F4\u8C22\uFF1AClaude \u4E0E Vera \u9879\u76EE\uff0C\u8BB8\u591A\u53EF\u590D\u7528\u5DE5\u7A0B\u6A21\u5F0F\u5728\u5176\u4E2D\u88AB\u6C89\u6DC0\u5E76\u9A8C\u8BC1\u3002",
+      "共创作者：Vadaski、Codex、Claude。致谢：Vera 项目，许多可复用工程模式在其中沉淀并得到验证。",
 
-    "footer.tagline":
-      "\u524D\u6CBF\u6A21\u578B\u5E94\u5F97\u7684\u95ED\u73AF\u3002\u968F\u6A21\u578B\u53D8\u5F3A\u800C\u53D8\u5F3A\u3002",
+    "footer.tagline": "面向工程负责人：从目标到可合并提交的治理化前沿模型执行闭环。",
 
-    "common.copy": "\u590D\u5236",
-    "common.copyLink": "\u590D\u5236\u94FE\u63A5",
-    "common.copyCmd": "\u590D\u5236\u547D\u4EE4",
-    "common.copied": "\u5DF2\u590D\u5236",
-    "common.copyFail": "\u590D\u5236\u5931\u8D25"
+    "common.copy": "复制",
+    "common.copyLink": "复制链接",
+    "common.copyCmd": "复制命令",
+    "common.copied": "已复制",
+    "common.copyFail": "复制失败"
   }
 };
 
@@ -422,6 +467,44 @@ function setupLanguageToggle() {
   applyButtons(currentLang);
 }
 
+function setupMobileNav() {
+  const header = document.querySelector(".site-header");
+  const toggle = document.getElementById("navToggle");
+  const nav = document.getElementById("siteNav");
+  if (!header || !toggle || !nav) return;
+
+  function closeMenu() {
+    header.classList.remove("menu-open");
+    toggle.setAttribute("aria-expanded", "false");
+  }
+
+  toggle.addEventListener("click", () => {
+    const open = header.classList.toggle("menu-open");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!header.classList.contains("menu-open")) return;
+    if (header.contains(event.target)) return;
+    closeMenu();
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    closeMenu();
+  });
+
+  for (const link of nav.querySelectorAll("a")) {
+    link.addEventListener("click", closeMenu);
+  }
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 860) {
+      closeMenu();
+    }
+  });
+}
+
 async function copyText(value) {
   if (!value) return false;
   try {
@@ -649,6 +732,7 @@ function setupDemoButton() {
 function boot() {
   applyI18n(currentLang);
   setupLanguageToggle();
+  setupMobileNav();
   setupTabs();
   setupReveal();
   setupStateMachine();

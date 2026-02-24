@@ -63,7 +63,7 @@ VA Auto-Pilot 采用不同的模型。在任何评审开始之前，管理 Agent
 ## 什么时候用 VA Auto-Pilot
 
 **适合使用的场景：**
-- 你有前沿级别的模型（Claude Opus 4.6 或同级别）
+- 你有前沿级别的模型（Claude Opus 4.6 或 gpt-5.3-codex 级别，或同等能力）
 - 你的目标足够复杂，人类也需要先拆解才能执行
 - 你需要有保证的质量门禁，而不是尽力而为的审查
 - 你希望有一个随模型进步而变强的执行闭环
@@ -212,8 +212,8 @@ npm run validate:distribution
 
 ## 作者与致谢
 
-- 作者：**Vadaski**、**Codex**
-- 致谢：**Claude**、**Vera 项目**
+- 共创作者：**Vadaski**、**Codex**、**Claude**
+- 致谢：**Vera 项目**
 
 ## 许可证
 

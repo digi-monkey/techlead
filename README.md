@@ -63,7 +63,7 @@ The pitfall guide captures structured failure metadata — not just error string
 ## When to Use VA Auto-Pilot
 
 **Use it when:**
-- You have access to a frontier-grade model (Claude Opus, GPT-4o, o3, or equivalent)
+- You have access to Claude Opus 4.6 or gpt-5.3-codex class capability (or equivalent)
 - Your goal is complex enough that a human would need to decompose it before executing
 - You need guaranteed quality gates, not best-effort review
 - You want an execution loop that gets better as models improve, not one you have to maintain
@@ -212,8 +212,8 @@ npm run validate:distribution
 
 ## Credits
 
-- Authors: **Vadaski**, **Codex**
-- Acknowledgements: **Claude**, **Vera project**
+- Co-creators: **Vadaski**, **Codex**, **Claude**
+- Acknowledgements: **Vera project**
 
 ## License
 

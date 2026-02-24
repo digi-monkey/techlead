@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>VA Auto-Pilot | The loop frontier models deserve</title>
+    <title>VA Auto-Pilot | Objective-First Engineering Loop</title>
     <meta
       name="description"
-      content="Stop babysitting your AI. VA Auto-Pilot sets goals, runs the sprint in parallel, reviews adversarially, and delivers — powered by the frontier model you already trust."
+      content="For engineering leaders using frontier models: objective and constraints in, merge-ready delivery out with deterministic quality gates."
     />
     <meta
       name="keywords"
@@ -21,10 +21,10 @@
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="VA Auto-Pilot" />
-    <meta property="og:title" content="VA Auto-Pilot | The loop frontier models deserve" />
+    <meta property="og:title" content="VA Auto-Pilot | Objective-First Engineering Loop" />
     <meta
       property="og:description"
-      content="Finally. An engineering loop that trusts the model as much as you do. Set objectives. Review outcomes. The model handles the rest."
+      content="Engineering leadership loop for frontier models: governed parallel execution, adversarial review, and deterministic release gates."
     />
     <meta property="og:url" content="https://vadaski.github.io/va-auto-pilot/" />
     <meta property="og:image" content="https://vadaski.github.io/va-auto-pilot/og-cover.svg" />
@@ -35,7 +35,7 @@
     <meta name="twitter:title" content="VA Auto-Pilot" />
     <meta
       name="twitter:description"
-      content="The loop frontier models deserve. Goals in. Reviewed, tested, committed output out. No prompt engineering required."
+      content="Engineering-leadership AI loop: objective in, governed delivery out."
     />
     <meta name="twitter:image" content="https://vadaski.github.io/va-auto-pilot/og-cover.svg" />
 
@@ -54,7 +54,8 @@
         "softwareVersion": "2.0.0",
         "author": [
           { "@type": "Person", "name": "Vadaski" },
-          { "@type": "SoftwareApplication", "name": "Codex" }
+          { "@type": "SoftwareApplication", "name": "Codex" },
+          { "@type": "SoftwareApplication", "name": "Claude" }
         ],
         "description": "Autonomous engineering loop built for frontier models. Constraint-derived perspectives, CLI-enforced quality gates, and adversarial sprint completion reviews."
       }
@@ -80,7 +81,12 @@
         <span class="brand-text">VA AUTO-PILOT</span>
       </a>
 
-      <nav class="nav-links">
+      <button id="navToggle" class="nav-toggle" type="button" aria-expanded="false" aria-controls="siteNav" data-i18n="nav.menu">
+        Menu
+      </button>
+
+      <nav id="siteNav" class="nav-links">
+        <a href="#advantages" data-i18n="nav.advantages">Advantages</a>
         <a href="#philosophy" data-i18n="nav.philosophy">Philosophy</a>
         <a href="#loop" data-i18n="nav.loop">Loop</a>
         <a href="#commands" data-i18n="nav.commands">Commands</a>
@@ -98,10 +104,10 @@
 
     <main id="top" class="main-shell">
       <section class="hero reveal">
-        <p class="eyebrow" data-i18n="hero.eyebrow">For engineers who trust their model</p>
-        <h1 data-i18n="hero.title">The loop frontier models deserve.</h1>
+        <p class="eyebrow" data-i18n="hero.eyebrow">For engineering leaders responsible for delivery quality</p>
+        <h1 data-i18n="hero.title">Ship with AI speed and engineering-level control.</h1>
         <p class="hero-lead" data-i18n="hero.lead">
-          You set the objective. The model plans the sprint, runs it in parallel, reviews its own work adversarially, and delivers. You review outcomes, not implementation steps.
+          Set objective, constraints, and release criteria. VA Auto-Pilot runs planning, parallel execution, adversarial review, and deterministic gates so your team reviews outcomes, not prompt minutiae.
         </p>
 
         <div class="hero-cta">
@@ -110,50 +116,81 @@
         </div>
 
         <div class="signal-row">
-          <span class="signal-pill" data-i18n="hero.signal1">Requires Claude Opus 4 / GPT-5 class models</span>
-          <span class="signal-pill" data-i18n="hero.signal2">Goals in — reviewed, committed output out</span>
-          <span class="signal-pill" data-i18n="hero.signal3">Gets stronger as the model does</span>
+          <span class="signal-pill" data-i18n="hero.signal1">Requires Claude Opus 4.6 or gpt-5.3-codex class models</span>
+          <span class="signal-pill" data-i18n="hero.signal2">Roadmap objective in -> audit-traceable commit out</span>
+          <span class="signal-pill" data-i18n="hero.signal3">Lower review load, higher release confidence</span>
         </div>
+      </section>
+
+      <section id="advantages" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow" data-i18n="advantages.eyebrow">Manager Value</p>
+          <h2 data-i18n="advantages.title">Built for predictability, governance, and throughput</h2>
+        </div>
+
+        <div class="advantage-grid">
+          <article class="card">
+            <h3 data-i18n="advantages.card1.title">Predictable execution under AI autonomy</h3>
+            <p data-i18n="advantages.card1.body">State-driven workflow and explicit gates keep execution visible. No hidden agent drift, no unclear handoffs.</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="advantages.card2.title">Risk control before merge</h3>
+            <p data-i18n="advantages.card2.body">Constraint-derived review perspectives plus fresh-context adversarial completion checks catch security, quality, and product risks earlier.</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="advantages.card3.title">Higher throughput without process debt</h3>
+            <p data-i18n="advantages.card3.body">Parallel tracks accelerate complex work while keeping one governance contract across repositories.</p>
+          </article>
+        </div>
+
+        <article class="card outcome-card">
+          <h3 data-i18n="advantages.outcome.title">What engineering managers get</h3>
+          <ul class="detail-list outcome-list">
+            <li data-i18n="advantages.outcome.item1">Shorter cycle time on multi-step initiatives</li>
+            <li data-i18n="advantages.outcome.item2">Fewer late-stage regressions and rollbacks</li>
+            <li data-i18n="advantages.outcome.item3">Clear intervention points when tasks stall or fail</li>
+          </ul>
+        </article>
       </section>
 
       <section id="philosophy" class="section reveal">
         <div class="section-head">
-          <p class="eyebrow" data-i18n="philosophy.eyebrow">Design Bets</p>
-          <h2 data-i18n="philosophy.title">Three decisions that change what automation feels like</h2>
+          <p class="eyebrow" data-i18n="philosophy.eyebrow">Operating Thesis</p>
+          <h2 data-i18n="philosophy.title">Three principles for managing AI delivery at scale</h2>
         </div>
 
         <div class="bento-grid">
           <article class="card card-strong">
-            <h3 data-i18n="philosophy.card1.title">You don't write prompts anymore.</h3>
-            <p data-i18n="philosophy.card1.body">You state an objective, hard constraints, and what done looks like. The model finds the path — no step-by-step instructions, no second-guessing its judgment. This is what strong models are actually good at.</p>
+            <h3 data-i18n="philosophy.card1.title">Manage intent and constraints, not keystrokes.</h3>
+            <p data-i18n="philosophy.card1.body">Leaders define outcomes and boundaries; models decide implementation paths where they are strongest.</p>
           </article>
 
           <article class="card">
-            <h3 data-i18n="philosophy.card2.title">The model reviews its own work and can't fool itself.</h3>
-            <p data-i18n="philosophy.card2.body">Before each review, the framework identifies the real constraints and anchors for this specific change. Review perspectives emerge from that analysis — never from a fixed role list. A fresh-context adversarial reviewer closes the sprint, having seen only the diff. Self-validation bias has no room to accumulate.</p>
+            <h3 data-i18n="philosophy.card2.title">Quality is enforced by protocol.</h3>
+            <p data-i18n="philosophy.card2.body">Testing and review are structural states, not optional rituals. Progress is blocked until gates pass.</p>
           </article>
 
           <article class="card">
-            <h3 data-i18n="philosophy.card3.title">When the model gets stronger, the framework gets better. No rewrites.</h3>
-            <p data-i18n="philosophy.card3.body">Every other framework designs around model weakness — breaking work into tiny steps to keep fragile models on track. This one designs for strength. Capability improvements land automatically. The framework has no ceiling.</p>
+            <h3 data-i18n="philosophy.card3.title">Model progress should compound into org leverage.</h3>
+            <p data-i18n="philosophy.card3.body">As Opus 4.6 / gpt-5.3-codex capability improves, the same protocol yields better delivery without rewriting process.</p>
           </article>
         </div>
       </section>
 
       <section id="loop" class="section reveal">
         <div class="section-head">
-          <p class="eyebrow" data-i18n="loop.eyebrow">Execution Loop</p>
-          <h2 data-i18n="loop.title">Watch the states tell a story</h2>
+          <p class="eyebrow" data-i18n="loop.eyebrow">Governed Execution</p>
+          <h2 data-i18n="loop.title">Operational states your team can trust</h2>
         </div>
 
         <div class="loop-layout">
           <article class="card machine-card">
             <div class="machine-track" role="tablist" aria-label="State machine">
-              <button type="button" class="state-node active" data-state="0">Backlog</button>
-              <button type="button" class="state-node" data-state="1">In Progress</button>
-              <button type="button" class="state-node" data-state="2">Review</button>
-              <button type="button" class="state-node" data-state="3">Testing</button>
-              <button type="button" class="state-node" data-state="4">Done</button>
+              <button type="button" class="state-node active" data-state="0" data-i18n="loop.state.backlog">Backlog</button>
+              <button type="button" class="state-node" data-state="1" data-i18n="loop.state.inProgress">In Progress</button>
+              <button type="button" class="state-node" data-state="2" data-i18n="loop.state.review">Review</button>
+              <button type="button" class="state-node" data-state="3" data-i18n="loop.state.testing">Testing</button>
+              <button type="button" class="state-node" data-state="4" data-i18n="loop.state.done">Done</button>
             </div>
             <div class="machine-controls">
               <button id="machineToggle" type="button" class="btn btn-mini" data-i18n="loop.autoplayPause">Pause</button>
@@ -161,7 +198,7 @@
           </article>
 
           <article class="card detail-card">
-            <p class="detail-kicker" data-i18n="loop.detailKicker">What happens here</p>
+            <p class="detail-kicker" data-i18n="loop.detailKicker">Manager signal</p>
             <h3 id="stateDetailTitle">Backlog</h3>
             <p id="stateDetailBody"></p>
             <ul id="stateDetailChecks" class="detail-list"></ul>
@@ -171,21 +208,21 @@
 
       <section id="demo" class="section reveal">
         <div class="section-head">
-          <p class="eyebrow" data-i18n="demo.eyebrow">Live Execution</p>
-          <h2 data-i18n="demo.title">The three moments that matter</h2>
+          <p class="eyebrow" data-i18n="demo.eyebrow">Execution Trace</p>
+          <h2 data-i18n="demo.title">Three manager-critical moments</h2>
         </div>
 
         <div class="demo-layout">
           <article class="card terminal-card">
             <div class="terminal-head">
-              <span data-i18n="demo.terminalTitle">Execution Stream</span>
+              <span data-i18n="demo.terminalTitle">Execution & Governance Log</span>
               <button id="runDemo" type="button" class="btn btn-mini" data-i18n="demo.run">Run Again</button>
             </div>
             <pre id="demoLog" class="demo-log" aria-live="polite"></pre>
           </article>
 
           <article class="card command-card">
-            <p class="detail-kicker" data-i18n="demo.promptKicker">What you actually type</p>
+            <p class="detail-kicker" data-i18n="demo.promptKicker">What the manager provides</p>
             <pre><code id="goalPromptExample"></code></pre>
             <button type="button" class="btn btn-mini copy-btn" data-copy-target="goalPromptExample" data-i18n="common.copy">Copy</button>
           </article>
@@ -194,8 +231,8 @@
 
       <section id="commands" class="section reveal">
         <div class="section-head">
-          <p class="eyebrow" data-i18n="commands.eyebrow">Distribution & Commands</p>
-          <h2 data-i18n="commands.title">Install once, delegate continuously</h2>
+          <p class="eyebrow" data-i18n="commands.eyebrow">Rollout</p>
+          <h2 data-i18n="commands.title">Install once, standardize execution across repos</h2>
         </div>
 
         <div class="install-grid">
@@ -238,18 +275,18 @@
 
       <section id="compare" class="section reveal">
         <div class="section-head">
-          <p class="eyebrow" data-i18n="compare.eyebrow">Honest Positioning</p>
-          <h2 data-i18n="compare.title">Not for everyone. Exactly right for some.</h2>
+          <p class="eyebrow" data-i18n="compare.eyebrow">Fit Check</p>
+          <h2 data-i18n="compare.title">Best when you own delivery outcomes, not just code generation</h2>
         </div>
 
         <div class="compare-grid">
           <article class="card">
-            <h3 data-i18n="compare.notfor.title">This is NOT for you if</h3>
-            <p data-i18n="compare.notfor.body">You're running anything below Claude Opus 4 / GPT-5 class — the framework will not compensate for a weaker model, and tasks will fail in ways that waste your time. You need to control every implementation step. You want zero-ceremony fast iteration. Or your task is small enough that a single well-written prompt is faster.</p>
+            <h3 data-i18n="compare.notfor.title">This likely does not fit if</h3>
+            <p data-i18n="compare.notfor.body">You need full manual control of implementation steps, prefer zero-ceremony iteration, or run below Opus 4.6 / gpt-5.3-codex class capability.</p>
           </article>
           <article class="card">
-            <h3 data-i18n="compare.va.title">This is for you if</h3>
-            <p data-i18n="compare.va.body">You run Claude Opus 4, GPT-5, or Gemini Ultra class models and you're frustrated that every agent framework still treats them like they need supervision. You want to set objectives and review outcomes — not manage prompts. You need quality guarantees that don't rely on your own review attention. You're ready to accept framework protocol in exchange for an execution loop that compounds over time.</p>
+            <h3 data-i18n="compare.va.title">This fits your team if</h3>
+            <p data-i18n="compare.va.body">You lead teams shipping production systems, run Opus 4.6 / gpt-5.3-codex class models, and need auditability, release gates, and reliable merge readiness.</p>
           </article>
         </div>
 
@@ -259,16 +296,16 @@
       <section id="credits" class="section reveal credits">
         <div class="section-head">
           <p class="eyebrow" data-i18n="credits.eyebrow">Credits</p>
-          <h2 data-i18n="credits.title">Built by Vadaski & Codex</h2>
+          <h2 data-i18n="credits.title">Built by Vadaski, Codex & Claude</h2>
         </div>
         <article class="card">
-          <p data-i18n="credits.body">Authors: Vadaski, Codex. Acknowledgements: Claude and the Vera project, where many practical patterns were distilled and validated.</p>
+          <p data-i18n="credits.body">Co-creators: Vadaski, Codex, Claude. Acknowledgements: the Vera project, where many practical patterns were distilled and validated.</p>
         </article>
       </section>
     </main>
 
     <footer class="site-footer reveal">
-      <p data-i18n="footer.tagline">The loop frontier models deserve. Gets stronger as the model does.</p>
+      <p data-i18n="footer.tagline">For engineering leaders: governed frontier-model execution from objective to merge.</p>
       <a id="footerRepoLink" href="#" target="_blank" rel="noreferrer">GitHub</a>
     </footer>
 
