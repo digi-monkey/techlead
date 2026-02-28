@@ -6,25 +6,31 @@
   "type": "module",
   "packageManager": "pnpm@10.29.3",
   "bin": {
-    "va-auto-pilot": "./bin/va-auto-pilot.mjs"
+    "va-auto-pilot": "./dist/cli.js"
   },
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "check": "node ./bin/va-auto-pilot.mjs --help",
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "node ./dist/cli.js --help",
     "check:sprint": "node ./scripts/sprint-board.mjs summary",
     "check:units": "node ./scripts/test-units.mjs",
     "check:cli-flows": "node ./scripts/test-cli-flows.mjs --all",
-    "check:all": "pnpm run check && pnpm run check:sprint && pnpm run check:units && pnpm run check:cli-flows && pnpm run validate:distribution",
+    "check:all": "pnpm run typecheck && pnpm run build && pnpm run check && pnpm run check:sprint && pnpm run check:units && pnpm run check:cli-flows && pnpm run validate:distribution",
     "validate:distribution": "node ./scripts/validate-distribution.mjs",
     "postinstall": "pnpm approve-builds esbuild"
   },
   "dependencies": {
+    "cac": "^7.0.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "tsx": "^4.21.0"
+    "@types/node": "^25.3.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   },
   "keywords": [
     "agent",
@@ -33,5 +39,12 @@
     "multi-agent",
     "workflow",
     "automation"
+  ],
+  "files": [
+    "dist/",
+    "templates/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
   ]
 }

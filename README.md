@@ -89,8 +89,12 @@ The pitfall guide captures structured failure metadata — not just error string
 ## Quick Start
 
 ```bash
-# local
-node ./bin/va-auto-pilot.mjs init .
+# local development
+pnpm run dev init .
+
+# or after build
+pnpm run build
+node ./dist/cli.js init .
 
 # pnpm (after publish)
 pnpm dlx va-auto-pilot init .
@@ -176,25 +180,6 @@ curl -fsSL https://raw.githubusercontent.com/Vadaski/va-auto-pilot/main/skills/v
 - Protocol: `docs/operations/va-auto-pilot-protocol.md`
 - Start prompt: `docs/operations/start-va-auto-pilot-prompt.md`
 - Distribution: `docs/operations/distribute-skill.md`
-- Vision article: `docs/human-on-the-loop.md`
-- Ralph comparison: `docs/comparisons/va-auto-pilot-vs-ralph.en.md`
-
----
-
-## Website
-
-`website/` is a standalone static site with:
-
-- interactive state machine
-- animated execution demo
-- SEO + OG metadata
-
-Local preview:
-
-```bash
-cd website
-python3 -m http.server 4173
-```
 
 ---
 
