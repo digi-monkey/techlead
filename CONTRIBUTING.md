@@ -17,4 +17,4 @@ Keep contributions reusable across domains.
 - CLI-first execution: prefer deterministic command execution over ad-hoc manual edits.
 - Closed-loop quality: implementation -> review -> acceptance -> commit.
 - Human board override: human instructions always have highest priority.
-- Dogfood first: this repo should follow the same va-auto-pilot protocol it promotes.
+- Dogfood first: this repo should follow the same techlead protocol it promotes.

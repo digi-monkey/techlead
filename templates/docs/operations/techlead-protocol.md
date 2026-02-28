@@ -1,14 +1,14 @@
-# VA Auto-Pilot Protocol
+# TechLead Protocol
 
 > Behavioral specification for autonomous multi-agent project execution.
-> Read this before running a VA Auto-Pilot loop.
+> Read this before running a TechLead loop.
 
 ---
 
 ## Core Principles
 
 1. You are the manager of outcomes, not the implementer of steps.
-2. `.va-auto-pilot/sprint-state.json` is the machine task source of truth.
+2. `.techlead/sprint-state.json` is the machine task source of truth.
 3. `docs/todo/sprint.md` is a generated board view (`node scripts/sprint-board.mjs render`).
 4. `docs/todo/run-journal.md` is append-only execution memory.
 5. Execute one primary task per cycle; optional parallel tracks are allowed when independent.
@@ -59,7 +59,7 @@ Never delete human-written content.
 At the start of each cycle:
 
 1. Read `docs/todo/run-journal.md`.
-2. Read `.va-auto-pilot/pitfalls.json` — identify unresolved entries relevant to the current task (by task ID match, failure type, or keyword overlap). Inject matching unresolved pitfalls into delegation prompts under **Hard constraints**.
+2. Read `.techlead/pitfalls.json` — identify unresolved entries relevant to the current task (by task ID match, failure type, or keyword overlap). Inject matching unresolved pitfalls into delegation prompts under **Hard constraints**.
 3. Check `Codebase Signals` first.
 4. Reuse existing signals before inventing new conventions.
 5. Append one execution entry at the end of each cycle.
@@ -119,7 +119,7 @@ When a strategic goal is detected:
    - An independent constraint set specific to its dimension
    - A mandate to perform a current-state audit: assess actual state, identify gaps, and produce concrete findings
 
-   Concurrency follows the same Concurrency Contract as the rest of the protocol: model-native tool orchestration by default. The experimental parallel runner (`va-parallel-runner.mjs`) requires explicit human opt-in. If model-native concurrency is unavailable, serialize the dimension scans — the independence constraint still holds; just run them sequentially without letting earlier results influence later ones.
+   Concurrency follows the same Concurrency Contract as the rest of the protocol: model-native tool orchestration by default. The experimental parallel runner (`techlead-parallel-runner.mjs`) requires explicit human opt-in. If model-native concurrency is unavailable, serialize the dimension scans — the independence constraint still holds; just run them sequentially without letting earlier results influence later ones.
 
 3. **Constraint: no dimension may consult another dimension's findings during the scan.** Independence is the source of value. Cross-contamination produces correlated blind spots.
 
@@ -191,7 +191,7 @@ When planning concurrency, produce a machine-readable plan:
 Execution path preference:
 
 1. Default: model-native tool orchestration + gate synchronization.
-2. Experimental opt-in only (explicit human request): `node scripts/va-parallel-runner.mjs spawn --plan-file ...`.
+2. Experimental opt-in only (explicit human request): `node scripts/techlead-parallel-runner.mjs spawn --plan-file ...`.
 
 ---
 
@@ -207,7 +207,7 @@ node scripts/sprint-board.mjs journal --task {{PROJECT_PREFIX}}-001 --summary "w
 Rules:
 
 1. Do not hand-edit generated rows in `docs/todo/sprint.md`.
-2. Update `.va-auto-pilot/sprint-state.json` through CLI whenever possible.
+2. Update `.techlead/sprint-state.json` through CLI whenever possible.
 3. Keep `run-journal.md` append-only.
 4. When marking a task `Failed`, record a pitfall entry alongside the state update:
    ```bash
@@ -233,7 +233,7 @@ Every implementation delegation must include:
 3. Hard constraints (architecture, security, naming, limits)
 4. Completion gates (`{{BUILD_COMMAND}}`)
 5. A no-how clause: do not prescribe implementation steps
-6. If `.va-auto-pilot/pitfalls.json` contains unresolved entries matching the current task by task ID, failure type, or keyword overlap — include them verbatim in the **Hard constraints** section with the heading `Known pitfalls to avoid`.
+6. If `.techlead/pitfalls.json` contains unresolved entries matching the current task by task ID, failure type, or keyword overlap — include them verbatim in the **Hard constraints** section with the heading `Known pitfalls to avoid`.
 
 ---
 
@@ -425,7 +425,7 @@ Record stop reason in `sprint-state.json` and `run-journal.md`.
 
 ## Bootstrap Checklist
 
-- [ ] `.va-auto-pilot/sprint-state.json` exists and backlog is populated
+- [ ] `.techlead/sprint-state.json` exists and backlog is populated
 - [ ] `docs/todo/sprint.md` can be rendered via `scripts/sprint-board.mjs`
 - [ ] `docs/todo/human-board.md` exists
 - [ ] `docs/todo/run-journal.md` exists
@@ -436,7 +436,7 @@ Record stop reason in `sprint-state.json` and `run-journal.md`.
 For public distribution repositories, also verify:
 
 - [ ] `website/` exists and reflects the current protocol
-- [ ] `skills/va-auto-pilot/` exists and links are shareable
+- [ ] `skills/techlead/` exists and links are shareable
 - [ ] GitHub Pages workflow is present
 
 Once all required items are true, start the loop.

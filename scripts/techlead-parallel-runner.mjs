@@ -12,17 +12,17 @@ import {
 
 const VALID_STATES = new Set(["Backlog", "In Progress", "Review", "Testing", "Failed", "Done"]);
 const DEFAULT_MAX_WORKERS = 4;
-const DEFAULT_LOG_DIR = ".va-auto-pilot/parallel-runs";
+const DEFAULT_LOG_DIR = ".techlead/parallel-runs";
 // Default track timeout: 10 minutes.  Override with --track-timeout <ms>.
 const DEFAULT_TRACK_TIMEOUT_MS = 600_000;
 
 const DEFAULTS = resolveDefaults();
 
 function printHelp() {
-  console.log(`va-parallel-runner
+  console.log(`techlead-parallel-runner
 
 Usage:
-  node scripts/va-parallel-runner.mjs spawn --plan-file <path> [options]
+  node scripts/techlead-parallel-runner.mjs spawn --plan-file <path> [options]
 
 Options:
   --plan-file <path>          Parallel plan JSON from sprint-board plan command

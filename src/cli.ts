@@ -28,7 +28,7 @@ interface Defaults {
 
 const DEFAULTS: Defaults = {
   PROJECT_PREFIX: "TASK",
-  SPRINT_STATE_FILE: ".va-auto-pilot/sprint-state.json",
+  SPRINT_STATE_FILE: ".techlead/sprint-state.json",
   SPRINT_BOARD_FILE: "docs/todo/sprint.md",
   RUN_JOURNAL_FILE: "docs/todo/run-journal.md",
   BUILD_COMMAND: "pnpm typecheck && pnpm lint && pnpm test",
@@ -168,10 +168,10 @@ function writeTemplateFiles(
 }
 
 function main(): void {
-  const cli = cac("va-auto-pilot");
+  const cli = cac("techlead");
 
   cli
-    .command("init [target-dir]", "Initialize VA Auto-Pilot scaffold")
+    .command("init [target-dir]", "Initialize techlead scaffold")
     .option("--project-prefix <prefix>", "Task ID prefix", { default: DEFAULTS.PROJECT_PREFIX })
     .option("--build-cmd <command>", "Build/quality gate command")
     .option("--review-cmd <command>", "Code review command")
@@ -200,7 +200,7 @@ function main(): void {
 
       const written = writeTemplateFiles(resolvedTargetDir, context, { force, dryRun });
 
-      console.log("VA Auto-Pilot scaffold complete.");
+      console.log("techlead scaffold complete.");
       console.log(`Target: ${resolvedTargetDir}`);
       console.log(`Mode: ${dryRun ? "dry-run" : "write"}`);
       console.log(`Files: ${written.length}`);
@@ -218,7 +218,7 @@ function main(): void {
         console.log("3. Add human instructions in docs/todo/human-board.md");
         console.log("4. Run your first acceptance flow with scripts/test-runner.ts");
         console.log(
-          "5. Start a new agent session and run the decision loop in docs/operations/va-auto-pilot-protocol.md"
+          "5. Start a new agent session and run the decision loop in docs/operations/techlead-protocol.md"
         );
       }
     });

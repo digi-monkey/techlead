@@ -35,9 +35,9 @@ import { spawnSync } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 
 const ROOT = process.cwd();
-const REAL_STATE_FILE = path.join(ROOT, ".va-auto-pilot", "sprint-state.json");
+const REAL_STATE_FILE = path.join(ROOT, ".techlead", "sprint-state.json");
 const REAL_JOURNAL_FILE = path.join(ROOT, "docs", "todo", "run-journal.md");
-const REAL_PITFALLS_FILE = path.join(ROOT, ".va-auto-pilot", "pitfalls.json");
+const REAL_PITFALLS_FILE = path.join(ROOT, ".techlead", "pitfalls.json");
 
 // ---------------------------------------------------------------------------
 // Assertion evaluator

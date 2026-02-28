@@ -1,11 +1,11 @@
 ---
-name: va-auto-pilot
-description: Bootstrap and operate the VA Auto-Pilot engineering loop in any repository. Use when users ask for autonomous delivery flow, sprint/human boards, quality gates, or /va-auto-pilot mode.
+name: techlead
+description: Bootstrap and operate the TechLead engineering loop in any repository. Use when users ask for autonomous delivery flow, sprint/human boards, quality gates, or /techlead mode.
 metadata:
   version: 2.0.0
 ---
 
-# VA Auto-Pilot Skill
+# TechLead Skill
 
 ## Trigger
 
@@ -15,7 +15,7 @@ Use this skill when the user asks to:
 - adopt sprint state machine + human override board
 - enforce build/review/acceptance gates
 - run a manager-style multi-agent loop
-- enable `/va-auto-pilot` operating mode
+- enable `/techlead` operating mode
 
 ## Workflow
 
@@ -23,26 +23,26 @@ Use this skill when the user asks to:
 2. Install scaffold:
 
 ```bash
-npx -y va-auto-pilot init <target-dir>
+npx -y techlead init <target-dir>
 ```
 
 3. If npm package is unavailable, run fallback bootstrap:
 
 ```bash
 tmp="$(mktemp -d)"
-git clone --depth 1 https://github.com/Vadaski/va-auto-pilot "$tmp/va-auto-pilot"
-cd "$tmp/va-auto-pilot" && pnpm install && pnpm run build
-node "$tmp/va-auto-pilot/dist/cli.js" init <target-dir>
+git clone --depth 1 https://github.com/digi-monkey/techlead "$tmp/techlead"
+cd "$tmp/techlead" && pnpm install && pnpm run build
+node "$tmp/techlead/dist/cli.js" init <target-dir>
 ```
 
 4. Read and align these files to the target project:
 
-- `.va-auto-pilot/config.yaml`
-- `.va-auto-pilot/sprint-state.json`
+- `.techlead/config.yaml`
+- `.techlead/sprint-state.json`
 - `docs/todo/sprint.md`
 - `docs/todo/human-board.md`
 - `docs/todo/run-journal.md`
-- `docs/operations/va-auto-pilot-protocol.md`
+- `docs/operations/techlead-protocol.md`
 
 5. Ensure quality gates are runnable:
 
@@ -57,7 +57,7 @@ node "$tmp/va-auto-pilot/dist/cli.js" init <target-dir>
 - resolve next action with `node scripts/sprint-board.mjs next`
 - produce optional parallel plan with `node scripts/sprint-board.mjs plan --json --max-parallel 3`
 - execute parallel tracks via model-native parallel tool calls by default
-- use `scripts/va-parallel-runner.mjs` only if the user explicitly asks for the experimental external runner
+- use `scripts/techlead-parallel-runner.mjs` only if the user explicitly asks for the experimental external runner
 - execute current task by objective + constraints (no step-by-step instructions)
 - run build/review/acceptance gates
 - update state with `node scripts/sprint-board.mjs update ...`

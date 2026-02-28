@@ -15,7 +15,7 @@ const PRIORITY_WEIGHT = { P0: 0, P1: 1, P2: 2, P3: 3 };
 const DEFAULT_MAX_PARALLEL = 2;
 
 const DEFAULTS = resolveDefaults();
-const DEFAULT_PITFALLS_FILE = ".va-auto-pilot/pitfalls.json";
+const DEFAULT_PITFALLS_FILE = ".techlead/pitfalls.json";
 const VALID_FAILURE_TYPES = ["gate", "acceptance", "review"];
 
 function printHelp() {
@@ -210,11 +210,11 @@ function renderBoardMarkdown(state) {
 
   return `# Sprint Board
 
-> Last updated: ${date} by VA Auto-Pilot
-> Generated from \`.va-auto-pilot/sprint-state.json\` via \`node scripts/sprint-board.mjs render\`.
+> Last updated: ${date} by TechLead
+> Generated from \`.techlead/sprint-state.json\` via \`node scripts/sprint-board.mjs render\`.
 >
 > Rules:
-> - Machine source of truth: \`.va-auto-pilot/sprint-state.json\`
+> - Machine source of truth: \`.techlead/sprint-state.json\`
 > - Human-readable projection: \`docs/todo/sprint.md\`
 > - One primary task at a time in \`In Progress\`; independent tracks may run in parallel
 > - Task ID format: \`${prefix}-{3-digit number}\`

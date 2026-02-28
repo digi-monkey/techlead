@@ -1,6 +1,6 @@
 # Run Journal
 
-> Append-only memory for each VA Auto-Pilot cycle.
+> Append-only memory for each TechLead cycle.
 > Keep reusable knowledge in `Codebase Signals`, append cycle notes under `Entries`.
 
 ## Codebase Signals
@@ -19,7 +19,7 @@
 - Primary Task: AP-001
 - Tracks: AP-001:TIMEOUT
 - Files:
-  - `/Users/vadaski/vadaski/Code/auto-pilot/.va-auto-pilot/parallel-runs/AP-001.log`
+  - `/Users/vadaski/vadaski/Code/auto-pilot/.techlead/parallel-runs/AP-001.log`
 - Note: exit-0 moves task to Review; manager agent must still run multi-perspective review and acceptance gates.
 ---
 
@@ -28,13 +28,13 @@
 - Primary Task: AP-001
 - Tracks: AP-001:TIMEOUT
 - Files:
-  - `/Users/vadaski/vadaski/Code/auto-pilot/.va-auto-pilot/parallel-runs/AP-001.log`
+  - `/Users/vadaski/vadaski/Code/auto-pilot/.techlead/parallel-runs/AP-001.log`
 - Note: exit-0 moves task to Review; manager agent must still run multi-perspective review and acceptance gates.
 ---
 
 ## 2026-02-23T18:28:25.081Z - AP-001
-- Summary: Upgraded Multi-Perspective Review section in va-auto-pilot-protocol.md. Two independent AI cross-reviews (adversarial adopter, protocol designer) each found 3 CRITICALs — all 6 resolved: anchor identification guard added, confidence replaced with concrete completion condition, 3-cycle iteration cap added, bounded stall procedure, perspective count heuristic, re-review = full set. Template synced. validate-distribution passed.
-- Files: `docs/operations/va-auto-pilot-protocol.md`, `templates/docs/operations/va-auto-pilot-protocol.md`, `docs/todo/human-board.md`
+- Summary: Upgraded Multi-Perspective Review section in techlead-protocol.md. Two independent AI cross-reviews (adversarial adopter, protocol designer) each found 3 CRITICALs — all 6 resolved: anchor identification guard added, confidence replaced with concrete completion condition, 3-cycle iteration cap added, bounded stall procedure, perspective count heuristic, re-review = full set. Template synced. validate-distribution passed.
+- Files: `docs/operations/techlead-protocol.md`, `templates/docs/operations/techlead-protocol.md`, `docs/todo/human-board.md`
 - Signals:
   - multi-perspective review must use anchor+constraint grounding before selecting perspectives
   - completion condition must be concrete and checkable not vague confidence
@@ -95,21 +95,21 @@
 ---
 
 ## 2026-02-23T19:23:55.804Z - AP-008
-- Summary: Eliminated templates/scripts/ dual-copy. bin/va-auto-pilot.mjs init now copies scripts verbatim from the package's own scripts/ directory (single source of truth). validate-distribution.mjs mirror equality section removed; requiredFiles list pruned to remove templates/scripts/* entries. 41/41 unit tests, 18/18 CLI flow MUSTs, validate:distribution all pass. Init smoke test confirmed correct script output. Dry-run path verified. Multi-perspective review (Correctness Auditor + CLI Consumer): no critical findings.
-- Files: `bin/va-auto-pilot.mjs`, `scripts/validate-distribution.mjs`, `templates/scripts/ (deleted)`
+- Summary: Eliminated templates/scripts/ dual-copy. bin/techlead.mjs init now copies scripts verbatim from the package's own scripts/ directory (single source of truth). validate-distribution.mjs mirror equality section removed; requiredFiles list pruned to remove templates/scripts/* entries. 41/41 unit tests, 18/18 CLI flow MUSTs, validate:distribution all pass. Init smoke test confirmed correct script output. Dry-run path verified. Multi-perspective review (Correctness Auditor + CLI Consumer): no critical findings.
+- Files: `bin/techlead.mjs`, `scripts/validate-distribution.mjs`, `templates/scripts/ (deleted)`
 ---
 
 ## 2026-02-23T19:31:44.940Z - AP-009
-- Summary: Added Strategic Decomposition section to docs/operations/va-auto-pilot-protocol.md and templates/docs/operations/va-auto-pilot-protocol.md. Section activates on strategic (vague, multi-axis) goals. Key design decisions: dimensions emerge from goal analysis, not fixed lists — consistent with the constraint/anchor/perspective model; dimension-scan concurrency defers to the existing Concurrency Contract (model-native by default, experimental runner requires human opt-in); convergence produces a run-journal entry with defined schema; guard bounds the case where goal scope exceeds one sprint. Adversarial review (Sprint 4 post-sprint gate) surfaced one WARNING: concurrency section tension — fixed by adding explicit deference to Concurrency Contract and serialization fallback; one WARNING: unstructured journal entry — fixed by adding schema; one WARNING: honor-system guard — fixed in AP-010. All gates pass.
+- Summary: Added Strategic Decomposition section to docs/operations/techlead-protocol.md and templates/docs/operations/techlead-protocol.md. Section activates on strategic (vague, multi-axis) goals. Key design decisions: dimensions emerge from goal analysis, not fixed lists — consistent with the constraint/anchor/perspective model; dimension-scan concurrency defers to the existing Concurrency Contract (model-native by default, experimental runner requires human opt-in); convergence produces a run-journal entry with defined schema; guard bounds the case where goal scope exceeds one sprint. Adversarial review (Sprint 4 post-sprint gate) surfaced one WARNING: concurrency section tension — fixed by adding explicit deference to Concurrency Contract and serialization fallback; one WARNING: unstructured journal entry — fixed by adding schema; one WARNING: honor-system guard — fixed in AP-010. All gates pass.
 ---
 
 ## 2026-02-23T19:31:54.606Z - AP-010
-- Summary: Added Sprint Completion Gate section to docs/operations/va-auto-pilot-protocol.md and templates/docs/operations/va-auto-pilot-protocol.md. Section runs before any sprint is declared Done. Key design decisions: reviewer receives only the git diff and changed file state — no intent context; manager must assign a specific perspective derived from what changed (examples show stake-based framing, not role labels); CRITICAL findings block completion and re-enter task loop; WARNING requires recorded disposition. Critical design fix from adversarial review (Sprint 4 post-sprint gate): the guard was a disclosure, not a control. Fixed: when fresh-context condition is flagged imperfect, all PASS findings are downgraded to WARNING pending genuine fresh-context review. This makes the imperfection consequential rather than cosmetic. Self-referential note: this sprint's adversarial review was run by the implementing agent (imperfect fresh-context). Per the new guard, PASS findings from that review are treated as WARNING. Flagged in this journal entry. All gates pass.
+- Summary: Added Sprint Completion Gate section to docs/operations/techlead-protocol.md and templates/docs/operations/techlead-protocol.md. Section runs before any sprint is declared Done. Key design decisions: reviewer receives only the git diff and changed file state — no intent context; manager must assign a specific perspective derived from what changed (examples show stake-based framing, not role labels); CRITICAL findings block completion and re-enter task loop; WARNING requires recorded disposition. Critical design fix from adversarial review (Sprint 4 post-sprint gate): the guard was a disclosure, not a control. Fixed: when fresh-context condition is flagged imperfect, all PASS findings are downgraded to WARNING pending genuine fresh-context review. This makes the imperfection consequential rather than cosmetic. Self-referential note: this sprint's adversarial review was run by the implementing agent (imperfect fresh-context). Per the new guard, PASS findings from that review are treated as WARNING. Flagged in this journal entry. All gates pass.
 ---
 
 ## 2026-02-23T19:41:32.839Z - AP-011
 - Summary: Added retrospective failure log (pitfalls.json) and pitfall guide CLI to sprint-board.mjs. Structured failureDetail on update --state Failed. pitfall command: add/resolve/list with isolated_pitfalls test support. Pitfall count surfaced in sprint-board summary. Protocol updated: Operational Memory Contract (read pitfalls.json each cycle), State Update Contract (record pitfall on Failed), Delegation Contract (inject pitfalls into Hard constraints). Sprint Completion Gate adversarial review (reliability engineer / write-only log perspective) found 3 WARNINGs: two fixed (summary pitfall count, list summary line), one accepted (fuzzy keyword overlap in protocol is intentional flexibility).
-- Files: `scripts/sprint-board.mjs`, `scripts/test-cli-flows.mjs`, `scripts/validate-distribution.mjs`, `docs/operations/va-auto-pilot-protocol.md`, `templates/docs/operations/va-auto-pilot-protocol.md`, `templates/.va-auto-pilot/pitfalls.json`, `test-flows/pitfall-cli.yaml`
+- Files: `scripts/sprint-board.mjs`, `scripts/test-cli-flows.mjs`, `scripts/validate-distribution.mjs`, `docs/operations/techlead-protocol.md`, `templates/docs/operations/techlead-protocol.md`, `templates/.techlead/pitfalls.json`, `test-flows/pitfall-cli.yaml`
 - Signals:
   - pitfall command uses --pitfalls-file for test isolation
   - readPitfalls falls back to empty state if file missing
@@ -118,7 +118,7 @@
 ---
 
 ## 2026-02-23T19:55:34.948Z - AP-012
-- Summary: Rewrote README.md, README.zh.md, website/index.html, and website/app.js to communicate VA Auto-Pilot design philosophy with conviction. Led with the design bet (frontier-model-first by design), articulated six core intellectual contributions (constraint-derived perspectives, manager-as-delegator, CLI correctness guarantee, frontier-model scaling property, strategic decomposition, failure compounding), added honest when-to-use/when-not-to-use sections, updated website hero/philosophy/loop/compare sections, added Strategic Decomposition to state machine detail and adversarial Sprint Completion Gate to Done state. codex review found P0 JS syntax error (unescaped Chinese quotes in double-quoted string) — fixed by replacing with Chinese corner brackets. Sprint Completion Gate: 3 parallel adversarial reviewers (skeptical senior engineer, future power user, first-time reader) all returned PASS with no CRITICAL findings; 5 WARNINGs all accepted with rationale. NOTE: Sprint Completion Gate was run by implementing agent — all PASS findings treated as WARNING per protocol guard; no CRITICAL findings surfaced under this control downgrade.
+- Summary: Rewrote README.md, README.zh.md, website/index.html, and website/app.js to communicate TechLead design philosophy with conviction. Led with the design bet (frontier-model-first by design), articulated six core intellectual contributions (constraint-derived perspectives, manager-as-delegator, CLI correctness guarantee, frontier-model scaling property, strategic decomposition, failure compounding), added honest when-to-use/when-not-to-use sections, updated website hero/philosophy/loop/compare sections, added Strategic Decomposition to state machine detail and adversarial Sprint Completion Gate to Done state. codex review found P0 JS syntax error (unescaped Chinese quotes in double-quoted string) — fixed by replacing with Chinese corner brackets. Sprint Completion Gate: 3 parallel adversarial reviewers (skeptical senior engineer, future power user, first-time reader) all returned PASS with no CRITICAL findings; 5 WARNINGs all accepted with rationale. NOTE: Sprint Completion Gate was run by implementing agent — all PASS findings treated as WARNING per protocol guard; no CRITICAL findings surfaced under this control downgrade.
 - Files: `README.md`, `README.zh.md`, `website/index.html`, `website/app.js`
 ---
 

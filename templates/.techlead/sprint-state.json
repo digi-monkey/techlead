@@ -8,7 +8,7 @@
       "title": "Replace with your first deliverable",
       "priority": "P1",
       "state": "Backlog",
-      "owner": "VA Auto-Pilot",
+      "owner": "TechLead",
       "source": "bootstrap",
       "createdAt": "{{DATE_ISO}}",
       "startedAt": "",

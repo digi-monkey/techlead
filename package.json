@@ -1,12 +1,12 @@
 {
-  "name": "va-auto-pilot",
+  "name": "techlead",
   "version": "0.1.0",
   "description": "CLI-first autonomous multi-agent engineering loop for any codebase",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.29.3",
   "bin": {
-    "va-auto-pilot": "./dist/cli.js"
+    "techlead": "./dist/cli.js"
   },
   "engines": {
     "node": ">=20"

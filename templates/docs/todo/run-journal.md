@@ -1,6 +1,6 @@
 # Run Journal
 
-> Append-only memory for each VA Auto-Pilot cycle.
+> Append-only memory for each TechLead cycle.
 > Keep reusable knowledge in `Codebase Signals`, append cycle notes under `Entries`.
 
 ## Codebase Signals

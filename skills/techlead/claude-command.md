@@ -1,20 +1,20 @@
 ---
-description: Bootstrap and run the VA Auto-Pilot manager loop for the current repository.
+description: Bootstrap and run the TechLead manager loop for the current repository.
 ---
 
-Operate in VA Auto-Pilot mode for this repository.
+Operate in TechLead mode for this repository.
 
 Execution rules:
 
-1. If `.va-auto-pilot/config.yaml` is missing, run:
+1. If `.techlead/config.yaml` is missing, run:
 
 ```bash
-npx -y va-auto-pilot init .
+npx -y techlead init .
 ```
 
 2. Read these files in order before taking action:
 
-- `docs/operations/va-auto-pilot-protocol.md`
+- `docs/operations/techlead-protocol.md`
 - `docs/todo/human-board.md`
 - `docs/todo/run-journal.md`
 - `docs/todo/sprint.md`
@@ -30,7 +30,7 @@ npx -y va-auto-pilot init .
 - `node scripts/sprint-board.mjs update ...`
 - `node scripts/sprint-board.mjs journal ...`
 
-5. Always run gates from `.va-auto-pilot/config.yaml`:
+5. Always run gates from `.techlead/config.yaml`:
 
 - `qualityGate.buildCommand`
 - `qualityGate.reviewCommand`
@@ -39,5 +39,5 @@ npx -y va-auto-pilot init .
 6. Never skip gate failures. Fix, re-run, then update state.
 7. If stop condition is hit, pause and ask human for decision.
 8. Default to model-native CLI orchestration for parallel tracks.
-9. Use `scripts/va-parallel-runner.mjs` only if human explicitly requests the experimental external runner path.
+9. Use `scripts/techlead-parallel-runner.mjs` only if human explicitly requests the experimental external runner path.
 10. Report concise status after each loop: task, state change, gate results, next action.

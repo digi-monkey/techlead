@@ -1,7 +1,7 @@
 version: 1
 projectPrefix: "AP"
 sprint:
-  stateFile: ".va-auto-pilot/sprint-state.json"
+  stateFile: ".techlead/sprint-state.json"
   boardFile: "docs/todo/sprint.md"
   runJournalFile: "docs/todo/run-journal.md"
 qualityGate:

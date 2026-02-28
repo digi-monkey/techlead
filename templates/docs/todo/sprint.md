@@ -1,10 +1,10 @@
 # Sprint Board
 
-> Last updated: {{DATE_ISO}} by VA Auto-Pilot
-> Generated from `.va-auto-pilot/sprint-state.json` via `node scripts/sprint-board.mjs render`.
+> Last updated: {{DATE_ISO}} by TechLead
+> Generated from `.techlead/sprint-state.json` via `node scripts/sprint-board.mjs render`.
 >
 > Rules:
-> - Machine source of truth: `.va-auto-pilot/sprint-state.json`
+> - Machine source of truth: `.techlead/sprint-state.json`
 > - Human-readable projection: `docs/todo/sprint.md`
 > - One primary task at a time in `In Progress`; independent tracks may run in parallel
 > - Task ID format: `{{PROJECT_PREFIX}}-{3-digit number}`
@@ -47,4 +47,4 @@
 ## Backlog
 | Priority | ID | Task | Depends On | Owner | Source |
 |----------|----|------|------------|-------|--------|
-| P1 | {{PROJECT_PREFIX}}-001 | Replace with your first deliverable | - | VA Auto-Pilot | bootstrap |
+| P1 | {{PROJECT_PREFIX}}-001 | Replace with your first deliverable | - | TechLead | bootstrap |

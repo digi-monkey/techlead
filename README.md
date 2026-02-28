@@ -1,10 +1,10 @@
-# VA Auto-Pilot
+# TechLead
 
 ## The Design Bet
 
 Most agent frameworks are built to compensate for model weakness — they break tasks into small steps, prescribe exactly what the model should do, and constrain autonomy to keep weak models on track.
 
-VA Auto-Pilot makes the opposite bet.
+TechLead makes the opposite bet.
 
 **This framework is built for the strongest models, by design.** It sets a goal, states constraints, and specifies acceptance criteria — then trusts the model to find the path. There are no step-by-step instructions to follow. There is no role list to pick from. There is only: here is what must be true when you are done.
 
@@ -20,7 +20,7 @@ That is the bet.
 
 Most multi-agent review frameworks prescribe perspectives: "security reviewer," "QA engineer," "architecture reviewer." The problem is that generic roles expose generic failure modes. Real failure modes are specific to the change.
 
-VA Auto-Pilot uses a different model. Before any review, the manager identifies:
+TechLead uses a different model. Before any review, the manager identifies:
 - **Constraints**: what hard boundaries govern this change?
 - **Anchors**: what invariants must hold after this change?
 
@@ -58,7 +58,7 @@ The pitfall guide captures structured failure metadata — not just error string
 
 ---
 
-## When to Use VA Auto-Pilot
+## When to Use TechLead
 
 **Use it when:**
 - You have access to Claude Opus 4.6 or gpt-5.3-codex class capability (or equivalent)
@@ -76,8 +76,8 @@ The pitfall guide captures structured failure metadata — not just error string
 
 ## What You Get
 
-- `va-auto-pilot` CLI scaffold for any repository
-- machine-readable sprint state (`.va-auto-pilot/sprint-state.json`)
+- `techlead` CLI scaffold for any repository
+- machine-readable sprint state (`.techlead/sprint-state.json`)
 - generated sprint board (`docs/todo/sprint.md`)
 - human override board (`docs/todo/human-board.md`)
 - append-only run memory (`docs/todo/run-journal.md`)
@@ -97,7 +97,7 @@ pnpm run build
 node ./dist/cli.js init .
 
 # pnpm (after publish)
-pnpm dlx va-auto-pilot init .
+pnpm dlx techlead init .
 ```
 
 Render board after initialization:
@@ -113,7 +113,7 @@ node scripts/sprint-board.mjs render
 The correct way to use this framework is to give it a goal, not a plan. The model figures out the plan.
 
 ```text
-$va-auto-pilot
+$techlead
 
 Objective:
 Ship onboarding v2 with measurable activation lift.
@@ -144,7 +144,7 @@ Notice what is absent: no list of files to touch, no sequence of steps to follow
 Default model-native path:
 
 ```bash
-node scripts/sprint-board.mjs plan --json --max-parallel 3 > .va-auto-pilot/parallel-plan.json
+node scripts/sprint-board.mjs plan --json --max-parallel 3 > .techlead/parallel-plan.json
 # manager agent executes tracks via native parallel tool calls
 # synchronization barrier before state promotion
 pnpm run check:all && codex review --uncommitted && pnpm run validate:distribution
@@ -153,7 +153,7 @@ pnpm run check:all && codex review --uncommitted && pnpm run validate:distributi
 Experimental helper (opt-in only):
 
 ```bash
-node scripts/va-parallel-runner.mjs spawn --plan-file .va-auto-pilot/parallel-plan.json --agent-cmd "codex exec --task {taskId}"
+node scripts/techlead-parallel-runner.mjs spawn --plan-file .techlead/parallel-plan.json --agent-cmd "codex exec --task {taskId}"
 ```
 
 ---
@@ -163,22 +163,22 @@ node scripts/va-parallel-runner.mjs spawn --plan-file .va-auto-pilot/parallel-pl
 Codex install:
 
 ```text
-$skill-installer install https://github.com/Vadaski/va-auto-pilot/tree/main/skills/va-auto-pilot
+$skill-installer install https://github.com/digi-monkey/techlead/tree/main/skills/techlead
 ```
 
 Claude Code install:
 
 ```bash
 mkdir -p .claude/commands
-curl -fsSL https://raw.githubusercontent.com/Vadaski/va-auto-pilot/main/skills/va-auto-pilot/claude-command.md -o .claude/commands/va-auto-pilot.md
+curl -fsSL https://raw.githubusercontent.com/digi-monkey/techlead/main/skills/techlead/claude-command.md -o .claude/commands/techlead.md
 ```
 
 ---
 
 ## Documentation
 
-- Protocol: `docs/operations/va-auto-pilot-protocol.md`
-- Start prompt: `docs/operations/start-va-auto-pilot-prompt.md`
+- Protocol: `docs/operations/techlead-protocol.md`
+- Start prompt: `docs/operations/start-techlead-prompt.md`
 - Distribution: `docs/operations/distribute-skill.md`
 
 ---

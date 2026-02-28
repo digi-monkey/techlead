@@ -1,7 +1,7 @@
 # Human Board
 
 > Human writes objectives and constraints here.
-> VA Auto-Pilot reads this at the start of every cycle.
+> TechLead reads this at the start of every cycle.
 > Processed items must be marked `[x]`, never deleted.
 
 ---

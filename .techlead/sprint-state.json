@@ -75,7 +75,7 @@
       "failCount": 0,
       "reason": "",
       "verification": "add command implemented: auto-ID (AP-NNN), validation, depends-on, regex-safe prefix; printHelp updated; templates mirrored; all gates pass",
-      "notes": "Discovered while seeding this sprint: there is no way to add a task to the backlog via CLI. You must hand-edit .va-auto-pilot/sprint-state.json. This violates the CLI-first principle. Add: `node scripts/sprint-board.mjs add --title <text> --priority <P0-P3> [--source <text>] [--depends-on <ID,...>]`. Should auto-assign next AP-NNN id, set state=Backlog, write JSON, render board.",
+      "notes": "Discovered while seeding this sprint: there is no way to add a task to the backlog via CLI. You must hand-edit .techlead/sprint-state.json. This violates the CLI-first principle. Add: `node scripts/sprint-board.mjs add --title <text> --priority <P0-P3> [--source <text>] [--depends-on <ID,...>]`. Should auto-assign next AP-NNN id, set state=Backlog, write JSON, render board.",
       "review": {
         "implementer": "",
         "security": "",
@@ -306,7 +306,7 @@
       "lastFailedAt": "",
       "failCount": 0,
       "reason": "",
-      "verification": "pitfall CLI (add/resolve/list), failureDetail on update --state Failed, templates/.va-auto-pilot/pitfalls.json, protocol updated (Operational Memory, State Update, Delegation contracts), pitfall count in summary, 9 new CLI flow tests pass, all 41 unit tests pass, validate:distribution passes",
+      "verification": "pitfall CLI (add/resolve/list), failureDetail on update --state Failed, templates/.techlead/pitfalls.json, protocol updated (Operational Memory, State Update, Delegation contracts), pitfall count in summary, 9 new CLI flow tests pass, all 41 unit tests pass, validate:distribution passes",
       "notes": "",
       "review": {
         "implementer": "",

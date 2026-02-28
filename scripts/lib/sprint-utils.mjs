@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Shared utilities for sprint-board.mjs and va-parallel-runner.mjs.
+// Shared utilities for sprint-board.mjs and techlead-parallel-runner.mjs.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -59,14 +59,14 @@ export function readSprintPathsFromConfig(configPath) {
  */
 export function resolveDefaults() {
   const sprintFromConfig = readSprintPathsFromConfig(
-    path.resolve(process.cwd(), ".va-auto-pilot/config.yaml")
+    path.resolve(process.cwd(), ".techlead/config.yaml")
   );
 
   return {
     stateFile:
       process.env.AUTO_PILOT_SPRINT_STATE_FILE ??
       sprintFromConfig.stateFile ??
-      ".va-auto-pilot/sprint-state.json",
+      ".techlead/sprint-state.json",
     boardFile:
       process.env.AUTO_PILOT_SPRINT_BOARD_FILE ??
       sprintFromConfig.boardFile ??

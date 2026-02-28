@@ -41,18 +41,18 @@ const requiredFiles = [
   "website/index.html",
   "website/styles.css",
   "website/app.js",
-  ".va-auto-pilot/sprint-state.json",
-  "skills/va-auto-pilot/SKILL.md",
-  "skills/va-auto-pilot/claude-command.md",
+  ".techlead/sprint-state.json",
+  "skills/techlead/SKILL.md",
+  "skills/techlead/claude-command.md",
   "scripts/sprint-board.mjs",
-  "scripts/va-parallel-runner.mjs",
+  "scripts/techlead-parallel-runner.mjs",
   "scripts/lib/sprint-utils.mjs",
   "docs/todo/run-journal.md",
-  "templates/.va-auto-pilot/sprint-state.json",
-  "templates/.va-auto-pilot/pitfalls.json",
+  "templates/.techlead/sprint-state.json",
+  "templates/.techlead/pitfalls.json",
   "templates/docs/todo/run-journal.md",
   ".github/workflows/deploy-website.yml",
-  "docs/operations/va-auto-pilot-protocol.md"
+  "docs/operations/techlead-protocol.md"
 ];
 
 for (const relative of requiredFiles) {
@@ -84,10 +84,10 @@ if (fs.existsSync(path.join(root, "website/index.html"))) {
 // 3. SKILL.md name check
 // ---------------------------------------------------------------------------
 
-if (fs.existsSync(path.join(root, "skills/va-auto-pilot/SKILL.md"))) {
-  const skill = fs.readFileSync(path.join(root, "skills/va-auto-pilot/SKILL.md"), "utf8");
-  if (!skill.includes("name: va-auto-pilot")) {
-    fail("skills/va-auto-pilot/SKILL.md missing expected skill name");
+if (fs.existsSync(path.join(root, "skills/techlead/SKILL.md"))) {
+  const skill = fs.readFileSync(path.join(root, "skills/techlead/SKILL.md"), "utf8");
+  if (!skill.includes("name: techlead")) {
+    fail("skills/techlead/SKILL.md missing expected skill name");
   }
 }
 
@@ -95,10 +95,10 @@ if (fs.existsSync(path.join(root, "skills/va-auto-pilot/SKILL.md"))) {
 // 4. sprint-state.json schema validation
 // ---------------------------------------------------------------------------
 
-const stateData = readJson(".va-auto-pilot/sprint-state.json");
+const stateData = readJson(".techlead/sprint-state.json");
 if (stateData !== null) {
   if (!Array.isArray(stateData.tasks)) {
-    fail(".va-auto-pilot/sprint-state.json: 'tasks' must be an array");
+    fail(".techlead/sprint-state.json: 'tasks' must be an array");
   } else {
     const VALID_STATES = new Set(["Backlog", "In Progress", "Review", "Testing", "Failed", "Done"]);
     const VALID_PRIORITIES = new Set(["P0", "P1", "P2", "P3"]);
@@ -135,9 +135,9 @@ if (stateData !== null) {
 }
 
 // Also validate the template sprint-state.json.
-const templateState = readJson("templates/.va-auto-pilot/sprint-state.json");
+const templateState = readJson("templates/.techlead/sprint-state.json");
 if (templateState !== null && !Array.isArray(templateState.tasks)) {
-  fail("templates/.va-auto-pilot/sprint-state.json: 'tasks' must be an array");
+  fail("templates/.techlead/sprint-state.json: 'tasks' must be an array");
 }
 
 // ---------------------------------------------------------------------------
