@@ -21,6 +21,7 @@
     "check:cli-flows": "node ./scripts/test-cli-flows.mjs --all",
     "check:all": "pnpm run typecheck && pnpm run build && pnpm run check && pnpm run check:sprint && pnpm run check:units && pnpm run check:cli-flows && pnpm run validate:distribution",
     "validate:distribution": "node ./scripts/validate-distribution.mjs",
+    "prepublishOnly": "pnpm run build",
     "postinstall": "pnpm approve-builds esbuild"
   },
   "dependencies": {
