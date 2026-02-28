@@ -1,7 +1,5 @@
 # VA Auto-Pilot
 
-[中文文档](./README.zh.md)
-
 ## The Design Bet
 
 Most agent frameworks are built to compensate for model weakness — they break tasks into small steps, prescribe exactly what the model should do, and constrain autonomy to keep weak models on track.
@@ -187,7 +185,6 @@ curl -fsSL https://raw.githubusercontent.com/Vadaski/va-auto-pilot/main/skills/v
 
 `website/` is a standalone static site with:
 
-- bilingual switch (EN / 中文)
 - interactive state machine
 - animated execution demo
 - SEO + OG metadata
