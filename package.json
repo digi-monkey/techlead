@@ -4,6 +4,7 @@
   "description": "CLI-first autonomous multi-agent engineering loop for any codebase",
   "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@10.29.3",
   "bin": {
     "va-auto-pilot": "./bin/va-auto-pilot.mjs"
   },
@@ -15,14 +16,15 @@
     "check:sprint": "node ./scripts/sprint-board.mjs summary",
     "check:units": "node ./scripts/test-units.mjs",
     "check:cli-flows": "node ./scripts/test-cli-flows.mjs --all",
-    "check:all": "npm run check && npm run check:sprint && npm run check:units && npm run check:cli-flows && npm run validate:distribution",
-    "validate:distribution": "node ./scripts/validate-distribution.mjs"
+    "check:all": "pnpm run check && pnpm run check:sprint && pnpm run check:units && pnpm run check:cli-flows && pnpm run validate:distribution",
+    "validate:distribution": "node ./scripts/validate-distribution.mjs",
+    "postinstall": "pnpm approve-builds esbuild"
   },
   "dependencies": {
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "tsx": "^4.20.4"
+    "tsx": "^4.21.0"
   },
   "keywords": [
     "agent",

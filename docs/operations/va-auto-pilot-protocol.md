@@ -2,6 +2,8 @@
 
 > Behavioral specification for autonomous multi-agent project execution.
 > Read this before running a VA Auto-Pilot loop.
+> 
+> **💡 快速参考**: 见 [va-auto-pilot-protocol-concise.md](./va-auto-pilot-protocol-concise.md)（省 token 版）
 
 ---
 
@@ -231,7 +233,7 @@ Every implementation delegation must include:
 1. Task ID and objective
 2. Relevant file paths
 3. Hard constraints (architecture, security, naming, limits)
-4. Completion gates (`npm run check:all`)
+4. Completion gates (`pnpm run check:all`)
 5. A no-how clause: do not prescribe implementation steps
 6. If `.va-auto-pilot/pitfalls.json` contains unresolved entries matching the current task by task ID, failure type, or keyword overlap — include them verbatim in the **Hard constraints** section with the heading `Known pitfalls to avoid`.
 
@@ -242,7 +244,7 @@ Every implementation delegation must include:
 ### Gate 1: Build and Static Quality
 
 ```bash
-npm run check:all
+pnpm run check:all
 ```
 
 ### Gate 2: Code Review
@@ -259,7 +261,7 @@ Review findings policy:
 ### Gate 3: Acceptance
 
 ```bash
-npm run validate:distribution
+pnpm run validate:distribution
 ```
 
 Pass criteria:

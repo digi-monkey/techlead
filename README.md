@@ -32,7 +32,7 @@ This is why reviews sharpen over time. The model learns which viewpoints matter 
 
 ### 2. CLI-first is a correctness guarantee, not a style preference
 
-Quality gates run via deterministic CLI commands. `npm run check:all` either passes or it does not. The model cannot declare success, argue its way through, or self-certify quality.
+Quality gates run via deterministic CLI commands. `pnpm run check:all` either passes or it does not. The model cannot declare success, argue its way through, or self-certify quality.
 
 This creates an objective synchronization point that separates "I think it's done" from "it is done." Without this, autonomous loops collapse into self-validation — the model becomes increasingly confident about increasingly wrong outputs.
 
@@ -94,8 +94,8 @@ The pitfall guide captures structured failure metadata — not just error string
 # local
 node ./bin/va-auto-pilot.mjs init .
 
-# npm (after publish)
-npx -y va-auto-pilot init .
+# pnpm (after publish)
+pnpm dlx va-auto-pilot init .
 ```
 
 Render board after initialization:
@@ -145,7 +145,7 @@ Default model-native path:
 node scripts/sprint-board.mjs plan --json --max-parallel 3 > .va-auto-pilot/parallel-plan.json
 # manager agent executes tracks via native parallel tool calls
 # synchronization barrier before state promotion
-npm run check:all && codex review --uncommitted && npm run validate:distribution
+pnpm run check:all && codex review --uncommitted && pnpm run validate:distribution
 ```
 
 Experimental helper (opt-in only):
@@ -204,8 +204,8 @@ python3 -m http.server 4173
 ## Verification
 
 ```bash
-npm run check:all
-npm run validate:distribution
+pnpm run check:all
+pnpm run validate:distribution
 ```
 
 ---

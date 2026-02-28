@@ -32,7 +32,7 @@ VA Auto-Pilot 采用不同的模型。在任何评审开始之前，管理 Agent
 
 ### 2. CLI 优先是正确性保证，而不是风格偏好
 
-质量门禁通过确定性 CLI 命令执行。`npm run check:all` 只有两种结果：通过或不通过。模型无法宣称自己完成了，无法用言辞绕过去，无法自我认证质量。
+质量门禁通过确定性 CLI 命令执行。`pnpm run check:all` 只有两种结果：通过或不通过。模型无法宣称自己完成了，无法用言辞绕过去，无法自我认证质量。
 
 这建立了一个客观的同步点，把"我认为做好了"和"确实做好了"分开。没有这个机制，自治循环会坍塌成自我验证——模型对越来越错的输出越来越有把握。
 
@@ -94,8 +94,8 @@ VA Auto-Pilot 采用不同的模型。在任何评审开始之前，管理 Agent
 # 本地
 node ./bin/va-auto-pilot.mjs init .
 
-# npm（发布后）
-npx -y va-auto-pilot init .
+# pnpm（发布后）
+pnpm dlx va-auto-pilot init .
 ```
 
 初始化后渲染看板：
@@ -145,7 +145,7 @@ $va-auto-pilot
 node scripts/sprint-board.mjs plan --json --max-parallel 3 > .va-auto-pilot/parallel-plan.json
 # 由管理 Agent 使用原生并发工具调用执行各轨道
 # 状态推进前在门禁处同步
-npm run check:all && codex review --uncommitted && npm run validate:distribution
+pnpm run check:all && codex review --uncommitted && pnpm run validate:distribution
 ```
 
 实验性辅助器（仅在明确需要时启用）：
@@ -204,8 +204,8 @@ python3 -m http.server 4173
 ## 校验命令
 
 ```bash
-npm run check:all
-npm run validate:distribution
+pnpm run check:all
+pnpm run validate:distribution
 ```
 
 ---

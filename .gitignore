@@ -2,3 +2,14 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Package manager
+package-lock.json
+yarn.lock
+npm-shrinkwrap.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
