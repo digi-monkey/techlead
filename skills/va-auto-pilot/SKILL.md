@@ -31,7 +31,8 @@ npx -y va-auto-pilot init <target-dir>
 ```bash
 tmp="$(mktemp -d)"
 git clone --depth 1 https://github.com/Vadaski/va-auto-pilot "$tmp/va-auto-pilot"
-node "$tmp/va-auto-pilot/bin/va-auto-pilot.mjs" init <target-dir>
+cd "$tmp/va-auto-pilot" && pnpm install && pnpm run build
+node "$tmp/va-auto-pilot/dist/cli.js" init <target-dir>
 ```
 
 4. Read and align these files to the target project:
