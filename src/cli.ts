@@ -492,7 +492,20 @@ function cmdRun(): void {
           // Check if task is complete (agent says "completed")
           if (result.content.toLowerCase().includes("completed")) {
             console.log("\n   ✨ Task appears complete!");
-            console.log("   Run: techlead run (to trigger review)");
+            console.log("   → Moving to Review phase\n");
+            
+            // Transition to review phase
+            nextTask.status = "review";
+            nextTask.phase = "review";
+            writeTask(nextTask.id, nextTask);
+            writeCurrent({ task_id: nextTask.id, phase: "review" });
+            
+            // Create review directory
+            const reviewDir = path.join(taskDir, "review");
+            fs.mkdirSync(reviewDir, { recursive: true });
+            
+            console.log("   📁 Review directory created");
+            console.log("   Run: techlead run  # to start review");
           } else {
             console.log("\n   🔄 Continue execution");
             console.log("   Run: techlead run");
@@ -510,7 +523,123 @@ function cmdRun(): void {
       console.log(`   Current: ${nextTask.status} / ${nextTask.phase}`);
   }
 
-  console.log("\n   Run: techlead status");
+  // Handle review phase
+  if (nextTask.status === "review" && nextTask.phase === "review") {
+    console.log("\n   → Running Review phase\n");
+
+    const reviewDir = path.join(taskDir, "review");
+    fs.mkdirSync(reviewDir, { recursive: true });
+
+    // Read system prompt for review
+    const reviewPromptPath = path.join(__dirname, "../prompts/review/adversarial.md");
+    const systemPrompt = fs.existsSync(reviewPromptPath)
+      ? fs.readFileSync(reviewPromptPath, "utf8")
+      : "You are a code reviewer. Review the changes and identify issues.";
+
+    const userPrompt = `Review the implementation for task: ${nextTask.title}\n\nCheck:\n1. Code quality and correctness\n2. Potential bugs or edge cases\n3. Security issues\n4. Performance concerns\n\nGenerate review/reviewer-1.md with structured findings (CRITICAL/WARNING/PASS).`;
+
+    console.log("   🤖 Agent reviewing code...");
+    result = executeAgent(userPrompt, config, {
+      systemPrompt,
+      outputFormat: "json",
+      timeoutMs: 120000,
+    });
+
+    if (result.success) {
+      console.log("   ✅ Review completed");
+      console.log(`   💰 Cost: $${result.costUsd?.toFixed(4) || "?"}`);
+
+      // Save review output
+      const reviewPath = path.join(reviewDir, "reviewer-1.md");
+      fs.writeFileSync(reviewPath, `# Adversarial Review: ${nextTask.title}\n\n${result.content}\n`, "utf8");
+
+      // Check for CRITICAL issues
+      const hasCritical = result.content.toLowerCase().includes("critical");
+      
+      if (hasCritical) {
+        console.log("\n   ⚠️  CRITICAL issues found!");
+        console.log("   → Returning to Exec phase to fix\n");
+        nextTask.status = "in_progress";
+        nextTask.phase = "exec";
+        writeTask(nextTask.id, nextTask);
+        writeCurrent({ task_id: nextTask.id, phase: "exec" });
+      } else {
+        console.log("\n   ✨ Review passed!");
+        console.log("   → Moving to Test phase\n");
+        nextTask.status = "testing";
+        nextTask.phase = "test";
+        writeTask(nextTask.id, nextTask);
+        writeCurrent({ task_id: nextTask.id, phase: "test" });
+        
+        // Create test directory
+        const testDir = path.join(taskDir, "test");
+        fs.mkdirSync(testDir, { recursive: true });
+        console.log("   📁 Test directory created");
+      }
+    } else {
+      console.error("   ❌ Review failed");
+      console.error(`   Error: ${result.error}`);
+    }
+  }
+
+  // Handle test phase
+  if (nextTask.status === "testing" && nextTask.phase === "test") {
+    console.log("\n   → Running Test phase\n");
+
+    const testDir = path.join(taskDir, "test");
+    fs.mkdirSync(testDir, { recursive: true });
+
+    // Read system prompt for test
+    const testPromptPath = path.join(__dirname, "../prompts/test/adversarial.md");
+    const systemPrompt = fs.existsSync(testPromptPath)
+      ? fs.readFileSync(testPromptPath, "utf8")
+      : "You are a tester. Test the implementation thoroughly.";
+
+    const userPrompt = `Test the implementation for task: ${nextTask.title}\n\nDesign and run:\n1. Unit tests\n2. Edge case tests\n3. Adversarial tests (attack scenarios)\n4. Integration tests\n\nGenerate test/adversarial-test.md with results (PASS/WARNING/CRITICAL).`;
+
+    console.log("   🤖 Agent testing...");
+    result = executeAgent(userPrompt, config, {
+      systemPrompt,
+      outputFormat: "json",
+      timeoutMs: 120000,
+    });
+
+    if (result.success) {
+      console.log("   ✅ Testing completed");
+      console.log(`   💰 Cost: $${result.costUsd?.toFixed(4) || "?"}`);
+
+      // Save test output
+      const testPath = path.join(testDir, "adversarial-test.md");
+      fs.writeFileSync(testPath, `# Adversarial Test: ${nextTask.title}\n\n${result.content}\n`, "utf8");
+
+      // Check for CRITICAL issues
+      const hasCritical = result.content.toLowerCase().includes("critical");
+      
+      if (hasCritical) {
+        console.log("\n   ⚠️  CRITICAL test failures!");
+        console.log("   → Returning to Exec phase to fix\n");
+        nextTask.status = "in_progress";
+        nextTask.phase = "exec";
+        writeTask(nextTask.id, nextTask);
+        writeCurrent({ task_id: nextTask.id, phase: "exec" });
+      } else {
+        console.log("\n   ✨ All tests passed!");
+        console.log("   → Marking as Done\n");
+        nextTask.status = "done";
+        nextTask.phase = "completed";
+        nextTask.completed_at = new Date().toISOString();
+        writeTask(nextTask.id, nextTask);
+        writeCurrent({ task_id: null, phase: null });
+        
+        console.log(`   ✅ Task ${nextTask.id} completed!`);
+        console.log(`   Duration: ${nextTask.started_at && nextTask.completed_at ? 
+          Math.round((new Date(nextTask.completed_at).getTime() - new Date(nextTask.started_at).getTime()) / 1000 / 60) + " min" : "N/A"}`);
+      }
+    } else {
+      console.error("   ❌ Testing failed");
+      console.error(`   Error: ${result.error}`);
+    }
+  }
 }
 
 function cmdAbort(): void {
