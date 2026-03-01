@@ -234,16 +234,52 @@ export function executeAgent(
     let output: string;
 
     if (config.provider === "claude") {
-      // Claude: use shell command
-      const command = buildClaudeCommand(prompt, config, options);
-      output = execSync(command, {
+      // Claude: use stdin to pass prompt to avoid shell escaping issues
+      const args: string[] = ["-p"];
+
+      // Output format
+      if (options.outputFormat === "json") {
+        args.push("--output-format=json");
+      }
+
+      // Model
+      if (config.model) {
+        args.push(`--model=${config.model}`);
+      }
+
+      // Budget limit
+      if (config.maxBudgetUsd) {
+        args.push(`--max-budget-usd=${config.maxBudgetUsd}`);
+      }
+
+      // Allowed tools
+      if (config.allowedTools?.length) {
+        args.push(`--allowed-tools=${config.allowedTools.join(",")}`);
+      }
+
+      // Working directory
+      if (config.workingDir) {
+        args.push(`--add-dir=${resolve(config.workingDir)}`);
+      }
+
+      // Disable session persistence for non-interactive
+      args.push("--no-session-persistence");
+
+      // Prepare input (system + user prompt)
+      const systemPrompt = loadSystemPrompt(options);
+      const input = systemPrompt
+        ? `[System Instructions]\n${systemPrompt}\n\n[User Request]\n${prompt}`
+        : prompt;
+
+      output = execFileSync("claude", args, {
         encoding: "utf8",
         timeout: options.timeoutMs || 300000,
         cwd: config.workingDir,
         env: { ...process.env, ...options.env },
         maxBuffer: 50 * 1024 * 1024,
+        input, // Pass via stdin
       });
-      
+
       if (options.outputFormat === "json") {
         return parseClaudeOutput(output);
       }
@@ -258,7 +294,7 @@ export function executeAgent(
         env: { ...process.env, ...options.env },
         maxBuffer: 50 * 1024 * 1024,
       });
-      
+
       if (options.outputFormat === "json") {
         return parseCodexOutput(output);
       }

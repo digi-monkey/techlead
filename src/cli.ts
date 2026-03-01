@@ -180,6 +180,41 @@ function findNextTask(): Task | null {
 }
 
 // Commands
+function cmdHello(): void {
+  console.log("hello from techlead");
+}
+
+function cmdWorld(): void {
+  const agentProvider = detectAgent();
+  if (!agentProvider) {
+    console.error("❌ No agent CLI found.");
+    console.error("   Install Claude Code: npm install -g @anthropic-ai/claude-code");
+    process.exit(1);
+  }
+
+  const config = createDefaultConfig(process.cwd());
+  if (!config) {
+    console.error("❌ Failed to create agent config");
+    process.exit(1);
+  }
+  config.provider = "claude";
+
+  console.log("🌍 Asking Claude to say hello to the world...");
+  const result = executeAgent(
+    'Say "Hello, World!" in a creative and inspiring way. Keep it under 3 sentences.',
+    config,
+    { timeoutMs: 30000 }
+  );
+
+  if (result.success) {
+    console.log("\n" + result.content);
+  } else {
+    console.error("❌ Agent error:", result.error);
+    process.exit(1);
+  }
+}
+
+// Commands
 function cmdInit(): void {
   const techleadDir = getTechleadDir();
 
@@ -386,20 +421,20 @@ function cmdRun(): void {
       const planDir = path.join(taskDir, "plan");
       fs.mkdirSync(planDir, { recursive: true });
 
-      // Read system prompt
-      const promptPath = path.join(__dirname, "../prompts/plan/multirole.md");
-      const systemPrompt = fs.existsSync(promptPath)
-        ? fs.readFileSync(promptPath, "utf8")
-        : undefined;
+      // Simplified prompt for faster execution
+      const userPrompt = `You are a software architect. Create a simple execution plan for this task:
 
-      // Execute agent
-      const userPrompt = `Task: ${nextTask.title}\n\nRead ${readmePath} and create a comprehensive execution plan with multi-role discussion.\n\nGenerate:\n1. plan/discussion.md - Multi-role discussion (Architect, Security, DX perspectives)\n2. plan/plan.md - Step-by-step execution plan\n3. plan/.abstract.md - One sentence summary\n4. plan/.overview.md - Navigation overview`;
+Task: ${nextTask.title}
 
-      console.log("   🤖 Agent generating plan...");
+Create these files in the plan/ directory:
+1. plan.md - 3-5 step execution plan
+2. discussion.md - Brief technical considerations
+
+Keep it concise.`;
+
+      console.log("   🤖 Agent generating plan (simplified)...");
       result = executeAgent(userPrompt, config, {
-        systemPrompt,
-        outputFormat: "json",
-        timeoutMs: 120000,
+        timeoutMs: 60000,
       });
 
       if (result.success) {
@@ -838,6 +873,8 @@ function cmdNext(): void {
 function main(): void {
   const cli = cac("techlead");
 
+  cli.command("hello", "Print a hello message").action(cmdHello);
+  cli.command("world", "Ask Claude to say hello to the world").action(cmdWorld);
   cli.command("init", "Initialize TechLead").action(cmdInit);
   cli.command("add <title>", "Add a new task").action(cmdAdd);
   cli.command("list", "List all tasks").action(cmdList);
