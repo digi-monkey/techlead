@@ -13,3 +13,6 @@ npm-shrinkwrap.json
 .idea/
 *.swp
 *.swo
+
+# TechLead runtime
+.techlead/
