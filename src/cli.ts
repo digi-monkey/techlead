@@ -20,7 +20,11 @@ interface Task {
   id: string;
   title: string;
   status: "backlog" | "in_progress" | "review" | "testing" | "done" | "failed";
-  phase: "plan" | "exec" | "review" | "test" | "completed" | null;
+  phase: "plan" | "exec" | "review" | "reviewed" | "test" | "tested" | "completed" | null;
+  review_passed?: boolean;
+  test_passed?: boolean;
+  review_attempts?: number;
+  test_attempts?: number;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -525,10 +529,49 @@ function cmdRun(): void {
 
   // Handle review phase
   if (nextTask.status === "review" && nextTask.phase === "review") {
+    // Check if already reviewed
+    if (nextTask.review_passed === true) {
+      console.log("\n   ✓ Already reviewed (passed)");
+      console.log("   → Moving to Test phase\n");
+      nextTask.status = "testing";
+      nextTask.phase = "test";
+      writeTask(nextTask.id, nextTask);
+      writeCurrent({ task_id: nextTask.id, phase: "test" });
+    } else if (nextTask.review_attempts && nextTask.review_attempts >= 1) {
+      // Check if review file exists and was already processed
+      const reviewPath = path.join(taskDir, "review", "reviewer-1.md");
+      if (fs.existsSync(reviewPath)) {
+        const existingReview = fs.readFileSync(reviewPath, "utf8");
+        const hasCritical = existingReview.toLowerCase().includes("critical");
+        
+        if (!hasCritical) {
+          console.log("\n   ✓ Review file exists and passed");
+          nextTask.review_passed = true;
+          nextTask.status = "testing";
+          nextTask.phase = "test";
+          writeTask(nextTask.id, nextTask);
+          writeCurrent({ task_id: nextTask.id, phase: "test" });
+          console.log("   → Moving to Test phase\n");
+        } else {
+          console.log("\n   ⚠️  Previous review had CRITICAL issues");
+          console.log("   → Returning to Exec phase to fix\n");
+          nextTask.status = "in_progress";
+          nextTask.phase = "exec";
+          writeTask(nextTask.id, nextTask);
+          writeCurrent({ task_id: nextTask.id, phase: "exec" });
+        }
+        return;
+      }
+    }
+
     console.log("\n   → Running Review phase\n");
 
     const reviewDir = path.join(taskDir, "review");
     fs.mkdirSync(reviewDir, { recursive: true });
+
+    // Track review attempt
+    nextTask.review_attempts = (nextTask.review_attempts || 0) + 1;
+    writeTask(nextTask.id, nextTask);
 
     // Read system prompt for review
     const reviewPromptPath = path.join(__dirname, "../prompts/review/adversarial.md");
@@ -538,7 +581,7 @@ function cmdRun(): void {
 
     const userPrompt = `Review the implementation for task: ${nextTask.title}\n\nCheck:\n1. Code quality and correctness\n2. Potential bugs or edge cases\n3. Security issues\n4. Performance concerns\n\nGenerate review/reviewer-1.md with structured findings (CRITICAL/WARNING/PASS).`;
 
-    console.log("   🤖 Agent reviewing code...");
+    console.log(`   🤖 Agent reviewing code... (attempt ${nextTask.review_attempts})`);
     result = executeAgent(userPrompt, config, {
       systemPrompt,
       outputFormat: "json",
@@ -553,6 +596,16 @@ function cmdRun(): void {
       const reviewPath = path.join(reviewDir, "reviewer-1.md");
       fs.writeFileSync(reviewPath, `# Adversarial Review: ${nextTask.title}\n\n${result.content}\n`, "utf8");
 
+      // Append to work log
+      const workLogPath = path.join(taskDir, "work-log.md");
+      if (fs.existsSync(workLogPath)) {
+        fs.appendFileSync(
+          workLogPath,
+          `\n## ${new Date().toISOString()} - Review ${nextTask.review_attempts}\n\n- Review completed\n- Cost: $${result.costUsd?.toFixed(4) || "?"}\n\n---\n`,
+          "utf8"
+        );
+      }
+
       // Check for CRITICAL issues
       const hasCritical = result.content.toLowerCase().includes("critical");
       
@@ -561,6 +614,7 @@ function cmdRun(): void {
         console.log("   → Returning to Exec phase to fix\n");
         nextTask.status = "in_progress";
         nextTask.phase = "exec";
+        nextTask.review_passed = false;
         writeTask(nextTask.id, nextTask);
         writeCurrent({ task_id: nextTask.id, phase: "exec" });
       } else {
@@ -568,6 +622,7 @@ function cmdRun(): void {
         console.log("   → Moving to Test phase\n");
         nextTask.status = "testing";
         nextTask.phase = "test";
+        nextTask.review_passed = true;
         writeTask(nextTask.id, nextTask);
         writeCurrent({ task_id: nextTask.id, phase: "test" });
         
@@ -584,10 +639,57 @@ function cmdRun(): void {
 
   // Handle test phase
   if (nextTask.status === "testing" && nextTask.phase === "test") {
+    // Check if already tested
+    if (nextTask.test_passed === true) {
+      console.log("\n   ✓ Already tested (passed)");
+      console.log("   → Marking as Done\n");
+      nextTask.status = "done";
+      nextTask.phase = "completed";
+      nextTask.completed_at = new Date().toISOString();
+      writeTask(nextTask.id, nextTask);
+      writeCurrent({ task_id: null, phase: null });
+      
+      console.log(`   ✅ Task ${nextTask.id} completed!`);
+      console.log(`   Duration: ${nextTask.started_at && nextTask.completed_at ? 
+        Math.round((new Date(nextTask.completed_at).getTime() - new Date(nextTask.started_at).getTime()) / 1000 / 60) + " min" : "N/A"}`);
+      return;
+    } else if (nextTask.test_attempts && nextTask.test_attempts >= 1) {
+      // Check if test file exists and was already processed
+      const testPath = path.join(taskDir, "test", "adversarial-test.md");
+      if (fs.existsSync(testPath)) {
+        const existingTest = fs.readFileSync(testPath, "utf8");
+        const hasCritical = existingTest.toLowerCase().includes("critical");
+        
+        if (!hasCritical) {
+          console.log("\n   ✓ Test file exists and passed");
+          nextTask.test_passed = true;
+          nextTask.status = "done";
+          nextTask.phase = "completed";
+          nextTask.completed_at = new Date().toISOString();
+          writeTask(nextTask.id, nextTask);
+          writeCurrent({ task_id: null, phase: null });
+          console.log(`   ✅ Task ${nextTask.id} completed!`);
+          return;
+        } else {
+          console.log("\n   ⚠️  Previous test had CRITICAL failures");
+          console.log("   → Returning to Exec phase to fix\n");
+          nextTask.status = "in_progress";
+          nextTask.phase = "exec";
+          writeTask(nextTask.id, nextTask);
+          writeCurrent({ task_id: nextTask.id, phase: "exec" });
+        }
+        return;
+      }
+    }
+
     console.log("\n   → Running Test phase\n");
 
     const testDir = path.join(taskDir, "test");
     fs.mkdirSync(testDir, { recursive: true });
+
+    // Track test attempt
+    nextTask.test_attempts = (nextTask.test_attempts || 0) + 1;
+    writeTask(nextTask.id, nextTask);
 
     // Read system prompt for test
     const testPromptPath = path.join(__dirname, "../prompts/test/adversarial.md");
@@ -597,7 +699,7 @@ function cmdRun(): void {
 
     const userPrompt = `Test the implementation for task: ${nextTask.title}\n\nDesign and run:\n1. Unit tests\n2. Edge case tests\n3. Adversarial tests (attack scenarios)\n4. Integration tests\n\nGenerate test/adversarial-test.md with results (PASS/WARNING/CRITICAL).`;
 
-    console.log("   🤖 Agent testing...");
+    console.log(`   🤖 Agent testing... (attempt ${nextTask.test_attempts})`);
     result = executeAgent(userPrompt, config, {
       systemPrompt,
       outputFormat: "json",
@@ -612,6 +714,16 @@ function cmdRun(): void {
       const testPath = path.join(testDir, "adversarial-test.md");
       fs.writeFileSync(testPath, `# Adversarial Test: ${nextTask.title}\n\n${result.content}\n`, "utf8");
 
+      // Append to work log
+      const workLogPath = path.join(taskDir, "work-log.md");
+      if (fs.existsSync(workLogPath)) {
+        fs.appendFileSync(
+          workLogPath,
+          `\n## ${new Date().toISOString()} - Test ${nextTask.test_attempts}\n\n- Test completed\n- Cost: $${result.costUsd?.toFixed(4) || "?"}\n\n---\n`,
+          "utf8"
+        );
+      }
+
       // Check for CRITICAL issues
       const hasCritical = result.content.toLowerCase().includes("critical");
       
@@ -620,6 +732,7 @@ function cmdRun(): void {
         console.log("   → Returning to Exec phase to fix\n");
         nextTask.status = "in_progress";
         nextTask.phase = "exec";
+        nextTask.test_passed = false;
         writeTask(nextTask.id, nextTask);
         writeCurrent({ task_id: nextTask.id, phase: "exec" });
       } else {
@@ -627,6 +740,7 @@ function cmdRun(): void {
         console.log("   → Marking as Done\n");
         nextTask.status = "done";
         nextTask.phase = "completed";
+        nextTask.test_passed = true;
         nextTask.completed_at = new Date().toISOString();
         writeTask(nextTask.id, nextTask);
         writeCurrent({ task_id: null, phase: null });
