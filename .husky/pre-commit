@@ -1,6 +1,6 @@
 #!/bin/sh
 # Pre-commit hook for techlead
-# Runs lint-staged via simple-git-hooks
+# Runs biome format and lint
 
 # Check if pnpm is available
 if ! command -v pnpm > /dev/null 2>&1; then
@@ -8,5 +8,11 @@ if ! command -v pnpm > /dev/null 2>&1; then
   exit 1
 fi
 
-# Run lint-staged
-pnpm exec lint-staged
+# Run biome format and lint
+echo "🔍 Running biome format..."
+pnpm exec biome format --write . || exit 1
+
+echo "🔍 Running biome lint..."
+pnpm exec biome lint . || exit 1
+
+echo "✅ Pre-commit checks passed!"
