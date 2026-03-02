@@ -1,18 +1,1 @@
-#!/bin/sh
-# Pre-commit hook for techlead
-# Runs biome format and lint
-
-# Check if pnpm is available
-if ! command -v pnpm > /dev/null 2>&1; then
-  echo "❌ pnpm is not installed. Please install pnpm."
-  exit 1
-fi
-
-# Run biome format and lint
-echo "🔍 Running biome format..."
-pnpm exec biome format --write . || exit 1
-
-echo "🔍 Running biome lint..."
-pnpm exec biome lint . || exit 1
-
-echo "✅ Pre-commit checks passed!"
+pnpm exec lint-staged

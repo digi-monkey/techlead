@@ -26,7 +26,8 @@
     "fmt:check": "biome format .",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
-    "ci": "biome ci . && pnpm run typecheck && pnpm run build"
+    "ci": "biome ci . && pnpm run typecheck && pnpm run build",
+    "prepare": "husky"
   },
   "dependencies": {
     "cac": "^7.0.0",
@@ -36,7 +37,8 @@
     "@biomejs/biome": "^2.4.5",
     "@changesets/cli": "^2.29.8",
     "@types/node": "^25.3.2",
-    "simple-git-hooks": "^2.13.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.3.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^2.0.0"
@@ -56,8 +58,13 @@
     "README.md",
     "LICENSE"
   ],
-  "simple-git-hooks": {
-    "pre-commit": "pnpm exec biome format --write . && pnpm exec biome lint ."
+  "lint-staged": {
+    "*.{js,ts,mjs,cjs,json,md}": [
+      "biome format --write"
+    ],
+    "*.{js,ts,mjs,cjs}": [
+      "biome lint"
+    ]
   },
   "changeset": {
     "access": "public",
