@@ -1,0 +1,12 @@
+#!/bin/sh
+# Pre-commit hook for techlead
+# Runs lint-staged via simple-git-hooks
+
+# Check if pnpm is available
+if ! command -v pnpm > /dev/null 2>&1; then
+  echo "❌ pnpm is not installed. Please install pnpm."
+  exit 1
+fi
+
+# Run lint-staged
+pnpm exec lint-staged

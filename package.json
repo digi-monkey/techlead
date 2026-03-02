@@ -64,5 +64,9 @@
     "*.{js,ts,mjs,cjs}": [
       "biome lint"
     ]
+  },
+  "changeset": {
+    "access": "public",
+    "baseBranch": "main"
   }
 }
