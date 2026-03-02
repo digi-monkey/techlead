@@ -14,30 +14,24 @@ npx -y techlead init .
 
 2. Read these files in order before taking action:
 
-- `docs/operations/techlead-protocol.md`
-- `docs/todo/human-board.md`
-- `docs/todo/run-journal.md`
-- `docs/todo/sprint.md`
+- `docs/design/v0.2.0-design.md`
+- `docs/USAGE.md`
 
 3. Follow the state machine strictly:
 
-`Backlog -> In Progress -> Review -> Testing -> Done`
+`backlog -> in_progress -> review -> testing -> done`
 
 4. Resolve and update state via CLI:
 
-- `node scripts/sprint-board.mjs next`
-- `node scripts/sprint-board.mjs plan --json --max-parallel 3` (when parallel tracks are possible)
-- `node scripts/sprint-board.mjs update ...`
-- `node scripts/sprint-board.mjs journal ...`
+- `techlead status`
+- `techlead run`
+- `techlead loop --max-cycles 20 --max-no-progress 3`
+- `techlead next` / `techlead abort` when needed
 
-5. Always run gates from `.techlead/config.yaml`:
+5. Always run deterministic quality gate commands:
 
-- `qualityGate.buildCommand`
-- `qualityGate.reviewCommand`
-- `qualityGate.acceptanceTestCommand`
+- `pnpm run check:all`
 
 6. Never skip gate failures. Fix, re-run, then update state.
 7. If stop condition is hit, pause and ask human for decision.
-8. Default to model-native CLI orchestration for parallel tracks.
-9. Use `scripts/techlead-parallel-runner.mjs` only if human explicitly requests the experimental external runner path.
-10. Report concise status after each loop: task, state change, gate results, next action.
+8. Report concise status after each cycle: task, phase change, gate result, next action.

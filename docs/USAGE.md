@@ -34,7 +34,10 @@ techlead status
 # 4. 运行（自动驱动 Agent）
 techlead run
 
-# 5. 查看所有任务
+# 5. 连续自动运行（推荐夜间）
+techlead loop --max-cycles 20 --max-no-progress 3
+
+# 6. 查看所有任务
 techlead list
 ```
 
@@ -46,8 +49,8 @@ techlead list
 # 人类给目标
 techlead add "实现用户登录功能"
 
-# Agent 全自动执行
-techlead run
+# Agent 全自动执行（循环推进直到完成或触发停止条件）
+techlead loop --max-cycles 20 --max-no-progress 3
 # → 自动进入 Plan 阶段（生成 plan/discussion.md）
 # → 自动进入 Exec 阶段（执行代码）
 # → 自动进入 Review 阶段（对抗性审查）
@@ -137,7 +140,7 @@ techlead status
 ```
 
 ### `run`
-自动运行下一个任务
+自动运行下一个任务（内部组合 `plan/start/step/review/test/done`）
 
 ```bash
 # 智能选择任务优先级：
@@ -146,6 +149,60 @@ techlead status
 # 3. Failed 任务（重试）
 techlead run
 ```
+
+### `plan [taskId]`
+执行 Plan 阶段（生成规划产物）
+
+```bash
+techlead plan T-001
+```
+
+### `start [taskId]`
+将任务从 `plan` 推进到 `exec`
+
+```bash
+techlead start T-001
+```
+
+### `step [taskId]`
+在 `exec` 阶段执行一步
+
+```bash
+techlead step T-001
+```
+
+### `review [taskId]`
+执行对抗性审查阶段
+
+```bash
+techlead review T-001
+```
+
+### `test [taskId]`
+执行对抗性测试阶段
+
+```bash
+techlead test T-001
+```
+
+### `done [taskId]`
+将通过测试的任务标记为完成
+
+```bash
+techlead done T-001
+```
+
+### `loop`
+连续自动运行，直到任务完成或触发停止条件
+
+```bash
+techlead loop --max-cycles 20 --max-no-progress 3
+```
+
+停止条件：
+- 达到 `max-cycles`
+- 连续 `max-no-progress` 次无状态进展
+- 当前任务 review/test 尝试次数达到上限（3）
 
 ### `abort`
 中止当前任务（标记为 failed）

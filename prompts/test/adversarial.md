@@ -70,3 +70,11 @@ Possible personas:
 - [ ] Security attack vectors attempted
 - [ ] Edge cases covered
 - [ ] Clear classification of findings
+
+## Required Machine-Readable Footer
+
+At the end of your response, append exactly one HTML comment line:
+
+```html
+<!-- VERDICT: {"result": "PASS|WARNING|CRITICAL", "critical_count": 0, "warning_count": 0, "summary": "..."} -->
+```

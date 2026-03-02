@@ -1,14 +1,6 @@
 # Distribute TechLead Skill
 
-## 1) Set Repository Metadata
-
-In `website/index.html`, set:
-
-- `github-owner`: `digi-monkey`
-- `github-repo`: `techlead`
-- `github-branch`: `main`
-
-## 2) Validate Distribution Assets
+## 1) Validate Distribution Assets
 
 Run:
 
@@ -20,11 +12,11 @@ Required paths:
 
 - `skills/techlead/SKILL.md`
 - `skills/techlead/claude-command.md`
-- `.techlead/sprint-state.json`
-- `scripts/sprint-board.mjs`
-- `scripts/techlead-parallel-runner.mjs` (experimental runtime helper, opt-in)
+- `src/cli.ts`
+- `prompts/`
+- `templates/.techlead/config.yaml`
 
-## 3) Distribute to Codex
+## 2) Distribute to Codex
 
 ```text
 $skill-installer install https://github.com/digi-monkey/techlead/tree/main/skills/techlead
@@ -36,7 +28,7 @@ After installation, restart Codex and invoke:
 $techlead
 ```
 
-## 4) Distribute to Claude Code
+## 3) Distribute to Claude Code
 
 ```bash
 mkdir -p .claude/commands

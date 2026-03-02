@@ -77,12 +77,9 @@ The pitfall guide captures structured failure metadata — not just error string
 ## What You Get
 
 - `techlead` CLI scaffold for any repository
-- machine-readable sprint state (`.techlead/sprint-state.json`)
-- generated sprint board (`docs/todo/sprint.md`)
-- human override board (`docs/todo/human-board.md`)
-- append-only run memory (`docs/todo/run-journal.md`)
-- protocol documents and start prompt
-- acceptance flow runner (`scripts/test-runner.ts`)
+- machine-readable task state (`.techlead/current.json` + `.techlead/tasks/*/task.json`)
+- phase prompts for plan / exec / review / test (`prompts/`)
+- design and usage docs for the single CLI flow (`docs/`)
 
 ---
 
@@ -99,14 +96,6 @@ node ./dist/cli.js init .
 # pnpm (after publish)
 pnpm dlx techlead init .
 ```
-
-Render board after initialization:
-
-```bash
-node scripts/sprint-board.mjs render
-```
-
----
 
 ## Goal-First Delegation
 
@@ -133,28 +122,12 @@ Notice what is absent: no list of files to touch, no sequence of steps to follow
 
 ---
 
-## Concurrency Model
+## Execution Model
 
-- One primary task is selected per cycle, and zero or more independent tracks can run in parallel.
-- Synchronization happens at mandatory quality gates.
-- State promotion is blocked until required gates pass.
-- Concurrency decisions are runtime judgments made by the manager agent.
-- Default path is model-native parallel tool orchestration.
-
-Default model-native path:
-
-```bash
-node scripts/sprint-board.mjs plan --json --max-parallel 3 > .techlead/parallel-plan.json
-# manager agent executes tracks via native parallel tool calls
-# synchronization barrier before state promotion
-pnpm run check:all && codex review --uncommitted && pnpm run validate:distribution
-```
-
-Experimental helper (opt-in only):
-
-```bash
-node scripts/techlead-parallel-runner.mjs spawn --plan-file .techlead/parallel-plan.json --agent-cmd "codex exec --task {taskId}"
-```
+- Single-task loop driven by one CLI: `techlead run` or `techlead loop`
+- Mandatory phase gates: plan -> exec -> review -> test -> done
+- Progress and retries are tracked in `.techlead/tasks/*/task.json`
+- Quality verification is enforced before phase promotion
 
 ---
 
@@ -177,8 +150,8 @@ curl -fsSL https://raw.githubusercontent.com/digi-monkey/techlead/main/skills/te
 
 ## Documentation
 
-- Protocol: `docs/operations/techlead-protocol.md`
-- Start prompt: `docs/operations/start-techlead-prompt.md`
+- CLI usage: `docs/USAGE.md`
+- Design: `docs/design/v0.2.0-design.md`
 - Distribution: `docs/operations/distribute-skill.md`
 
 ---

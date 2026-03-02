@@ -34,25 +34,21 @@ function readJson(relative) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Required file presence
+// 1. Required file presence (single CLI system)
 // ---------------------------------------------------------------------------
 
 const requiredFiles = [
-  "website/index.html",
-  "website/styles.css",
-  "website/app.js",
-  ".techlead/sprint-state.json",
+  "README.md",
+  "docs/USAGE.md",
+  "docs/design/v0.2.0-design.md",
   "skills/techlead/SKILL.md",
   "skills/techlead/claude-command.md",
-  "scripts/sprint-board.mjs",
-  "scripts/techlead-parallel-runner.mjs",
-  "scripts/lib/sprint-utils.mjs",
-  "docs/todo/run-journal.md",
-  "templates/.techlead/sprint-state.json",
-  "templates/.techlead/pitfalls.json",
-  "templates/docs/todo/run-journal.md",
-  ".github/workflows/deploy-website.yml",
-  "docs/operations/techlead-protocol.md"
+  "src/cli.ts",
+  "templates/.techlead/config.yaml",
+  "prompts/plan/multirole.md",
+  "prompts/exec/step.md",
+  "prompts/review/adversarial.md",
+  "prompts/test/adversarial.md"
 ];
 
 for (const relative of requiredFiles) {
@@ -60,23 +56,21 @@ for (const relative of requiredFiles) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. website/index.html token checks
+// 2. package.json bin + scripts check
 // ---------------------------------------------------------------------------
 
-if (fs.existsSync(path.join(root, "website/index.html"))) {
-  const html = fs.readFileSync(path.join(root, "website/index.html"), "utf8");
-  const checks = [
-    { token: 'meta name="github-owner"', label: "github-owner meta" },
-    { token: 'id="skillDirLink"', label: "skillDirLink anchor" },
-    { token: 'id="skillRawLink"', label: "skillRawLink anchor" },
-    { token: 'id="codexInstallCmd"', label: "codex command block" },
-    { token: 'id="claudeInstallCmd"', label: "claude command block" }
-  ];
+const packageJson = readJson("package.json");
+if (packageJson !== null) {
+  if (packageJson.bin?.techlead !== "./dist/cli.js") {
+    fail("package.json bin.techlead must point to ./dist/cli.js");
+  }
 
-  for (const check of checks) {
-    if (!html.includes(check.token)) {
-      fail(`website/index.html missing ${check.label}`);
-    }
+  if (!packageJson.scripts?.["check:all"]) {
+    fail("package.json missing scripts.check:all");
+  }
+
+  if (packageJson.scripts?.["check:sprint"]) {
+    fail("package.json should not include legacy scripts.check:sprint");
   }
 }
 
@@ -92,68 +86,21 @@ if (fs.existsSync(path.join(root, "skills/techlead/SKILL.md"))) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. sprint-state.json schema validation
+// 4. CLI smoke test — dist/cli.js --help must exit 0
 // ---------------------------------------------------------------------------
 
-const stateData = readJson(".techlead/sprint-state.json");
-if (stateData !== null) {
-  if (!Array.isArray(stateData.tasks)) {
-    fail(".techlead/sprint-state.json: 'tasks' must be an array");
-  } else {
-    const VALID_STATES = new Set(["Backlog", "In Progress", "Review", "Testing", "Failed", "Done"]);
-    const VALID_PRIORITIES = new Set(["P0", "P1", "P2", "P3"]);
-    const seenIds = new Set();
-
-    for (const task of stateData.tasks) {
-      const prefix = `sprint-state.json task[${task.id ?? "(no id)"}]`;
-
-      if (!task.id || typeof task.id !== "string") {
-        fail(`${prefix}: missing or non-string 'id'`);
-      } else if (seenIds.has(task.id)) {
-        fail(`sprint-state.json: duplicate task id '${task.id}'`);
-      } else {
-        seenIds.add(task.id);
-      }
-
-      if (!task.title || typeof task.title !== "string") {
-        fail(`${prefix}: missing or non-string 'title'`);
-      }
-
-      if (task.state !== undefined && !VALID_STATES.has(task.state)) {
-        fail(`${prefix}: invalid state '${task.state}'`);
-      }
-
-      if (task.priority !== undefined && !VALID_PRIORITIES.has(task.priority)) {
-        warn(`${prefix}: unexpected priority '${task.priority}'`);
-      }
-
-      if (task.dependsOn !== undefined && !Array.isArray(task.dependsOn)) {
-        fail(`${prefix}: 'dependsOn' must be an array`);
-      }
-    }
-  }
-}
-
-// Also validate the template sprint-state.json.
-const templateState = readJson("templates/.techlead/sprint-state.json");
-if (templateState !== null && !Array.isArray(templateState.tasks)) {
-  fail("templates/.techlead/sprint-state.json: 'tasks' must be an array");
-}
-
-// ---------------------------------------------------------------------------
-// 5. CLI smoke test — sprint-board.mjs --help must exit 0
-// ---------------------------------------------------------------------------
-
-const sprintBoardPath = path.join(root, "scripts/sprint-board.mjs");
-if (fs.existsSync(sprintBoardPath)) {
-  const result = spawnSync("node", [sprintBoardPath, "--help"], {
+const cliPath = path.join(root, "dist/cli.js");
+if (!fs.existsSync(cliPath)) {
+  fail("Missing build output: dist/cli.js (run pnpm run build first)");
+} else {
+  const result = spawnSync("node", [cliPath, "--help"], {
     encoding: "utf8",
     timeout: 10_000
   });
 
   if (result.status !== 0) {
     fail(
-      `CLI smoke test failed: 'node scripts/sprint-board.mjs --help' exited ${result.status}.\n  stderr: ${String(result.stderr ?? "").slice(0, 200)}`
+      `CLI smoke test failed: 'node dist/cli.js --help' exited ${result.status}.\n  stderr: ${String(result.stderr ?? "").slice(0, 200)}`
     );
   }
 }

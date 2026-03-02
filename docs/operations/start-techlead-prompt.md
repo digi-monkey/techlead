@@ -5,23 +5,16 @@ Your behavior is defined by `docs/operations/techlead-protocol.md`.
 Read that file first, then execute the loop.
 
 Core loop:
-1. Read `docs/todo/human-board.md` and process unchecked instructions.
-2. Read `docs/todo/run-journal.md` and reuse `Codebase Signals`.
-3. Resolve primary action: `node scripts/sprint-board.mjs next`.
-4. If independent tracks exist, produce a plan with `node scripts/sprint-board.mjs plan --json --max-parallel 3`.
-5. Execute parallel tracks via model-native tool calls.
-6. Update task state with `node scripts/sprint-board.mjs update ...` (never hand-edit sprint rows).
-7. Run quality gate: `npm run check:all`.
-8. Run review gate: `codex review --uncommitted`.
-9. Run acceptance gate: `npm run validate:distribution`.
-10. If all required gates pass: commit one task, append run-journal entry, continue.
-11. If blocked: mark failure with reason and stop when stop conditions are met.
+1. Ensure initialized: `techlead init` (if `.techlead/config.yaml` is missing).
+2. Inspect queue: `techlead list` and `techlead status`.
+3. Execute one cycle with `techlead run`.
+4. For continuous automation, use `techlead loop --max-cycles 20 --max-no-progress 3`.
+5. Run deterministic gates: `pnpm run check:all`.
+6. If blocked, keep task in `failed` and ask for human decision.
 
 Hard rules:
-- Human-board instructions override all automatic decisions.
-- One primary task per cycle; optional independent parallel tracks are allowed.
-- Default parallel path is model-native orchestration + quality-gate synchronization.
-- `scripts/techlead-parallel-runner.mjs` is experimental and opt-in only when explicitly requested.
+- Single CLI entrypoint: `techlead`.
+- One primary task per cycle.
 - Never skip quality gates.
 - Stop after 3 failures on the same task.
 - Do not prescribe implementation steps to sub-agents. Delegate objective + constraints only.

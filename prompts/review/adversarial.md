@@ -82,3 +82,11 @@ You only see:
 - [ ] Each finding has specific location
 - [ ] CRITICAL findings block completion
 - [ ] Recommendations are actionable
+
+## Required Machine-Readable Footer
+
+At the end of your response, append exactly one HTML comment line:
+
+```html
+<!-- VERDICT: {"result": "PASS|WARNING|CRITICAL", "critical_count": 0, "warning_count": 0, "summary": "..."} -->
+```

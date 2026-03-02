@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 import { cac } from "cac";
 import {
   executeAgent,
@@ -108,6 +109,95 @@ function readJson<T>(filePath: string): T | null {
 function writeJson(filePath: string, data: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+}
+
+function loadPromptTemplate(relativePath: string): string | null {
+  const promptPath = path.join(__dirname, "..", relativePath);
+  if (!fs.existsSync(promptPath)) return null;
+  return fs.readFileSync(promptPath, "utf8");
+}
+
+function renderTemplate(template: string, vars: Record<string, string>): string {
+  let rendered = template;
+  for (const [key, value] of Object.entries(vars)) {
+    rendered = rendered.replaceAll(`{{${key}}}`, value);
+  }
+  return rendered;
+}
+
+function extractTaggedJson(content: string, tag: "STATUS" | "VERDICT"): Record<string, unknown> | null {
+  const regex = new RegExp(`<!--\\s*${tag}:\\s*(\\{[\\s\\S]*?\\})\\s*-->`, "i");
+  const match = content.match(regex);
+  if (!match?.[1]) return null;
+
+  try {
+    return JSON.parse(match[1]) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isStepCompleted(content: string): boolean {
+  const status = extractTaggedJson(content, "STATUS");
+  const value = status?.completed;
+  if (typeof value === "boolean") return value;
+  return content.toLowerCase().includes("completed");
+}
+
+function hasCriticalVerdict(content: string): boolean {
+  const verdict = extractTaggedJson(content, "VERDICT");
+  const result = verdict?.result;
+  if (typeof result === "string") {
+    return result.toUpperCase() === "CRITICAL";
+  }
+  const criticalCount = verdict?.critical_count;
+  if (typeof criticalCount === "number") {
+    return criticalCount > 0;
+  }
+  return content.toLowerCase().includes("critical");
+}
+
+function detectQualityGateCommand(): string | null {
+  const packageJsonPath = path.join(process.cwd(), "package.json");
+  if (!fs.existsSync(packageJsonPath)) return null;
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    if (pkg.scripts?.["check:all"]) return "pnpm run check:all";
+    if (pkg.scripts?.test) return "pnpm run test";
+    if (pkg.scripts?.typecheck) return "pnpm run typecheck";
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function runQualityGate(): { passed: boolean; command?: string; output?: string; error?: string } {
+  const command = detectQualityGateCommand();
+  if (!command) {
+    return { passed: true };
+  }
+
+  try {
+    const output = execSync(command, {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: "pipe",
+      maxBuffer: 50 * 1024 * 1024,
+    });
+    return { passed: true, command, output };
+  } catch (error: any) {
+    const output = `${error?.stdout || ""}\n${error?.stderr || ""}`.trim();
+    return {
+      passed: false,
+      command,
+      output,
+      error: error?.message || "Quality gate failed",
+    };
+  }
 }
 
 function readCurrent(): Current {
@@ -369,6 +459,133 @@ function cmdStatus(): void {
   console.log(`\n   Run: techlead run`);
 }
 
+function getTaskById(taskId: string): Task | null {
+  const tasks = listAllTasks();
+  return tasks.find((task) => task.id === taskId) || null;
+}
+
+function resolveTaskForCommand(taskId?: string): Task | null {
+  if (taskId) {
+    return getTaskById(taskId);
+  }
+
+  const current = readCurrent();
+  if (current.task_id) {
+    return getTaskById(current.task_id);
+  }
+
+  return findNextTask();
+}
+
+function selectTaskForExecution(task: Task): void {
+  writeCurrent({ task_id: task.id, phase: task.phase });
+}
+
+function cmdPlan(taskId?: string): void {
+  const task = resolveTaskForCommand(taskId);
+  if (!task) {
+    console.error("❌ No task found for plan command.");
+    return;
+  }
+  if (task.status !== "backlog") {
+    console.error(`❌ Task ${task.id} is not in backlog (current: ${task.status}/${task.phase || "-"}).`);
+    return;
+  }
+
+  selectTaskForExecution(task);
+  cmdRun();
+}
+
+function cmdStart(taskId?: string): void {
+  const task = resolveTaskForCommand(taskId);
+  if (!task) {
+    console.error("❌ No task found for start command.");
+    return;
+  }
+  if (!(task.status === "in_progress" && task.phase === "plan")) {
+    console.error(`❌ Task ${task.id} is not ready for start (expected in_progress/plan, got ${task.status}/${task.phase || "-"}).`);
+    return;
+  }
+
+  selectTaskForExecution(task);
+  cmdRun();
+}
+
+function cmdStep(taskId?: string): void {
+  const task = resolveTaskForCommand(taskId);
+  if (!task) {
+    console.error("❌ No task found for step command.");
+    return;
+  }
+  if (!(task.status === "in_progress" && task.phase === "exec")) {
+    console.error(`❌ Task ${task.id} is not in exec phase (current: ${task.status}/${task.phase || "-"}).`);
+    return;
+  }
+
+  selectTaskForExecution(task);
+  cmdRun();
+}
+
+function cmdReview(taskId?: string): void {
+  const task = resolveTaskForCommand(taskId);
+  if (!task) {
+    console.error("❌ No task found for review command.");
+    return;
+  }
+  if (!(task.status === "review" && task.phase === "review")) {
+    console.error(`❌ Task ${task.id} is not in review phase (current: ${task.status}/${task.phase || "-"}).`);
+    return;
+  }
+
+  selectTaskForExecution(task);
+  cmdRun();
+}
+
+function cmdTest(taskId?: string): void {
+  const task = resolveTaskForCommand(taskId);
+  if (!task) {
+    console.error("❌ No task found for test command.");
+    return;
+  }
+  if (!(task.status === "testing" && task.phase === "test")) {
+    console.error(`❌ Task ${task.id} is not in test phase (current: ${task.status}/${task.phase || "-"}).`);
+    return;
+  }
+
+  selectTaskForExecution(task);
+  cmdRun();
+}
+
+function cmdDone(taskId?: string): void {
+  const task = resolveTaskForCommand(taskId);
+  if (!task) {
+    console.error("❌ No task found for done command.");
+    return;
+  }
+
+  if (task.status === "done") {
+    console.log(`✅ Task ${task.id} is already done.`);
+    return;
+  }
+
+  if (!(task.status === "testing" && task.test_passed === true)) {
+    console.error(`❌ Task ${task.id} is not ready for done; run test first (current: ${task.status}/${task.phase || "-"}).`);
+    return;
+  }
+
+  task.status = "done";
+  task.phase = "completed";
+  task.completed_at = new Date().toISOString();
+  writeTask(task.id, task);
+
+  const current = readCurrent();
+  if (current.task_id === task.id) {
+    writeCurrent({ task_id: null, phase: null });
+  }
+
+  console.log(`✅ Task ${task.id} marked as done.`);
+}
+
 function cmdRun(): void {
   const nextTask = findNextTask();
 
@@ -384,7 +601,7 @@ function cmdRun(): void {
     console.error("\n❌ No agent CLI found.");
     console.error("   Install Claude Code: npm install -g @anthropic-ai/claude-code");
     console.error("   Install Codex: npm install -g @openai/codex");
-    process.exit(1);
+    return;
   }
 
   console.log(`\n🚀 Running: ${nextTask.id} - ${nextTask.title}`);
@@ -392,13 +609,25 @@ function cmdRun(): void {
   console.log(`   Status: ${nextTask.status}`);
   console.log(`   Phase: ${nextTask.phase || "starting"}`);
 
+  if (nextTask.status === "backlog") {
+    console.log("   Compose: plan");
+  } else if (nextTask.status === "in_progress" && nextTask.phase === "plan") {
+    console.log("   Compose: start");
+  } else if (nextTask.status === "in_progress" && nextTask.phase === "exec") {
+    console.log("   Compose: step");
+  } else if (nextTask.status === "review" && nextTask.phase === "review") {
+    console.log("   Compose: review");
+  } else if (nextTask.status === "testing" && nextTask.phase === "test") {
+    console.log("   Compose: test/done");
+  }
+
   // Set as current
   writeCurrent({ task_id: nextTask.id, phase: nextTask.phase });
 
   const config = createDefaultConfig(process.cwd());
   if (!config) {
     console.error("❌ Failed to create agent config");
-    process.exit(1);
+    return;
   }
 
   const taskDir = getTaskDir(nextTask.id);
@@ -421,16 +650,14 @@ function cmdRun(): void {
       const planDir = path.join(taskDir, "plan");
       fs.mkdirSync(planDir, { recursive: true });
 
-      // Simplified prompt for faster execution
-      const userPrompt = `You are a software architect. Create a simple execution plan for this task:
-
-Task: ${nextTask.title}
-
-Create these files in the plan/ directory:
-1. plan.md - 3-5 step execution plan
-2. discussion.md - Brief technical considerations
-
-Keep it concise.`;
+      const planTemplate = loadPromptTemplate("prompts/plan/multirole.md");
+      const userPrompt = planTemplate
+        ? renderTemplate(planTemplate, {
+            TASK_ID: nextTask.id,
+            TASK_TITLE: nextTask.title,
+            ROLES: "architect,security,dx",
+          })
+        : `You are a software architect. Create a simple execution plan for this task:\n\nTask: ${nextTask.title}\n\nCreate these files in the plan/ directory:\n1. plan.md - 3-5 step execution plan\n2. discussion.md - Brief technical considerations\n\nKeep it concise.`;
 
       console.log("   🤖 Agent generating plan (simplified)...");
       result = executeAgent(userPrompt, config, {
@@ -509,7 +736,14 @@ Keep it concise.`;
           .slice(-5)
           .join("\n");
 
-        const userPrompt = `Execute one step of the task.\n\nTask: ${nextTask.title}\n\nPlan:\n${plan}\n\nRecent work:\n${recentEntries}\n\nInstructions:\n1. Read the plan and recent work\n2. Execute ONE small step (15-30 min of work)\n3. Run verification (e.g., pnpm test)\n4. Report what was done\n\nOutput format:\n- Action: What you did\n- Files changed: List of files\n- Verification: Test results\n- Status: continue | completed`;
+        const execTemplate = loadPromptTemplate("prompts/exec/step.md");
+        const userPrompt = execTemplate
+          ? `${renderTemplate(execTemplate, {
+              TASK_ID: nextTask.id,
+              TASK_TITLE: nextTask.title,
+              TIMESTAMP: new Date().toISOString(),
+            })}\n\n---\n\nTask: ${nextTask.title}\n\nPlan:\n${plan}\n\nRecent work:\n${recentEntries}`
+          : `Execute one step of the task.\n\nTask: ${nextTask.title}\n\nPlan:\n${plan}\n\nRecent work:\n${recentEntries}\n\nInstructions:\n1. Read the plan and recent work\n2. Execute ONE small step (15-30 min of work)\n3. Run verification (e.g., pnpm test)\n4. Report what was done\n\nOutput format:\n- Action: What you did\n- Files changed: List of files\n- Verification: Test results\n- Status: continue | completed`;
 
         console.log("   🤖 Agent executing step...");
         result = executeAgent(userPrompt, config, {
@@ -528,23 +762,33 @@ Keep it concise.`;
             "utf8"
           );
 
-          // Check if task is complete (agent says "completed")
-          if (result.content.toLowerCase().includes("completed")) {
+          if (isStepCompleted(result.content)) {
             console.log("\n   ✨ Task appears complete!");
-            console.log("   → Moving to Review phase\n");
-            
-            // Transition to review phase
-            nextTask.status = "review";
-            nextTask.phase = "review";
-            writeTask(nextTask.id, nextTask);
-            writeCurrent({ task_id: nextTask.id, phase: "review" });
-            
-            // Create review directory
-            const reviewDir = path.join(taskDir, "review");
-            fs.mkdirSync(reviewDir, { recursive: true });
-            
-            console.log("   📁 Review directory created");
-            console.log("   Run: techlead run  # to start review");
+            const gate = runQualityGate();
+            if (!gate.passed) {
+              console.log("\n   ⚠️  Quality gate failed; staying in Exec phase");
+              console.log(`   Command: ${gate.command}`);
+
+              fs.appendFileSync(
+                workLogPath,
+                `\n## ${new Date().toISOString()} - Quality gate failed\n\nCommand: ${gate.command}\n\n${gate.output || gate.error || "Unknown error"}\n\n---\n`,
+                "utf8"
+              );
+            } else {
+              console.log("   ✅ Quality gate passed");
+              console.log("   → Moving to Review phase\n");
+
+              nextTask.status = "review";
+              nextTask.phase = "review";
+              writeTask(nextTask.id, nextTask);
+              writeCurrent({ task_id: nextTask.id, phase: "review" });
+
+              const reviewDir = path.join(taskDir, "review");
+              fs.mkdirSync(reviewDir, { recursive: true });
+
+              console.log("   📁 Review directory created");
+              console.log("   Run: techlead run  # to start review");
+            }
           } else {
             console.log("\n   🔄 Continue execution");
             console.log("   Run: techlead run");
@@ -577,7 +821,7 @@ Keep it concise.`;
       const reviewPath = path.join(taskDir, "review", "reviewer-1.md");
       if (fs.existsSync(reviewPath)) {
         const existingReview = fs.readFileSync(reviewPath, "utf8");
-        const hasCritical = existingReview.toLowerCase().includes("critical");
+        const hasCritical = hasCriticalVerdict(existingReview);
         
         if (!hasCritical) {
           console.log("\n   ✓ Review file exists and passed");
@@ -608,10 +852,15 @@ Keep it concise.`;
     nextTask.review_attempts = (nextTask.review_attempts || 0) + 1;
     writeTask(nextTask.id, nextTask);
 
-    // Read system prompt for review
-    const reviewPromptPath = path.join(__dirname, "../prompts/review/adversarial.md");
-    const systemPrompt = fs.existsSync(reviewPromptPath)
-      ? fs.readFileSync(reviewPromptPath, "utf8")
+    const reviewTemplate = loadPromptTemplate("prompts/review/adversarial.md");
+    const systemPrompt = reviewTemplate
+      ? renderTemplate(reviewTemplate, {
+          REVIEWER_PERSPECTIVE: "Skeptic",
+          TASK_ID: nextTask.id,
+          TASK_TITLE: nextTask.title,
+          N: "1",
+          PERSPECTIVE: "Skeptic",
+        })
       : "You are a code reviewer. Review the changes and identify issues.";
 
     const userPrompt = `Review the implementation for task: ${nextTask.title}\n\nCheck:\n1. Code quality and correctness\n2. Potential bugs or edge cases\n3. Security issues\n4. Performance concerns\n\nGenerate review/reviewer-1.md with structured findings (CRITICAL/WARNING/PASS).`;
@@ -642,7 +891,7 @@ Keep it concise.`;
       }
 
       // Check for CRITICAL issues
-      const hasCritical = result.content.toLowerCase().includes("critical");
+      const hasCritical = hasCriticalVerdict(result.content);
       
       if (hasCritical) {
         console.log("\n   ⚠️  CRITICAL issues found!");
@@ -693,7 +942,7 @@ Keep it concise.`;
       const testPath = path.join(taskDir, "test", "adversarial-test.md");
       if (fs.existsSync(testPath)) {
         const existingTest = fs.readFileSync(testPath, "utf8");
-        const hasCritical = existingTest.toLowerCase().includes("critical");
+        const hasCritical = hasCriticalVerdict(existingTest);
         
         if (!hasCritical) {
           console.log("\n   ✓ Test file exists and passed");
@@ -726,10 +975,14 @@ Keep it concise.`;
     nextTask.test_attempts = (nextTask.test_attempts || 0) + 1;
     writeTask(nextTask.id, nextTask);
 
-    // Read system prompt for test
-    const testPromptPath = path.join(__dirname, "../prompts/test/adversarial.md");
-    const systemPrompt = fs.existsSync(testPromptPath)
-      ? fs.readFileSync(testPromptPath, "utf8")
+    const testTemplate = loadPromptTemplate("prompts/test/adversarial.md");
+    const systemPrompt = testTemplate
+      ? renderTemplate(testTemplate, {
+          TESTER_PERSONA: "Attacker",
+          TASK_ID: nextTask.id,
+          TASK_TITLE: nextTask.title,
+          PERSONA: "Attacker",
+        })
       : "You are a tester. Test the implementation thoroughly.";
 
     const userPrompt = `Test the implementation for task: ${nextTask.title}\n\nDesign and run:\n1. Unit tests\n2. Edge case tests\n3. Adversarial tests (attack scenarios)\n4. Integration tests\n\nGenerate test/adversarial-test.md with results (PASS/WARNING/CRITICAL).`;
@@ -760,7 +1013,7 @@ Keep it concise.`;
       }
 
       // Check for CRITICAL issues
-      const hasCritical = result.content.toLowerCase().includes("critical");
+      const hasCritical = hasCriticalVerdict(result.content);
       
       if (hasCritical) {
         console.log("\n   ⚠️  CRITICAL test failures!");
@@ -789,6 +1042,78 @@ Keep it concise.`;
       console.error(`   Error: ${result.error}`);
     }
   }
+}
+
+function cmdLoop(options: { maxCycles?: string | number; maxNoProgress?: string | number }): void {
+  const maxCyclesRaw = options.maxCycles ?? 20;
+  const maxNoProgressRaw = options.maxNoProgress ?? 3;
+  const maxCycles = Number(maxCyclesRaw);
+  const maxNoProgress = Number(maxNoProgressRaw);
+
+  if (!Number.isFinite(maxCycles) || maxCycles < 1) {
+    console.error("❌ --max-cycles must be a positive number");
+    return;
+  }
+  if (!Number.isFinite(maxNoProgress) || maxNoProgress < 1) {
+    console.error("❌ --max-no-progress must be a positive number");
+    return;
+  }
+
+  console.log(`\n🔁 Starting autonomous loop (max cycles: ${maxCycles}, max no-progress: ${maxNoProgress})`);
+
+  let previousState = "";
+  let noProgressCount = 0;
+
+  for (let cycle = 1; cycle <= maxCycles; cycle += 1) {
+    const beforeCurrent = readCurrent();
+    const beforeTask = beforeCurrent.task_id ? readTask(beforeCurrent.task_id) : null;
+    const beforeDoneCount = listAllTasks().filter((t) => t.status === "done").length;
+
+    console.log(`\n=== Loop Cycle ${cycle}/${maxCycles} ===`);
+    cmdRun();
+
+    const allTasks = listAllTasks();
+    const afterDoneCount = allTasks.filter((t) => t.status === "done").length;
+    const pendingCount = allTasks.filter((t) => t.status !== "done").length;
+    const afterCurrent = readCurrent();
+    const afterTask = afterCurrent.task_id ? readTask(afterCurrent.task_id) : null;
+
+    if (pendingCount === 0) {
+      console.log("\n✅ Loop completed: all tasks are done.");
+      return;
+    }
+
+    const stateKey = `${afterCurrent.task_id || "none"}:${afterTask?.status || "none"}:${afterTask?.phase || "none"}:${afterDoneCount}`;
+    const progressed = afterDoneCount > beforeDoneCount ||
+      (beforeTask && afterTask
+        ? beforeTask.status !== afterTask.status || beforeTask.phase !== afterTask.phase
+        : beforeCurrent.task_id !== afterCurrent.task_id);
+
+    if (!progressed && stateKey === previousState) {
+      noProgressCount += 1;
+    } else {
+      noProgressCount = 0;
+      previousState = stateKey;
+    }
+
+    if (afterTask) {
+      if ((afterTask.review_attempts || 0) >= 3) {
+        console.log(`\n⚠️  Loop stopped: review attempts reached limit for ${afterTask.id}.`);
+        return;
+      }
+      if ((afterTask.test_attempts || 0) >= 3) {
+        console.log(`\n⚠️  Loop stopped: test attempts reached limit for ${afterTask.id}.`);
+        return;
+      }
+    }
+
+    if (noProgressCount >= maxNoProgress) {
+      console.log("\n⚠️  Loop stopped: no progress across consecutive cycles.");
+      return;
+    }
+  }
+
+  console.log("\n⏸️  Loop stopped: reached max cycle limit.");
 }
 
 function cmdAbort(): void {
@@ -879,8 +1204,19 @@ function main(): void {
   cli.command("add <title>", "Add a new task").action(cmdAdd);
   cli.command("list", "List all tasks").action(cmdList);
   cli.command("status", "Show current status").action(cmdStatus);
+  cli.command("plan [taskId]", "Run plan phase for backlog task").action(cmdPlan);
+  cli.command("start [taskId]", "Move planned task to exec phase").action(cmdStart);
+  cli.command("step [taskId]", "Execute one step in exec phase").action(cmdStep);
+  cli.command("review [taskId]", "Run adversarial review phase").action(cmdReview);
+  cli.command("test [taskId]", "Run adversarial test phase").action(cmdTest);
+  cli.command("done [taskId]", "Mark tested task as done").action(cmdDone);
   cli.command("next", "Switch to next task in queue").action(cmdNext);
-  cli.command("run", "Auto-run current/next task").action(cmdRun);
+  cli.command("run", "Auto-run current/next task by composing phase commands").action(cmdRun);
+  cli
+    .command("loop", "Continuously run tasks until stop conditions are reached")
+    .option("--max-cycles <n>", "Maximum number of loop cycles", { default: 20 })
+    .option("--max-no-progress <n>", "Stop after N consecutive no-progress cycles", { default: 3 })
+    .action((options) => cmdLoop(options));
   cli.command("abort", "Abort current task").action(cmdAbort);
 
   cli.help();

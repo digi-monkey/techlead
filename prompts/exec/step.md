@@ -57,3 +57,11 @@ Execute one small step of the task (15-30 minutes of work).
 - [ ] Verification passed
 - [ ] work-log.md updated
 - [ ] Clear indication of what's next
+
+## Required Machine-Readable Footer
+
+At the end of your response, append exactly one HTML comment line:
+
+```html
+<!-- STATUS: {"completed": true|false, "next_action": "...", "summary": "..."} -->
+```
