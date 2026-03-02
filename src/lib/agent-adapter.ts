@@ -2,11 +2,11 @@
  * Agent Adapter - Unified interface for Claude Code and Codex CLI
  */
 
-import { execSync, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execSync, execFileSync, spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-export type AgentProvider = "claude" | "codex";
+export type AgentProvider = 'claude' | 'codex';
 
 export interface AgentConfig {
   provider: AgentProvider;
@@ -29,7 +29,7 @@ export interface AgentResult {
 export interface AgentOptions {
   systemPrompt?: string;
   systemPromptFile?: string;
-  outputFormat?: "text" | "json";
+  outputFormat?: 'text' | 'json';
   jsonSchema?: object;
   timeoutMs?: number;
   env?: Record<string, string>;
@@ -40,7 +40,7 @@ export interface AgentOptions {
  */
 export function isAgentAvailable(provider: AgentProvider): boolean {
   try {
-    execSync(`which ${provider}`, { stdio: "ignore" });
+    execSync(`which ${provider}`, { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -52,7 +52,7 @@ export function isAgentAvailable(provider: AgentProvider): boolean {
  */
 function loadSystemPrompt(options: AgentOptions): string | undefined {
   if (options.systemPromptFile && existsSync(options.systemPromptFile)) {
-    return readFileSync(options.systemPromptFile, "utf8");
+    return readFileSync(options.systemPromptFile, 'utf8');
   }
   return options.systemPrompt;
 }
@@ -65,11 +65,11 @@ export function buildClaudeCommand(
   config: AgentConfig,
   options: AgentOptions
 ): string {
-  const args: string[] = ["-p"]; // Non-interactive mode
+  const args: string[] = ['-p']; // Non-interactive mode
 
   // Output format
-  if (options.outputFormat === "json") {
-    args.push("--output-format=json");
+  if (options.outputFormat === 'json') {
+    args.push('--output-format=json');
   }
 
   // Model
@@ -84,7 +84,7 @@ export function buildClaudeCommand(
 
   // Allowed tools
   if (config.allowedTools?.length) {
-    args.push(`--allowed-tools=${config.allowedTools.join(",")}`);
+    args.push(`--allowed-tools=${config.allowedTools.join(',')}`);
   }
 
   // System prompt - merge into user prompt to avoid escaping issues
@@ -106,12 +106,12 @@ export function buildClaudeCommand(
   }
 
   // Disable session persistence for non-interactive
-  args.push("--no-session-persistence");
+  args.push('--no-session-persistence');
 
   // Add the prompt (no escaping needed, execSync handles it)
   args.push(finalPrompt);
 
-  return `claude ${args.join(" ")}`;
+  return `claude ${args.join(' ')}`;
 }
 
 /**
@@ -122,11 +122,11 @@ export function buildCodexCommand(
   config: AgentConfig,
   options: AgentOptions
 ): { cmd: string; args: string[] } {
-  const args: string[] = ["exec"];
+  const args: string[] = ['exec'];
 
   // Output format
-  if (options.outputFormat === "json") {
-    args.push("--json");
+  if (options.outputFormat === 'json') {
+    args.push('--json');
   }
 
   // Model
@@ -135,10 +135,10 @@ export function buildCodexCommand(
   }
 
   // Full auto mode (non-interactive)
-  args.push("--full-auto");
+  args.push('--full-auto');
 
   // Sandbox mode
-  args.push("--sandbox=workspace-write");
+  args.push('--sandbox=workspace-write');
 
   // Working directory
   if (config.workingDir) {
@@ -154,7 +154,7 @@ export function buildCodexCommand(
   // Add the prompt as final arg
   args.push(prompt);
 
-  return { cmd: "codex", args };
+  return { cmd: 'codex', args };
 }
 
 /**
@@ -164,8 +164,8 @@ export function parseClaudeOutput(output: string): AgentResult {
   try {
     const data = JSON.parse(output);
     return {
-      success: data.subtype === "success" && !data.is_error,
-      content: data.result || "",
+      success: data.subtype === 'success' && !data.is_error,
+      content: data.result || '',
       sessionId: data.session_id,
       costUsd: data.total_cost_usd,
       inputTokens: data.usage?.input_tokens,
@@ -185,13 +185,13 @@ export function parseClaudeOutput(output: string): AgentResult {
  */
 export function parseCodexOutput(output: string): AgentResult {
   // Codex outputs JSONL, find the last result message
-  const lines = output.trim().split("\n");
+  const lines = output.trim().split('\n');
   let lastResult: any = null;
 
   for (const line of lines) {
     try {
       const data = JSON.parse(line);
-      if (data.type === "result" || data.type === "message") {
+      if (data.type === 'result' || data.type === 'message') {
         lastResult = data;
       }
     } catch {
@@ -207,7 +207,7 @@ export function parseCodexOutput(output: string): AgentResult {
   }
 
   return {
-    success: lastResult.type === "result" && !lastResult.error,
+    success: lastResult.type === 'result' && !lastResult.error,
     content: lastResult.content || lastResult.message || output,
     sessionId: lastResult.session_id,
     error: lastResult.error,
@@ -225,7 +225,7 @@ export function executeAgent(
   if (!isAgentAvailable(config.provider)) {
     return {
       success: false,
-      content: "",
+      content: '',
       error: `${config.provider} CLI not found. Please install it.`,
     };
   }
@@ -233,13 +233,13 @@ export function executeAgent(
   try {
     let output: string;
 
-    if (config.provider === "claude") {
+    if (config.provider === 'claude') {
       // Claude: use stdin to pass prompt to avoid shell escaping issues
-      const args: string[] = ["-p"];
+      const args: string[] = ['-p'];
 
       // Output format
-      if (options.outputFormat === "json") {
-        args.push("--output-format=json");
+      if (options.outputFormat === 'json') {
+        args.push('--output-format=json');
       }
 
       // Model
@@ -254,7 +254,7 @@ export function executeAgent(
 
       // Allowed tools
       if (config.allowedTools?.length) {
-        args.push(`--allowed-tools=${config.allowedTools.join(",")}`);
+        args.push(`--allowed-tools=${config.allowedTools.join(',')}`);
       }
 
       // Working directory
@@ -263,7 +263,7 @@ export function executeAgent(
       }
 
       // Disable session persistence for non-interactive
-      args.push("--no-session-persistence");
+      args.push('--no-session-persistence');
 
       // Prepare input (system + user prompt)
       const systemPrompt = loadSystemPrompt(options);
@@ -271,8 +271,8 @@ export function executeAgent(
         ? `[System Instructions]\n${systemPrompt}\n\n[User Request]\n${prompt}`
         : prompt;
 
-      output = execFileSync("claude", args, {
-        encoding: "utf8",
+      output = execFileSync('claude', args, {
+        encoding: 'utf8',
         timeout: options.timeoutMs || 300000,
         cwd: config.workingDir,
         env: { ...process.env, ...options.env },
@@ -280,7 +280,7 @@ export function executeAgent(
         input, // Pass via stdin
       });
 
-      if (options.outputFormat === "json") {
+      if (options.outputFormat === 'json') {
         return parseClaudeOutput(output);
       }
       return { success: true, content: output };
@@ -288,14 +288,14 @@ export function executeAgent(
       // Codex: use spawn with args array to avoid shell escaping
       const { cmd, args } = buildCodexCommand(prompt, config, options);
       output = execFileSync(cmd, args, {
-        encoding: "utf8",
+        encoding: 'utf8',
         timeout: options.timeoutMs || 300000,
         cwd: config.workingDir,
         env: { ...process.env, ...options.env },
         maxBuffer: 50 * 1024 * 1024,
       });
 
-      if (options.outputFormat === "json") {
+      if (options.outputFormat === 'json') {
         return parseCodexOutput(output);
       }
       return { success: true, content: output };
@@ -303,7 +303,7 @@ export function executeAgent(
   } catch (error: any) {
     return {
       success: false,
-      content: error.stdout || "",
+      content: error.stdout || '',
       error: error.message,
     };
   }
@@ -321,7 +321,7 @@ export async function executeAgentAsync(
   if (!isAgentAvailable(config.provider)) {
     return {
       success: false,
-      content: "",
+      content: '',
       error: `${config.provider} CLI not found`,
     };
   }
@@ -330,7 +330,7 @@ export async function executeAgentAsync(
     const chunks: string[] = [];
     let child: ReturnType<typeof spawn>;
 
-    if (config.provider === "claude") {
+    if (config.provider === 'claude') {
       // Claude: use shell command
       const command = buildClaudeCommand(prompt, config, options);
       child = spawn(command, {
@@ -347,26 +347,24 @@ export async function executeAgentAsync(
       });
     }
 
-    child.stdout!.on("data", (data: Buffer) => {
+    child.stdout!.on('data', (data: Buffer) => {
       const chunk = data.toString();
       chunks.push(chunk);
       onChunk?.(chunk);
     });
 
-    child.stderr!.on("data", (data: Buffer) => {
+    child.stderr!.on('data', (data: Buffer) => {
       const chunk = data.toString();
       chunks.push(chunk);
       onChunk?.(chunk);
     });
 
-    child.on("close", (code) => {
-      const output = chunks.join("");
+    child.on('close', (code) => {
+      const output = chunks.join('');
 
-      if (options.outputFormat === "json") {
+      if (options.outputFormat === 'json') {
         const result =
-          config.provider === "claude"
-            ? parseClaudeOutput(output)
-            : parseCodexOutput(output);
+          config.provider === 'claude' ? parseClaudeOutput(output) : parseCodexOutput(output);
         resolve(result);
         return;
       }
@@ -377,10 +375,10 @@ export async function executeAgentAsync(
       });
     });
 
-    child.on("error", (error) => {
+    child.on('error', (error) => {
       resolve({
         success: false,
-        content: chunks.join(""),
+        content: chunks.join(''),
         error: error.message,
       });
     });
@@ -390,8 +388,8 @@ export async function executeAgentAsync(
       child.kill();
       resolve({
         success: false,
-        content: chunks.join(""),
-        error: "Timeout",
+        content: chunks.join(''),
+        error: 'Timeout',
       });
     }, options.timeoutMs || 300000);
   });
@@ -401,25 +399,23 @@ export async function executeAgentAsync(
  * Auto-detect available agent
  */
 export function detectAgent(): AgentProvider | null {
-  if (isAgentAvailable("claude")) return "claude";
-  if (isAgentAvailable("codex")) return "codex";
+  if (isAgentAvailable('claude')) return 'claude';
+  if (isAgentAvailable('codex')) return 'codex';
   return null;
 }
 
 /**
  * Create default config for detected agent
  */
-export function createDefaultConfig(
-  workingDir?: string
-): AgentConfig | null {
+export function createDefaultConfig(workingDir?: string): AgentConfig | null {
   const provider = detectAgent();
   if (!provider) return null;
 
   return {
     provider,
-    model: provider === "claude" ? "sonnet" : "gpt-4o",
+    model: provider === 'claude' ? 'sonnet' : 'gpt-4o',
     maxBudgetUsd: 1.0,
-    allowedTools: ["Read", "Edit", "Bash", "Glob"],
+    allowedTools: ['Read', 'Edit', 'Bash', 'Glob'],
     workingDir,
   };
 }

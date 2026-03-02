@@ -21,13 +21,19 @@
     "check:all": "pnpm run typecheck && pnpm run build && pnpm run check && pnpm run validate:distribution",
     "validate:distribution": "node ./scripts/validate-distribution.mjs",
     "prepublishOnly": "pnpm run build",
-    "postinstall": "pnpm approve-builds esbuild"
+    "postinstall": "pnpm approve-builds esbuild",
+    "fmt": "biome format --write .",
+    "fmt:check": "biome format .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "ci": "biome ci . && pnpm run typecheck && pnpm run build"
   },
   "dependencies": {
     "cac": "^7.0.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.5",
     "@types/node": "^25.3.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
@@ -47,5 +53,16 @@
     "scripts/",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*.{js,ts,mjs,cjs,json,md}": [
+      "biome format --write"
+    ],
+    "*.{js,ts,mjs,cjs}": [
+      "biome lint"
+    ]
+  }
 }

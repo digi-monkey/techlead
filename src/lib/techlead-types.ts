@@ -1,8 +1,8 @@
 export interface Task {
   id: string;
   title: string;
-  status: "backlog" | "in_progress" | "review" | "testing" | "done" | "failed";
-  phase: "plan" | "exec" | "review" | "reviewed" | "test" | "tested" | "completed" | null;
+  status: 'backlog' | 'in_progress' | 'review' | 'testing' | 'done' | 'failed';
+  phase: 'plan' | 'exec' | 'review' | 'reviewed' | 'test' | 'tested' | 'completed' | null;
   review_passed?: boolean;
   test_passed?: boolean;
   review_attempts?: number;

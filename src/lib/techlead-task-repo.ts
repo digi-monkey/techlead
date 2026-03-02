@@ -1,7 +1,7 @@
-import fs from "node:fs";
-import { Current, Task } from "./techlead-types.js";
-import { getCurrentFile, getTaskJsonPath, getTasksDir } from "./techlead-paths.js";
-import { readJson, writeJson } from "./techlead-utils.js";
+import fs from 'node:fs';
+import { Current, Task } from './techlead-types.js';
+import { getCurrentFile, getTaskJsonPath, getTasksDir } from './techlead-paths.js';
+import { readJson, writeJson } from './techlead-utils.js';
 
 export function readCurrent(): Current {
   return readJson<Current>(getCurrentFile()) || { task_id: null, phase: null };
@@ -52,17 +52,17 @@ export function findNextTask(): Task | null {
   const current = readCurrent();
   if (current.task_id) {
     const currentTask = tasks.find((t) => t.id === current.task_id);
-    if (currentTask && currentTask.status !== "done") {
+    if (currentTask && currentTask.status !== 'done') {
       return currentTask;
     }
   }
 
-  const backlogTask = tasks.find((t) => t.status === "backlog");
+  const backlogTask = tasks.find((t) => t.status === 'backlog');
   if (backlogTask) {
     return backlogTask;
   }
 
-  const failedTask = tasks.find((t) => t.status === "failed");
+  const failedTask = tasks.find((t) => t.status === 'failed');
   if (failedTask) {
     return failedTask;
   }
