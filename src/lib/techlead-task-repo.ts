@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { Current, Task } from "./techlead-types.js";
+import type { Current, Task } from "./techlead-types.js";
 import { getCurrentFile, getTaskJsonPath, getTasksDir } from "./techlead-paths.js";
 import { readJson, writeJson } from "./techlead-utils.js";
 

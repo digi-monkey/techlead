@@ -3,8 +3,8 @@
  */
 
 import {
-  AgentConfig,
-  AgentOptions,
+  type AgentConfig,
+  type AgentOptions,
   createDefaultConfig,
   detectAgent,
   executeAgent,
@@ -37,7 +37,7 @@ async function example1() {
 }
 
 // Example 2: Execute with system prompt from file
-async function example2() {
+async function _example2() {
   console.log("\n=== Example 2: With system prompt ===\n");
 
   const config: AgentConfig = {
@@ -62,7 +62,7 @@ async function example2() {
 }
 
 // Example 3: Async with streaming
-async function example3() {
+async function _example3() {
   console.log("\n=== Example 3: Async with streaming ===\n");
 
   const config: AgentConfig = {
@@ -84,7 +84,7 @@ async function example3() {
 }
 
 // Example 4: Structured output with JSON schema
-async function example4() {
+async function _example4() {
   console.log("\n=== Example 4: Structured output ===\n");
 
   const schema = {
@@ -128,7 +128,7 @@ async function example4() {
 }
 
 // Example 5: Multi-step task (simulating subagent)
-async function example5() {
+async function _example5() {
   console.log("\n=== Example 5: Multi-step (simulating subagent) ===\n");
 
   const workingDir = process.cwd();

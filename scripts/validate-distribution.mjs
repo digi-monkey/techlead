@@ -16,7 +16,7 @@ const warnings = [];
 function fail(msg) {
   failures.push(msg);
 }
-function warn(msg) {
+function _warn(msg) {
   warnings.push(msg);
 }
 

@@ -6,7 +6,7 @@ import {
   createDefaultConfig,
   type AgentResult,
 } from "./agent-adapter.js";
-import { Task } from "./techlead-types.js";
+import type { Task } from "./techlead-types.js";
 import {
   getKnowledgeDir,
   getTaskDir,
@@ -62,7 +62,7 @@ export function cmdWorld(): void {
   );
 
   if (result.success) {
-    console.log("\n" + result.content);
+    console.log(`\n${result.content}`);
   } else {
     console.error("❌ Agent error:", result.error);
     process.exit(1);
@@ -659,7 +659,7 @@ export function cmdRun(): void {
 
       console.log(`   ✅ Task ${nextTask.id} completed!`);
       console.log(
-        `   Duration: ${nextTask.started_at && nextTask.completed_at ? Math.round((new Date(nextTask.completed_at).getTime() - new Date(nextTask.started_at).getTime()) / 1000 / 60) + " min" : "N/A"}`
+        `   Duration: ${nextTask.started_at && nextTask.completed_at ? `${Math.round((new Date(nextTask.completed_at).getTime() - new Date(nextTask.started_at).getTime()) / 1000 / 60)} min` : "N/A"}`
       );
       return;
     } else if (nextTask.test_attempts && nextTask.test_attempts >= 1) {
@@ -759,7 +759,7 @@ export function cmdRun(): void {
 
         console.log(`   ✅ Task ${nextTask.id} completed!`);
         console.log(
-          `   Duration: ${nextTask.started_at && nextTask.completed_at ? Math.round((new Date(nextTask.completed_at).getTime() - new Date(nextTask.started_at).getTime()) / 1000 / 60) + " min" : "N/A"}`
+          `   Duration: ${nextTask.started_at && nextTask.completed_at ? `${Math.round((new Date(nextTask.completed_at).getTime() - new Date(nextTask.started_at).getTime()) / 1000 / 60)} min` : "N/A"}`
         );
       }
     } else {

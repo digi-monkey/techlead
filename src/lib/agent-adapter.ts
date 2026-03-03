@@ -347,13 +347,13 @@ export async function executeAgentAsync(
       });
     }
 
-    child.stdout!.on("data", (data: Buffer) => {
+    child.stdout?.on("data", (data: Buffer) => {
       const chunk = data.toString();
       chunks.push(chunk);
       onChunk?.(chunk);
     });
 
-    child.stderr!.on("data", (data: Buffer) => {
+    child.stderr?.on("data", (data: Buffer) => {
       const chunk = data.toString();
       chunks.push(chunk);
       onChunk?.(chunk);

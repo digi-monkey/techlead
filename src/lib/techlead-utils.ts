@@ -35,7 +35,7 @@ export function readJson<T>(filePath: string): T | null {
 
 export function writeJson(filePath: string, data: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
 export function loadPromptTemplate(relativePath: string): string | null {
