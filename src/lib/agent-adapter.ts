@@ -250,6 +250,24 @@ export function executeAgent(
     };
   }
 
+  // Initialize logger if enabled
+  const logger = options.enableLogging
+    ? new AgentExecutionLogger({
+        taskId: options.taskId ?? generateTaskId(),
+        sessionId: options.sessionId,
+        logDir: options.logDir,
+        provider: config.provider,
+        model: config.model,
+        workingDir: config.workingDir,
+      })
+    : null;
+
+  // Log input
+  logger?.logInput(prompt, {
+    systemPrompt: options.systemPrompt,
+    outputFormat: options.outputFormat,
+  });
+
   try {
     let output: string;
 
@@ -300,6 +318,10 @@ export function executeAgent(
         input, // Pass via stdin
       });
 
+      // Log output
+      logger?.logStdout(output);
+      logger?.logEnd(0);
+
       if (options.outputFormat === "json") {
         return parseClaudeOutput(output);
       }
@@ -315,16 +337,27 @@ export function executeAgent(
         maxBuffer: 50 * 1024 * 1024,
       });
 
+      // Log output
+      logger?.logStdout(output);
+      logger?.logEnd(0);
+
       if (options.outputFormat === "json") {
         return parseCodexOutput(output);
       }
       return { success: true, content: output };
     }
   } catch (error: any) {
+    const errorMessage = error.message || String(error);
+    const stdout = error.stdout || "";
+
+    // Log error
+    logger?.logError(error instanceof Error ? error : new Error(errorMessage));
+    logger?.logEnd(null);
+
     return {
       success: false,
-      content: error.stdout || "",
-      error: error.message,
+      content: stdout,
+      error: errorMessage,
     };
   }
 }
