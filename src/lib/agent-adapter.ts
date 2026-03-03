@@ -5,6 +5,7 @@
 import { execSync, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { AgentExecutionLogger, generateTaskId } from "./agent-logger.js";
 
 export type AgentProvider = "claude" | "codex";
 
@@ -33,6 +34,25 @@ export interface AgentOptions {
   jsonSchema?: object;
   timeoutMs?: number;
   env?: Record<string, string>;
+  /**
+   * Enable execution logging
+   * @default false
+   */
+  enableLogging?: boolean;
+  /**
+   * Custom task ID for logging
+   * If not provided, a new one will be generated
+   */
+  taskId?: string;
+  /**
+   * Session ID for grouping related tasks
+   */
+  sessionId?: string;
+  /**
+   * Directory for log files
+   * @default "logs/agent-executions"
+   */
+  logDir?: string;
 }
 
 /**
@@ -326,6 +346,24 @@ export async function executeAgentAsync(
     };
   }
 
+  // Initialize logger if enabled
+  const logger = options.enableLogging
+    ? new AgentExecutionLogger({
+        taskId: options.taskId ?? generateTaskId(),
+        sessionId: options.sessionId,
+        logDir: options.logDir,
+        provider: config.provider,
+        model: config.model,
+        workingDir: config.workingDir,
+      })
+    : null;
+
+  // Log input
+  logger?.logInput(prompt, {
+    systemPrompt: options.systemPrompt,
+    outputFormat: options.outputFormat,
+  });
+
   return new Promise((resolve) => {
     const chunks: string[] = [];
     let child: ReturnType<typeof spawn>;
@@ -350,16 +388,19 @@ export async function executeAgentAsync(
     child.stdout?.on("data", (data: Buffer) => {
       const chunk = data.toString();
       chunks.push(chunk);
+      logger?.logStdout(chunk);
       onChunk?.(chunk);
     });
 
     child.stderr?.on("data", (data: Buffer) => {
       const chunk = data.toString();
       chunks.push(chunk);
+      logger?.logStderr(chunk);
       onChunk?.(chunk);
     });
 
     child.on("close", (code) => {
+      logger?.logEnd(code);
       const output = chunks.join("");
 
       if (options.outputFormat === "json") {
@@ -376,6 +417,8 @@ export async function executeAgentAsync(
     });
 
     child.on("error", (error) => {
+      logger?.logError(error);
+      logger?.logEnd(null);
       resolve({
         success: false,
         content: chunks.join(""),
@@ -386,6 +429,7 @@ export async function executeAgentAsync(
     // Timeout
     setTimeout(() => {
       child.kill();
+      logger?.logEnd(null);
       resolve({
         success: false,
         content: chunks.join(""),
