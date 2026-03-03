@@ -1,32 +1,32 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export function getRuntimeRoot(): string {
-  return path.resolve(__dirname, '../..');
+  return path.resolve(__dirname, "../..");
 }
 
 export function getTemplatesRoot(): string {
-  return path.join(getRuntimeRoot(), 'templates/.techlead');
+  return path.join(getRuntimeRoot(), "templates/.techlead");
 }
 
 export function getTechleadDir(): string {
-  return path.join(process.cwd(), '.techlead');
+  return path.join(process.cwd(), ".techlead");
 }
 
 export function getCurrentFile(): string {
-  return path.join(getTechleadDir(), 'current.json');
+  return path.join(getTechleadDir(), "current.json");
 }
 
 export function getTasksDir(): string {
-  return path.join(getTechleadDir(), 'tasks');
+  return path.join(getTechleadDir(), "tasks");
 }
 
 export function getKnowledgeDir(): string {
-  return path.join(getTechleadDir(), 'knowledge');
+  return path.join(getTechleadDir(), "knowledge");
 }
 
 export function getTaskDir(taskId: string): string {
@@ -46,5 +46,5 @@ export function getTaskDir(taskId: string): string {
 }
 
 export function getTaskJsonPath(taskId: string): string {
-  return path.join(getTaskDir(taskId), 'task.json');
+  return path.join(getTaskDir(taskId), "task.json");
 }

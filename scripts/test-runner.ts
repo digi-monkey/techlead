@@ -4,9 +4,9 @@
  * Usage: npx tsx scripts/test-runner.ts --all
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import fs from "node:fs";
+import path from "node:path";
+import { parse as parseYaml } from "yaml";
 
 type Assertion = Record<string, unknown>;
 
@@ -20,7 +20,7 @@ interface Turn {
 
 interface Flow {
   name: string;
-  session: 'new' | string;
+  session: "new" | string;
   turns: Turn[];
 }
 
@@ -45,7 +45,7 @@ interface ChatResponse {
 }
 
 interface AssertionResult {
-  level: 'must' | 'should';
+  level: "must" | "should";
   passed: boolean;
   assertion: Assertion;
   details: string;
@@ -70,12 +70,12 @@ interface RunResult {
   flows: FlowResult[];
 }
 
-const BASE_URL = process.env.TEST_BASE_URL ?? 'http://localhost:3000';
-const API_KEY = process.env.TEST_API_KEY ?? '';
-const SETUP_ENDPOINT = '/api/debug/setup';
-const CHAT_ENDPOINT = '/api/debug/chat';
+const BASE_URL = process.env.TEST_BASE_URL ?? "http://localhost:3000";
+const API_KEY = process.env.TEST_API_KEY ?? "";
+const SETUP_ENDPOINT = "/api/debug/setup";
+const CHAT_ENDPOINT = "/api/debug/chat";
 const RESULTS_DIR = path.resolve(
-  process.env.TEST_RESULTS_DIR ?? 'docs/quality/query-tests/results'
+  process.env.TEST_RESULTS_DIR ?? "docs/quality/query-tests/results"
 );
 
 function authHeaders(): Record<string, string> {
@@ -85,7 +85,7 @@ function authHeaders(): Record<string, string> {
 
 async function createSession(): Promise<string> {
   const res = await fetch(`${BASE_URL}${SETUP_ENDPOINT}`, {
-    method: 'POST',
+    method: "POST",
     headers: authHeaders(),
   });
 
@@ -102,8 +102,8 @@ async function sendMessage(message: string, sessionId?: string): Promise<ChatRes
   if (sessionId) payload.sessionId = sessionId;
 
   const res = await fetch(`${BASE_URL}${CHAT_ENDPOINT}`, {
-    method: 'POST',
-    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -115,7 +115,7 @@ async function sendMessage(message: string, sessionId?: string): Promise<ChatRes
 }
 
 function toolName(call: ToolCall): string {
-  return call.toolName ?? call.name ?? '';
+  return call.toolName ?? call.name ?? "";
 }
 
 function evaluateAssertion(
@@ -126,51 +126,51 @@ function evaluateAssertion(
   const [[type, value]] = Object.entries(assertion);
 
   switch (type) {
-    case 'tool_called': {
+    case "tool_called": {
       const name = String(value);
       const passed = toolCalls.some((call) => toolName(call) === name);
       return result(assertion, passed, `expected tool '${name}' to be called`);
     }
 
-    case 'tool_not_called': {
+    case "tool_not_called": {
       const name = String(value);
       const passed = toolCalls.every((call) => toolName(call) !== name);
       return result(assertion, passed, `expected tool '${name}' not to be called`);
     }
 
-    case 'response_contains': {
+    case "response_contains": {
       const terms = toStringArray(value);
       const missing = terms.filter((term) => !response.includes(term));
       return result(
         assertion,
         missing.length === 0,
-        missing.length === 0 ? 'all terms found' : `missing: ${missing.join(', ')}`
+        missing.length === 0 ? "all terms found" : `missing: ${missing.join(", ")}`
       );
     }
 
-    case 'response_contains_any': {
+    case "response_contains_any": {
       const terms = toStringArray(value);
       const matched = terms.filter((term) => response.includes(term));
       return result(
         assertion,
         matched.length > 0,
-        matched.length > 0 ? `matched: ${matched.join(', ')}` : 'no term matched'
+        matched.length > 0 ? `matched: ${matched.join(", ")}` : "no term matched"
       );
     }
 
-    case 'response_not_contains': {
+    case "response_not_contains": {
       const terms = toStringArray(value);
       const leaked = terms.filter((term) => response.includes(term));
       return result(
         assertion,
         leaked.length === 0,
-        leaked.length === 0 ? 'no leakage' : `leaked: ${leaked.join(', ')}`
+        leaked.length === 0 ? "no leakage" : `leaked: ${leaked.join(", ")}`
       );
     }
 
-    case 'response_not_empty': {
+    case "response_not_empty": {
       const passed = response.trim().length > 0;
-      return result(assertion, passed, passed ? `length=${response.length}` : 'empty response');
+      return result(assertion, passed, passed ? `length=${response.length}` : "empty response");
     }
 
     default:
@@ -183,7 +183,7 @@ function result(assertion: Assertion, passed: boolean, details: string): Asserti
     assertion,
     passed,
     details,
-    level: 'must',
+    level: "must",
   };
 }
 
@@ -193,7 +193,7 @@ function toStringArray(value: unknown): string[] {
 }
 
 async function executeFlow(flow: Flow): Promise<FlowResult> {
-  let sessionId = flow.session === 'new' ? await createSession() : flow.session;
+  let sessionId = flow.session === "new" ? await createSession() : flow.session;
   const assertions: AssertionResult[] = [];
 
   for (const turn of flow.turns) {
@@ -203,13 +203,13 @@ async function executeFlow(flow: Flow): Promise<FlowResult> {
 
     for (const must of turn.assert?.must ?? []) {
       const r = evaluateAssertion(must, chat.response, toolCalls);
-      r.level = 'must';
+      r.level = "must";
       assertions.push(r);
     }
 
     for (const should of turn.assert?.should ?? []) {
       const r = evaluateAssertion(should, chat.response, toolCalls);
-      r.level = 'should';
+      r.level = "should";
       assertions.push(r);
     }
   }
@@ -218,7 +218,7 @@ async function executeFlow(flow: Flow): Promise<FlowResult> {
 }
 
 async function runFlowFile(filePath: string): Promise<RunResult> {
-  const raw = fs.readFileSync(filePath, 'utf8');
+  const raw = fs.readFileSync(filePath, "utf8");
   const testFile = parseYaml(raw) as TestFile;
 
   const flows: FlowResult[] = [];
@@ -234,7 +234,7 @@ async function runFlowFile(filePath: string): Promise<RunResult> {
 
   for (const flow of flows) {
     for (const item of flow.assertions) {
-      if (item.level === 'must') {
+      if (item.level === "must") {
         mustTotal += 1;
         if (item.passed) mustPassed += 1;
       } else {
@@ -266,29 +266,29 @@ function writeResult(sourceFile: string, data: RunResult): string {
   const base = path.basename(sourceFile, path.extname(sourceFile));
   const date = new Date().toISOString().slice(0, 10);
   const filePath = path.join(RESULTS_DIR, `${base}-results-${date}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
   return filePath;
 }
 
 async function main() {
   const args = process.argv.slice(2);
-  const flowIndex = args.indexOf('--flow');
-  const runAll = args.includes('--all');
+  const flowIndex = args.indexOf("--flow");
+  const runAll = args.includes("--all");
 
   const flowFiles: string[] = [];
 
   if (flowIndex >= 0 && args[flowIndex + 1]) {
     flowFiles.push(path.resolve(args[flowIndex + 1]));
   } else if (runAll) {
-    const dir = path.resolve('test-flows');
-    const files = fs.readdirSync(dir).filter((file) => file.endsWith('.yaml'));
+    const dir = path.resolve("test-flows");
+    const files = fs.readdirSync(dir).filter((file) => file.endsWith(".yaml"));
     for (const file of files) {
       flowFiles.push(path.join(dir, file));
     }
   } else {
-    console.error('Usage:');
-    console.error('  npx tsx scripts/test-runner.ts --flow test-flows/feature-smoke.yaml');
-    console.error('  npx tsx scripts/test-runner.ts --all');
+    console.error("Usage:");
+    console.error("  npx tsx scripts/test-runner.ts --flow test-flows/feature-smoke.yaml");
+    console.error("  npx tsx scripts/test-runner.ts --all");
     process.exit(1);
   }
 
@@ -301,7 +301,7 @@ async function main() {
 
     console.log(`MUST  : ${result.summary.mustPassed}/${result.summary.mustTotal}`);
     console.log(`SHOULD: ${result.summary.shouldPassed}/${result.summary.shouldTotal}`);
-    console.log(`RESULT: ${result.summary.overallPass ? 'PASS' : 'FAIL'}`);
+    console.log(`RESULT: ${result.summary.overallPass ? "PASS" : "FAIL"}`);
     console.log(`Saved : ${output}`);
 
     if (!result.summary.overallPass) {
