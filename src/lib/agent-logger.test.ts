@@ -34,7 +34,6 @@ describe("Agent Execution Logger", () => {
   describe("Logger initialization", () => {
     it("should create logger with options", () => {
       const logger = new AgentExecutionLogger({
-        taskId: "test-task-123",
         provider: "claude",
         model: "sonnet",
         logDir: tempDir,
@@ -43,35 +42,43 @@ describe("Agent Execution Logger", () => {
       expect(logger).toBeDefined();
     });
 
-    it("should create log file in correct directory", () => {
-      const taskId = "test-task-456";
+    it("should create log file in correct directory (without taskId)", () => {
       const logger = new AgentExecutionLogger({
-        taskId,
         provider: "codex",
         logDir: tempDir,
       });
 
       const logPath = logger.getLogPath();
       expect(logPath).not.toBeNull();
-
-      const today = new Date().toISOString().split("T")[0];
-      const expectedPath = join(tempDir, today, `${taskId}.jsonl`);
-      expect(logPath).toBe(expectedPath);
+      expect(logPath!.startsWith(tempDir)).toBe(true);
       expect(existsSync(logPath!)).toBe(true);
+    });
+
+    it("should create log file in task directory (with taskId)", () => {
+      const taskId = "test-task-456";
+      const logger = new AgentExecutionLogger({
+        taskId,
+        provider: "codex",
+      });
+
+      const logPath = logger.getLogPath();
+      expect(logPath).not.toBeNull();
+      expect(logPath!.includes(`.techlead/tasks/${taskId}/logs/`)).toBe(true);
+      expect(existsSync(logPath!)).toBe(true);
+
+      // Cleanup
+      rmSync(`.techlead/tasks/${taskId}`, { recursive: true, force: true });
     });
   });
 
   describe("Log entry types", () => {
     it("should log start entry", () => {
-      const taskId = "test-start";
-      new AgentExecutionLogger({
-        taskId,
+      const logger = new AgentExecutionLogger({
         provider: "claude",
         logDir: tempDir,
       });
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()
@@ -79,22 +86,18 @@ describe("Agent Execution Logger", () => {
         .map((l) => JSON.parse(l));
 
       expect(lines[0].type).toBe("start");
-      expect(lines[0].taskId).toBe(taskId);
       expect(lines[0].metadata.provider).toBe("claude");
     });
 
     it("should log input entry", () => {
-      const taskId = "test-input";
       const logger = new AgentExecutionLogger({
-        taskId,
         provider: "claude",
         logDir: tempDir,
       });
 
       logger.logInput("Test prompt", { key: "value" });
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()
@@ -108,17 +111,14 @@ describe("Agent Execution Logger", () => {
     });
 
     it("should log stdout entry", () => {
-      const taskId = "test-stdout";
       const logger = new AgentExecutionLogger({
-        taskId,
         provider: "claude",
         logDir: tempDir,
       });
 
       logger.logStdout("Output chunk");
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()
@@ -131,17 +131,14 @@ describe("Agent Execution Logger", () => {
     });
 
     it("should log stderr entry", () => {
-      const taskId = "test-stderr";
       const logger = new AgentExecutionLogger({
-        taskId,
         provider: "claude",
         logDir: tempDir,
       });
 
       logger.logStderr("Error message");
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()
@@ -154,9 +151,7 @@ describe("Agent Execution Logger", () => {
     });
 
     it("should log end entry with duration", () => {
-      const taskId = "test-end";
       const logger = new AgentExecutionLogger({
-        taskId,
         provider: "claude",
         logDir: tempDir,
       });
@@ -169,8 +164,7 @@ describe("Agent Execution Logger", () => {
 
       logger.logEnd(0);
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()
@@ -184,9 +178,7 @@ describe("Agent Execution Logger", () => {
     });
 
     it("should log error entry", () => {
-      const taskId = "test-error";
       const logger = new AgentExecutionLogger({
-        taskId,
         provider: "claude",
         logDir: tempDir,
       });
@@ -194,8 +186,7 @@ describe("Agent Execution Logger", () => {
       const error = new Error("Test error");
       logger.logError(error);
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()
@@ -211,10 +202,8 @@ describe("Agent Execution Logger", () => {
 
   describe("Session ID", () => {
     it("should include sessionId in all entries", () => {
-      const taskId = "test-session";
       const sessionId = "session-abc-123";
       const logger = new AgentExecutionLogger({
-        taskId,
         sessionId,
         provider: "claude",
         logDir: tempDir,
@@ -223,8 +212,7 @@ describe("Agent Execution Logger", () => {
       logger.logInput("test");
       logger.logEnd(0);
 
-      const today = new Date().toISOString().split("T")[0];
-      const logPath = join(tempDir, today, `${taskId}.jsonl`);
+      const logPath = logger.getLogPath()!;
       const content = readFileSync(logPath, "utf8");
       const lines = content
         .trim()

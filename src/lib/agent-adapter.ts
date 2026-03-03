@@ -15,6 +15,11 @@ export interface AgentConfig {
   maxBudgetUsd?: number;
   allowedTools?: string[];
   workingDir?: string;
+  /**
+   * Task ID for organizing logs
+   * Logs will be stored in .techlead/tasks/{taskId}/logs/
+   */
+  taskId?: string;
 }
 
 export interface AgentResult {
@@ -251,9 +256,12 @@ export function executeAgent(
   }
 
   // Initialize logger if enabled
+  // Priority: config.taskId > options.taskId > generate new
+  const effectiveTaskId = config.taskId ?? options.taskId;
+
   const logger = options.enableLogging
     ? new AgentExecutionLogger({
-        taskId: options.taskId ?? generateTaskId(),
+        taskId: effectiveTaskId,
         sessionId: options.sessionId,
         logDir: options.logDir,
         provider: config.provider,
@@ -380,9 +388,12 @@ export async function executeAgentAsync(
   }
 
   // Initialize logger if enabled
+  // Priority: config.taskId > options.taskId > generate new
+  const effectiveTaskId = config.taskId ?? options.taskId;
+
   const logger = options.enableLogging
     ? new AgentExecutionLogger({
-        taskId: options.taskId ?? generateTaskId(),
+        taskId: effectiveTaskId,
         sessionId: options.sessionId,
         logDir: options.logDir,
         provider: config.provider,

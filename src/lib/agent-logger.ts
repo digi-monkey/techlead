@@ -18,7 +18,12 @@ export interface LogEntry {
 }
 
 export interface LoggerOptions {
-  taskId: string;
+  /**
+   * Task ID for organizing logs
+   * If provided, logs go to .techlead/tasks/{taskId}/logs/
+   * If not provided, logs go to logs/agent-executions/
+   */
+  taskId?: string;
   sessionId?: string;
   logDir?: string;
   provider: string;
@@ -30,18 +35,28 @@ export class AgentExecutionLogger {
   private logPath: string | null = null;
   private startTime: number;
   private options: LoggerOptions;
+  private effectiveTaskId: string;
 
   constructor(options: LoggerOptions) {
     this.options = options;
     this.startTime = Date.now();
+    this.effectiveTaskId = options.taskId ?? generateTaskId();
     this.initLogFile();
     this.logStart();
   }
 
   private initLogFile(): void {
-    const logDir = this.options.logDir || "logs/agent-executions";
-    const date = new Date().toISOString().split("T")[0];
-    this.logPath = `${logDir}/${date}/${this.options.taskId}.jsonl`;
+    const executionId = generateTaskId();
+
+    // If taskId is provided, store in task directory
+    // Otherwise, use global logs directory
+    if (this.options.taskId) {
+      this.logPath = `.techlead/tasks/${this.options.taskId}/logs/execution-${executionId}.jsonl`;
+    } else {
+      const logDir = this.options.logDir || "logs/agent-executions";
+      const date = new Date().toISOString().split("T")[0];
+      this.logPath = `${logDir}/${date}/${this.effectiveTaskId}.jsonl`;
+    }
 
     try {
       // Ensure all parent directories exist
@@ -67,13 +82,14 @@ export class AgentExecutionLogger {
   private logStart(): void {
     this.writeEntry({
       timestamp: this.startTime,
-      taskId: this.options.taskId,
+      taskId: this.effectiveTaskId,
       sessionId: this.options.sessionId,
       type: "start",
       metadata: {
         provider: this.options.provider,
         model: this.options.model,
         workingDir: this.options.workingDir,
+        taskId: this.options.taskId,
       },
     });
   }
@@ -81,7 +97,7 @@ export class AgentExecutionLogger {
   logInput(data: string, metadata?: Record<string, unknown>): void {
     this.writeEntry({
       timestamp: Date.now(),
-      taskId: this.options.taskId,
+      taskId: this.effectiveTaskId,
       sessionId: this.options.sessionId,
       type: "input",
       data,
@@ -92,7 +108,7 @@ export class AgentExecutionLogger {
   logStdout(data: string): void {
     this.writeEntry({
       timestamp: Date.now(),
-      taskId: this.options.taskId,
+      taskId: this.effectiveTaskId,
       sessionId: this.options.sessionId,
       type: "stdout",
       data,
@@ -102,7 +118,7 @@ export class AgentExecutionLogger {
   logStderr(data: string): void {
     this.writeEntry({
       timestamp: Date.now(),
-      taskId: this.options.taskId,
+      taskId: this.effectiveTaskId,
       sessionId: this.options.sessionId,
       type: "stderr",
       data,
@@ -112,7 +128,7 @@ export class AgentExecutionLogger {
   logError(error: Error): void {
     this.writeEntry({
       timestamp: Date.now(),
-      taskId: this.options.taskId,
+      taskId: this.effectiveTaskId,
       sessionId: this.options.sessionId,
       type: "error",
       data: error.message,
@@ -127,7 +143,7 @@ export class AgentExecutionLogger {
 
     this.writeEntry({
       timestamp: Date.now(),
-      taskId: this.options.taskId,
+      taskId: this.effectiveTaskId,
       sessionId: this.options.sessionId,
       type: "end",
       durationMs,
@@ -137,6 +153,10 @@ export class AgentExecutionLogger {
 
   getLogPath(): string | null {
     return this.logPath;
+  }
+
+  getTaskId(): string {
+    return this.effectiveTaskId;
   }
 }
 
