@@ -17,3 +17,6 @@ npm-shrinkwrap.json
 # TechLead runtime
 .techlead/
 .github/pr-body.md
+
+# Execution logs
+logs/agent-executions/

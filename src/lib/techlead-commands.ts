@@ -58,11 +58,16 @@ export function cmdWorld(): void {
   const result = executeAgent(
     'Say "Hello, World!" in a creative and inspiring way. Keep it under 3 sentences.',
     config,
-    { timeoutMs: 30000 }
+    {
+      timeoutMs: 30000,
+      enableLogging: true,
+      taskId: `world-${Date.now()}`,
+    }
   );
 
   if (result.success) {
     console.log(`\n${result.content}`);
+    console.log("\n📋 Check logs at: logs/agent-executions/");
   } else {
     console.error("❌ Agent error:", result.error);
     process.exit(1);
