@@ -71,7 +71,9 @@ describe("Agent Adapter", () => {
       expect(cmd).toContain("--output-format=json");
       expect(cmd).toContain("--model=sonnet");
       expect(cmd).toContain("--max-budget-usd=0.5");
-      expect(cmd).toContain("--system-prompt");
+      // System prompt is merged into user prompt
+      expect(cmd).toContain("[System Instructions]");
+      expect(cmd).toContain("[User Request]");
       expect(cmd).toContain("Test prompt");
     });
 
@@ -82,22 +84,24 @@ describe("Agent Adapter", () => {
         model: "gpt-4o",
       };
 
-      const cmd = buildCodexCommand("Test prompt", codexConfig, mockOptions);
-      console.log("Codex command:", cmd);
+      const result = buildCodexCommand("Test prompt", codexConfig, mockOptions);
+      console.log("Codex command:", result);
 
-      expect(cmd).toContain("codex");
-      expect(cmd).toContain("exec");
-      expect(cmd).toContain("--json");
-      expect(cmd).toContain("--full-auto");
-      expect(cmd).toContain("-m=gpt-4o");
-      expect(cmd).toContain("Test prompt");
+      expect(result.cmd).toBe("codex");
+      expect(result.args).toContain("exec");
+      expect(result.args).toContain("--json");
+      expect(result.args).toContain("--full-auto");
+      expect(result.args).toContain("-m=gpt-4o");
+      expect(result.args).toContain("Test prompt");
     });
 
-    it("should escape special characters in prompts", () => {
+    it("should include special characters in prompts", () => {
       const prompt = 'Test "quoted" and \n newline';
       const cmd = buildClaudeCommand(prompt, mockConfig, {});
 
-      expect(cmd).toContain('\\"quoted\\"');
+      // Special characters are passed as-is via stdin, no escaping needed
+      expect(cmd).toContain('Test "quoted"');
+      expect(cmd).toContain("newline");
     });
   });
 
