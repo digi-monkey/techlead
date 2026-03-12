@@ -134,8 +134,11 @@ fn deinitConfig(allocator: Allocator, config: *const Config) void {
     allocator.free(config.main_branch);
 }
 
-fn loadConfigFromJson(allocator: Allocator) !Config {
-    const config_bytes = std.fs.cwd().readFileAlloc(allocator, CONFIG_FILE_NAME, 4 * 1024 * 1024) catch |err| switch (err) {
+fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
+    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_FILE_NAME });
+    defer allocator.free(config_path);
+
+    const config_bytes = std.fs.cwd().readFileAlloc(allocator, config_path, 4 * 1024 * 1024) catch |err| switch (err) {
         error.FileNotFound => return error.ConfigFileNotFound,
         else => return err,
     };
@@ -163,8 +166,8 @@ fn loadConfigFromJson(allocator: Allocator) !Config {
     };
 }
 
-fn writeDefaultConfig(allocator: Allocator, force: bool) !void {
-    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, ".");
+fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8) !void {
+    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, target_dir);
     defer allocator.free(abs_work_dir);
 
     const cfg = ConfigFile{
@@ -181,7 +184,10 @@ fn writeDefaultConfig(allocator: Allocator, force: bool) !void {
     const final_text = try std.fmt.allocPrint(allocator, "{f}\n", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});
     defer allocator.free(final_text);
 
-    try writeFileWithPolicy(CONFIG_FILE_NAME, final_text, force);
+    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_FILE_NAME });
+    defer allocator.free(config_path);
+
+    try writeFileWithPolicy(config_path, final_text, force);
 }
 
 fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
@@ -267,6 +273,37 @@ fn printEventLine(comptime label: []const u8, comptime color: []const u8, msg: [
     std.debug.print("{s}[{s}]{s} {s}\n", .{ color, label, Colors.nc, msg });
 }
 
+fn valueAsString(v: std.json.Value) ?[]const u8 {
+    return switch (v) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+fn valueAsI64(v: std.json.Value) ?i64 {
+    return switch (v) {
+        .integer => |n| n,
+        .number_string => |s| std.fmt.parseInt(i64, s, 10) catch null,
+        else => null,
+    };
+}
+
+fn appendToolDetail(msg_buf: *std.ArrayList(u8), allocator: Allocator, key: []const u8, raw_value: []const u8) !void {
+    const value = std.mem.trim(u8, raw_value, " \t\r\n");
+    if (value.len == 0) return;
+    try msg_buf.writer(allocator).print(" | {s}: {s}", .{ key, truncateForLog(value, 88) });
+}
+
+fn simplifyShellCommand(raw: []const u8) []const u8 {
+    var it = std.mem.splitScalar(u8, raw, ';');
+    var best = std.mem.trim(u8, raw, " \t\r\n");
+    while (it.next()) |part| {
+        const trimmed = std.mem.trim(u8, part, " \t\r\n");
+        if (trimmed.len > 0) best = trimmed;
+    }
+    return best;
+}
+
 fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session: *bool) void {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch return;
     defer parsed.deinit();
@@ -331,9 +368,64 @@ fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session
                     }
                 }
 
-                const msg = std.fmt.allocPrint(allocator, "{s} ({s})", .{ tool_name, status }) catch return;
-                defer allocator.free(msg);
-                printEventLine("TOOL", Colors.yellow, msg);
+                var msg_buf: std.ArrayList(u8) = .empty;
+                defer msg_buf.deinit(allocator);
+                msg_buf.writer(allocator).print("{s} ({s})", .{ tool_name, status }) catch return;
+
+                if (part_v.object.get("state")) |state_v| {
+                    if (state_v == .object) {
+                        if (state_v.object.get("input")) |input_v| {
+                            if (input_v == .object) {
+                                if (input_v.object.get("command")) |cv| {
+                                    if (valueAsString(cv)) |command| {
+                                        const concise = simplifyShellCommand(command);
+                                        appendToolDetail(&msg_buf, allocator, "cmd", concise) catch {};
+                                    }
+                                } else if (input_v.object.get("filePath")) |fv| {
+                                    if (valueAsString(fv)) |file_path| {
+                                        appendToolDetail(&msg_buf, allocator, "file", file_path) catch {};
+                                    }
+                                } else if (input_v.object.get("path")) |pv| {
+                                    if (valueAsString(pv)) |path| {
+                                        appendToolDetail(&msg_buf, allocator, "path", path) catch {};
+                                    }
+                                } else if (input_v.object.get("query")) |qv| {
+                                    if (valueAsString(qv)) |query| {
+                                        appendToolDetail(&msg_buf, allocator, "query", query) catch {};
+                                    }
+                                }
+                            }
+                        }
+
+                        if (state_v.object.get("metadata")) |metadata_v| {
+                            if (metadata_v == .object) {
+                                if (metadata_v.object.get("title")) |title_v| {
+                                    if (valueAsString(title_v)) |title| {
+                                        appendToolDetail(&msg_buf, allocator, "target", title) catch {};
+                                    }
+                                }
+                            }
+                        }
+
+                        if (state_v.object.get("time")) |time_v| {
+                            if (time_v == .object) {
+                                if (time_v.object.get("start")) |start_v| {
+                                    if (time_v.object.get("end")) |end_v| {
+                                        if (valueAsI64(start_v)) |start_ms| {
+                                            if (valueAsI64(end_v)) |end_ms| {
+                                                if (end_ms >= start_ms) {
+                                                    msg_buf.writer(allocator).print(" | {d}ms", .{end_ms - start_ms}) catch {};
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                printEventLine("TOOL", Colors.yellow, msg_buf.items);
                 return;
             }
         }
@@ -711,16 +803,21 @@ fn runCommand(config: Config, allocator: Allocator) !void {
     std.debug.print("\n", .{});
 }
 
-fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool) !void {
-    try verifyGitRepo(".", allocator);
+fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_dir: []const u8) !void {
+    try verifyGitRepo(target_dir, allocator);
+
+    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_FILE_NAME });
+    defer allocator.free(config_path);
+    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, DEFAULT_PROGRAM_FILE });
+    defer allocator.free(program_path);
 
     if (!force) {
-        if (fileExists(CONFIG_FILE_NAME)) {
-            logError("{s} 已存在，使用 --force 覆盖", .{CONFIG_FILE_NAME});
+        if (fileExists(config_path)) {
+            logError("{s} 已存在，使用 --force 覆盖", .{config_path});
             return error.FileAlreadyExists;
         }
-        if (fileExists(DEFAULT_PROGRAM_FILE)) {
-            logError("{s} 已存在，使用 --force 覆盖", .{DEFAULT_PROGRAM_FILE});
+        if (fileExists(program_path)) {
+            logError("{s} 已存在，使用 --force 覆盖", .{program_path});
             return error.FileAlreadyExists;
         }
     }
@@ -728,13 +825,14 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool) !void {
     const template = try buildProgramTemplate(allocator, goal);
     defer allocator.free(template);
 
-    try writeDefaultConfig(allocator, force);
-    try writeFileWithPolicy(DEFAULT_PROGRAM_FILE, template, force);
+    try writeDefaultConfig(allocator, force, target_dir);
+    try writeFileWithPolicy(program_path, template, force);
 
     logSuccess("初始化完成", .{});
-    logInfo("已生成: {s}", .{CONFIG_FILE_NAME});
-    logInfo("已生成: {s}", .{DEFAULT_PROGRAM_FILE});
-    logInfo("下一步执行: zig run iterate.zig -- run", .{});
+    logInfo("目标目录: {s}", .{target_dir});
+    logInfo("已生成: {s}", .{config_path});
+    logInfo("已生成: {s}", .{program_path});
+    logInfo("下一步执行: zig run iterate.zig -- run --dir {s}", .{target_dir});
 }
 
 fn parseInitGoalAndForce(allocator: Allocator, args: []const []const u8) !struct { goal: []u8, force: bool } {
@@ -769,11 +867,11 @@ fn showHelp() void {
     std.debug.print(
         "\nTechlead 持续迭代 CLI (Zig)\n\n" ++
             "用法:\n" ++
-            "    zig run iterate.zig -- init \"你的目标描述\" [--force]\n" ++
-            "    zig run iterate.zig -- run\n\n" ++
+            "    zig run iterate.zig -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
+            "    zig run iterate.zig -- run [--dir 目录]\n\n" ++
             "说明:\n" ++
-            "    - init: 在当前目录生成 techlead.json 和 program.md 模板\n" ++
-            "    - run: 读取 techlead.json 并执行迭代\n" ++
+            "    - init: 在目标目录生成 techlead.json 和 program.md 模板（默认当前目录）\n" ++
+            "    - run: 从目标目录读取 techlead.json 并执行迭代（默认当前目录）\n" ++
             "    - run 阶段只读取 JSON 配置，不读取环境变量\n\n",
         .{},
     );
@@ -805,10 +903,17 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, command, "init")) {
-        const parsed = parseInitGoalAndForce(allocator, args[2..]) catch |err| {
+        var target_dir: []const u8 = ".";
+        var init_args = args[2..];
+        if (init_args.len >= 2 and std.mem.eql(u8, init_args[0], "--dir")) {
+            target_dir = init_args[1];
+            init_args = init_args[2..];
+        }
+
+        const parsed = parseInitGoalAndForce(allocator, init_args) catch |err| {
             switch (err) {
                 error.MissingGoal => logError("init 需要 Goal 参数", .{}),
-                error.InvalidInitArguments => logError("init 参数无效，只支持 --force", .{}),
+                error.InvalidInitArguments => logError("init 参数无效，只支持 --force（以及命令后的可选 --dir 目录）", .{}),
                 else => logError("无法解析 init 参数", .{}),
             }
             showHelp();
@@ -816,9 +921,9 @@ pub fn main() !void {
         };
         defer allocator.free(parsed.goal);
 
-        runInitCommand(allocator, parsed.goal, parsed.force) catch |err| {
+        runInitCommand(allocator, parsed.goal, parsed.force, target_dir) catch |err| {
             switch (err) {
-                error.NotGitRepo => logError("当前目录不是 git 仓库", .{}),
+                error.NotGitRepo => logError("目标目录不是 git 仓库: {s}", .{target_dir}),
                 error.FileAlreadyExists => {},
                 else => logError("init 执行失败: {any}", .{err}),
             }
@@ -828,13 +933,19 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, command, "run")) {
-        if (args.len > 2) {
-            logError("run 不接受额外参数", .{});
+        var target_dir: []const u8 = ".";
+        var run_args = args[2..];
+        if (run_args.len >= 2 and std.mem.eql(u8, run_args[0], "--dir")) {
+            target_dir = run_args[1];
+            run_args = run_args[2..];
+        }
+        if (run_args.len > 0) {
+            logError("run 参数无效，仅支持可选 --dir 目录", .{});
             showHelp();
             return;
         }
 
-        const config = loadConfigFromJson(allocator) catch |err| {
+        const config = loadConfigFromJson(allocator, target_dir) catch |err| {
             switch (err) {
                 error.ConfigFileNotFound => logError("找不到 {s}，请先执行 init", .{CONFIG_FILE_NAME}),
                 error.ConfigParseFailed => logError("{s} 解析失败，请检查 JSON 格式", .{CONFIG_FILE_NAME}),
