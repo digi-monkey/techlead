@@ -832,7 +832,7 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_di
     logInfo("目标目录: {s}", .{target_dir});
     logInfo("已生成: {s}", .{config_path});
     logInfo("已生成: {s}", .{program_path});
-    logInfo("下一步执行: zig run iterate.zig -- run --dir {s}", .{target_dir});
+    logInfo("下一步执行: zig build run -- run --dir {s}", .{target_dir});
 }
 
 fn parseInitGoalAndForce(allocator: Allocator, args: []const []const u8) !struct { goal: []u8, force: bool } {
@@ -867,8 +867,8 @@ fn showHelp() void {
     std.debug.print(
         "\nTechlead 持续迭代 CLI (Zig)\n\n" ++
             "用法:\n" ++
-            "    zig run iterate.zig -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
-            "    zig run iterate.zig -- run [--dir 目录]\n\n" ++
+            "    zig build run -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
+            "    zig build run -- run [--dir 目录]\n\n" ++
             "说明:\n" ++
             "    - init: 在目标目录生成 techlead.json 和 program.md 模板（默认当前目录）\n" ++
             "    - run: 从目标目录读取 techlead.json 并执行迭代（默认当前目录）\n" ++

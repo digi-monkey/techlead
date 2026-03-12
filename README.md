@@ -4,7 +4,7 @@ A lightweight CLI for iterative code improvement with OpenCode.
 
 ## What This Repo Contains
 
-- iterate.zig: CLI entrypoint with two commands: init and run
+- src/main.zig: CLI entrypoint with two commands: init and run
 - program.md: Prompt template consumed by the CLI
 - demo-topk/: Minimal JavaScript demo project for testing the workflow
 
@@ -29,21 +29,21 @@ If your server is already running, keep its URL, for example:
 
 Initialize a project (creates techlead.json and program.md in current directory):
 
-    zig run /path/to/iterate.zig -- init "your goal description"
+    zig build run -- init "your goal description"
 
 Force overwrite existing techlead.json and program.md:
 
-    zig run /path/to/iterate.zig -- init "your goal description" --force
+    zig build run -- init "your goal description" --force
 
 Run iterations using techlead.json:
 
-    zig run /path/to/iterate.zig -- run
+    zig build run -- run
 
 ## Typical Local Usage In This Repo
 
 From repository root:
 
-    zig run iterate.zig -- init "Optimize code while keeping tests green" --force
+    zig build run -- init "Optimize code while keeping tests green" --force
 
 Edit techlead.json and set your OpenCode server URL:
 
@@ -53,7 +53,7 @@ Edit techlead.json and set your OpenCode server URL:
 
 Then run:
 
-    zig run iterate.zig -- run
+    zig build run -- run
 
 ## Recommended Safe Test Flow (TMP Copy)
 
@@ -70,7 +70,7 @@ To avoid polluting your source project, copy demo-topk to /tmp and run there.
 
 2. Initialize the tmp project with this CLI:
 
-    zig run /Users/retric/Desktop/autocode/iterate.zig -- init "Optimize findTopKFrequent and reduce benchmark latency" --force
+    zig build run -- init "Optimize findTopKFrequent and reduce benchmark latency" --force
 
 3. Point techlead.json to your server URL:
 
@@ -83,7 +83,7 @@ To avoid polluting your source project, copy demo-topk to /tmp and run there.
 
 5. Run iteration:
 
-    zig run /Users/retric/Desktop/autocode/iterate.zig -- run
+    zig build run -- run
 
 ## Demo Project Commands
 
