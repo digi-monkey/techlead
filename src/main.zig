@@ -26,6 +26,8 @@ const ConfigFile = struct {
     model: []const u8,
     main_branch: []const u8,
     max_branches: usize,
+    reviewer_agent: []const u8 = "reviewer",
+    builder_agent: []const u8 = "builder",
 };
 
 const Config = struct {
@@ -37,6 +39,8 @@ const Config = struct {
     model: []u8,
     main_branch: []u8,
     max_branches: usize,
+    reviewer_agent: []u8,
+    builder_agent: []u8,
 };
 
 fn logInfo(comptime fmt: []const u8, args: anytype) void {
@@ -136,6 +140,8 @@ fn deinitConfig(allocator: Allocator, config: *const Config) void {
     allocator.free(config.log_dir);
     allocator.free(config.model);
     allocator.free(config.main_branch);
+    allocator.free(config.reviewer_agent);
+    allocator.free(config.builder_agent);
 }
 
 fn resolveConfigPath(allocator: Allocator, base_dir: []const u8) ![]u8 {
@@ -187,6 +193,8 @@ fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
         .model = try allocator.dupe(u8, value.model),
         .main_branch = try allocator.dupe(u8, value.main_branch),
         .max_branches = value.max_branches,
+        .reviewer_agent = try allocator.dupe(u8, value.reviewer_agent),
+        .builder_agent = try allocator.dupe(u8, value.builder_agent),
     };
 }
 
@@ -203,6 +211,8 @@ fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8)
         .model = "",
         .main_branch = "master",
         .max_branches = 10,
+        .reviewer_agent = "reviewer",
+        .builder_agent = "builder",
     };
 
     const final_text = try std.fmt.allocPrint(allocator, "{f}\n", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});
@@ -266,6 +276,82 @@ fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
     try out.appendSlice(allocator, "<!-- TECHLEAD:MODE_B:END -->\n");
 
     return out.toOwnedSlice(allocator);
+}
+
+const REVIEWER_AGENT_CONTENT =
+    "---\n" ++
+    "description: Evaluates experiment branches against goals and criteria. Read-only review agent.\n" ++
+    "mode: primary\n" ++
+    "temperature: 0.1\n" ++
+    "tools:\n" ++
+    "  write: false\n" ++
+    "  edit: false\n" ++
+    "  bash: true\n" ++
+    "permission:\n" ++
+    "  bash:\n" ++
+    "    \"git diff*\": allow\n" ++
+    "    \"git log*\": allow\n" ++
+    "    \"git show*\": allow\n" ++
+    "    \"git merge*\": allow\n" ++
+    "    \"git checkout*\": allow\n" ++
+    "    \"git branch*\": allow\n" ++
+    "    \"*test*\": allow\n" ++
+    "    \"*bench*\": allow\n" ++
+    "    \"*\": ask\n" ++
+    "---\n" ++
+    "\n" ++
+    "You are a code reviewer. Your job is to evaluate experiment branches.\n" ++
+    "\n" ++
+    "Focus on:\n" ++
+    "- Analyzing diffs between experiment and main branch\n" ++
+    "- Evaluating whether changes move closer to the stated goal\n" ++
+    "- Checking code quality, readability, and correctness\n" ++
+    "- Running tests/benchmarks to verify improvements\n" ++
+    "- Making a clear KEEP or DISCARD decision with reasoning\n" ++
+    "\n" ++
+    "You MUST NOT modify source code files directly. Use only git and test commands.\n" ++
+    "You MUST output exactly one of: DECISION: KEEP or DECISION: DISCARD\n";
+
+const BUILDER_AGENT_CONTENT =
+    "---\n" ++
+    "description: Proposes and implements code improvements on experiment branches.\n" ++
+    "mode: primary\n" ++
+    "temperature: 0.3\n" ++
+    "tools:\n" ++
+    "  write: true\n" ++
+    "  edit: true\n" ++
+    "  bash: true\n" ++
+    "permission:\n" ++
+    "  bash:\n" ++
+    "    \"git push*\": deny\n" ++
+    "    \"*\": allow\n" ++
+    "---\n" ++
+    "\n" ++
+    "You are a code improvement engineer. Your job is to propose and implement small, focused improvements.\n" ++
+    "\n" ++
+    "Focus on:\n" ++
+    "- Understanding the current codebase and stated goal\n" ++
+    "- Proposing one small, verifiable improvement per iteration\n" ++
+    "- Creating an experiment branch and implementing the change\n" ++
+    "- Ensuring tests still pass after your changes\n" ++
+    "- Committing with a clear description\n" ++
+    "\n" ++
+    "You MUST create an experiment branch (experiment-<description>) for your changes.\n" ++
+    "You MUST NOT merge back to the main branch.\n" ++
+    "You MUST output: DECISION: EXPERIMENT_CREATED\n";
+
+fn writeAgentFiles(allocator: Allocator, target_dir: []const u8, force: bool) !void {
+    const agents_dir = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, ".opencode", "agents" });
+    defer allocator.free(agents_dir);
+    try std.fs.cwd().makePath(agents_dir);
+
+    const reviewer_path = try std.fs.path.join(allocator, &[_][]const u8{ agents_dir, "reviewer.md" });
+    defer allocator.free(reviewer_path);
+    try writeFileWithPolicy(reviewer_path, REVIEWER_AGENT_CONTENT, force);
+
+    const builder_path = try std.fs.path.join(allocator, &[_][]const u8{ agents_dir, "builder.md" });
+    defer allocator.free(builder_path);
+    try writeFileWithPolicy(builder_path, BUILDER_AGENT_CONTENT, force);
 }
 
 fn extractTemplateBlock(allocator: Allocator, content: []const u8, block_name: []const u8) ?[]const u8 {
@@ -550,7 +636,7 @@ fn findDecision(text: []const u8) ?[]const u8 {
     return null;
 }
 
-fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt: []const u8) !bool {
+fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt: []const u8, is_review: bool) !bool {
     const log_name = try std.fmt.allocPrint(allocator, "iteration-{d}.log", .{iteration});
     defer allocator.free(log_name);
 
@@ -574,13 +660,19 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     defer allocator.free(session_title);
 
     try argv.appendSlice(allocator, &[_][]const u8{ "opencode", "run", "--attach", config.opencode_url, "--dir", config.work_dir, "--format", "json", "--title", session_title });
+
+    const agent_name = if (is_review) config.reviewer_agent else config.builder_agent;
+    if (agent_name.len > 0) {
+        try argv.appendSlice(allocator, &[_][]const u8{ "--agent", agent_name });
+    }
+
     if (config.model.len > 0) {
         try argv.append(allocator, "--model");
         try argv.append(allocator, config.model);
     }
     try argv.append(allocator, prompt);
 
-    logInfo("执行: opencode run --attach {s} --dir {s} --format json", .{ config.opencode_url, config.work_dir });
+    logInfo("执行: opencode run --attach {s} --dir {s} --agent {s} --format json", .{ config.opencode_url, config.work_dir, agent_name });
 
     var log_file = try std.fs.cwd().createFile(log_file_path, .{ .truncate = true });
     defer log_file.close();
@@ -766,7 +858,7 @@ fn runCommand(config: Config, allocator: Allocator) !void {
         const prompt = try preparePrompt(config, allocator, i, experiment_branch);
         defer allocator.free(prompt);
 
-        const success = try invokeOpencode(config, allocator, i, prompt);
+        const success = try invokeOpencode(config, allocator, i, prompt, experiment_branch != null);
         if (!success) {
             logError("第 {d} 次迭代失败，跳过...", .{i});
             continue;
@@ -855,11 +947,17 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_di
 
     try writeDefaultConfig(allocator, force, target_dir);
     try writeFileWithPolicy(program_path, template, force);
+    writeAgentFiles(allocator, target_dir, force) catch |err| switch (err) {
+        error.FileAlreadyExists => logWarn("Agent 文件已存在，跳过（使用 --force 覆盖）", .{}),
+        else => return err,
+    };
 
     logSuccess("初始化完成", .{});
     logInfo("目标目录: {s}", .{target_dir});
     logInfo("已生成: {s}", .{config_path});
     logInfo("已生成: {s}", .{program_path});
+    logInfo("已生成: .opencode/agents/reviewer.md", .{});
+    logInfo("已生成: .opencode/agents/builder.md", .{});
     logInfo("下一步执行: zig build run -- run --dir {s}", .{target_dir});
 }
 
@@ -994,6 +1092,8 @@ pub fn main() !void {
         logInfo("  - OpenCode URL: {s}", .{config.opencode_url});
         logInfo("  - 主分支: {s}", .{config.main_branch});
         logInfo("  - 日志目录: {s}", .{config.log_dir});
+        logInfo("  - Review Agent: {s}", .{config.reviewer_agent});
+        logInfo("  - Builder Agent: {s}", .{config.builder_agent});
         if (config.model.len > 0) {
             logInfo("  - 模型: {s}", .{config.model});
         }
