@@ -258,6 +258,104 @@ fn appendSection(writer: anytype, title: []const u8, body: []const u8) !void {
     try writer.print("=== {s} ===\n{s}\n\n", .{ title, body });
 }
 
+fn truncateForLog(text: []const u8, limit: usize) []const u8 {
+    if (text.len <= limit) return text;
+    return text[0..limit];
+}
+
+fn printEventLine(comptime label: []const u8, comptime color: []const u8, msg: []const u8) void {
+    std.debug.print("{s}[{s}]{s} {s}\n", .{ color, label, Colors.nc, msg });
+}
+
+fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session: *bool) void {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch return;
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    const root_obj = switch (root) {
+        .object => |obj| obj,
+        else => return,
+    };
+
+    const event_type = if (root_obj.get("type")) |v| switch (v) {
+        .string => |s| s,
+        else => return,
+    } else return;
+
+    if (!seen_session.*) {
+        if (root_obj.get("sessionID")) |v| {
+            if (v == .string) {
+                const sid = truncateForLog(v.string, 40);
+                printEventLine("SESSION", Colors.blue, sid);
+                seen_session.* = true;
+            }
+        }
+    }
+
+    if (std.mem.eql(u8, event_type, "step_start")) {
+        printEventLine("STEP", Colors.blue, "start");
+        return;
+    }
+
+    if (std.mem.eql(u8, event_type, "step_finish")) {
+        if (root_obj.get("part")) |part_v| {
+            if (part_v == .object) {
+                if (part_v.object.get("reason")) |reason_v| {
+                    if (reason_v == .string) {
+                        const msg = std.fmt.allocPrint(allocator, "finish ({s})", .{reason_v.string}) catch return;
+                        defer allocator.free(msg);
+                        printEventLine("STEP", Colors.blue, msg);
+                        return;
+                    }
+                }
+            }
+        }
+        printEventLine("STEP", Colors.blue, "finish");
+        return;
+    }
+
+    if (std.mem.eql(u8, event_type, "tool_use")) {
+        if (root_obj.get("part")) |part_v| {
+            if (part_v == .object) {
+                const tool_name = if (part_v.object.get("tool")) |tv| switch (tv) {
+                    .string => |s| s,
+                    else => "unknown",
+                } else "unknown";
+
+                var status: []const u8 = "unknown";
+                if (part_v.object.get("state")) |state_v| {
+                    if (state_v == .object) {
+                        if (state_v.object.get("status")) |sv| {
+                            if (sv == .string) status = sv.string;
+                        }
+                    }
+                }
+
+                const msg = std.fmt.allocPrint(allocator, "{s} ({s})", .{ tool_name, status }) catch return;
+                defer allocator.free(msg);
+                printEventLine("TOOL", Colors.yellow, msg);
+                return;
+            }
+        }
+    }
+
+    if (std.mem.eql(u8, event_type, "text")) {
+        if (root_obj.get("part")) |part_v| {
+            if (part_v == .object) {
+                if (part_v.object.get("text")) |text_v| {
+                    if (text_v == .string) {
+                        var first_line_it = std.mem.splitScalar(u8, text_v.string, '\n');
+                        const first_line = std.mem.trim(u8, first_line_it.next() orelse "", " \t\r\n");
+                        if (first_line.len == 0) return;
+                        const clipped = truncateForLog(first_line, 180);
+                        printEventLine("AI", Colors.green, clipped);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn getCurrentExperimentBranch(config: Config, allocator: Allocator) ?[]u8 {
     const current = runShellStdout(allocator, config.work_dir, "git branch --show-current") catch return null;
     if (std.mem.startsWith(u8, current, "experiment-")) {
@@ -356,14 +454,17 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
-    try argv.appendSlice(allocator, &[_][]const u8{ "opencode", "run", "--attach", config.opencode_url, "--dir", config.work_dir });
+    const session_title = try std.fmt.allocPrint(allocator, "techlead-iter-{d}-{d}", .{ iteration, std.time.timestamp() });
+    defer allocator.free(session_title);
+
+    try argv.appendSlice(allocator, &[_][]const u8{ "opencode", "run", "--attach", config.opencode_url, "--dir", config.work_dir, "--format", "json", "--title", session_title });
     if (config.model.len > 0) {
         try argv.append(allocator, "--model");
         try argv.append(allocator, config.model);
     }
     try argv.append(allocator, prompt);
 
-    logInfo("执行: opencode run --attach {s} --dir {s}", .{ config.opencode_url, config.work_dir });
+    logInfo("执行: opencode run --attach {s} --dir {s} --format json", .{ config.opencode_url, config.work_dir });
 
     var log_file = try std.fs.cwd().createFile(log_file_path, .{ .truncate = true });
     defer log_file.close();
@@ -382,6 +483,11 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     var merged: std.ArrayList(u8) = .empty;
     defer merged.deinit(allocator);
 
+    var line_buf: std.ArrayList(u8) = .empty;
+    defer line_buf.deinit(allocator);
+
+    var seen_session = false;
+
     var buf: [4096]u8 = undefined;
     const child_stdout = child.stdout orelse return error.CommandFailed;
     while (true) {
@@ -389,9 +495,25 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
         if (n == 0) break;
 
         const chunk = buf[0..n];
-        std.debug.print("{s}", .{chunk});
         try log_file.writeAll(chunk);
         try merged.appendSlice(allocator, chunk);
+
+        try line_buf.appendSlice(allocator, chunk);
+        while (std.mem.indexOfScalar(u8, line_buf.items, '\n')) |nl| {
+            const line = std.mem.trimRight(u8, line_buf.items[0..nl], "\r\n");
+            if (line.len > 0) {
+                emitOpencodeEventSummary(allocator, line, &seen_session);
+            }
+
+            const remain = line_buf.items[nl + 1 ..];
+            std.mem.copyForwards(u8, line_buf.items[0..remain.len], remain);
+            line_buf.items.len = remain.len;
+        }
+    }
+
+    if (line_buf.items.len > 0) {
+        const tail_line = std.mem.trimRight(u8, line_buf.items, "\r\n");
+        if (tail_line.len > 0) emitOpencodeEventSummary(allocator, tail_line, &seen_session);
     }
 
     const term = try child.wait();
