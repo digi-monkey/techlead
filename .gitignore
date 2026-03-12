@@ -1,1 +1,5 @@
 .sisyphus
+.DS_Store
+.iteration-logs/
+techlead.json
+.tmp_demo_path

@@ -2,6 +2,9 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+const CONFIG_FILE_NAME = "techlead.json";
+const DEFAULT_PROGRAM_FILE = "program.md";
+
 const Colors = struct {
     const red = "\x1b[0;31m";
     const green = "\x1b[0;32m";
@@ -10,13 +13,25 @@ const Colors = struct {
     const nc = "\x1b[0m";
 };
 
-const Config = struct {
+const ConfigFile = struct {
     iterations: usize,
     program_file: []const u8,
     opencode_url: []const u8,
     work_dir: []const u8,
     log_dir: []const u8,
     model: []const u8,
+    main_branch: []const u8,
+    max_branches: usize,
+};
+
+const Config = struct {
+    iterations: usize,
+    program_file: []u8,
+    opencode_url: []u8,
+    work_dir: []u8,
+    log_dir: []u8,
+    model: []u8,
+    main_branch: []u8,
     max_branches: usize,
 };
 
@@ -34,17 +49,6 @@ fn logWarn(comptime fmt: []const u8, args: anytype) void {
 
 fn logError(comptime fmt: []const u8, args: anytype) void {
     std.debug.print("{s}[ERROR]{s} " ++ fmt ++ "\n", .{ Colors.red, Colors.nc } ++ args);
-}
-
-fn parseUsizeOrDefault(value: ?[]const u8, default_value: usize) usize {
-    if (value) |v| {
-        return std.fmt.parseInt(usize, v, 10) catch default_value;
-    }
-    return default_value;
-}
-
-fn envOrDefault(name: []const u8, default_value: []const u8) []const u8 {
-    return std.process.getEnvVarOwned(std.heap.page_allocator, name) catch default_value;
 }
 
 fn runCommandCapture(allocator: Allocator, cwd: ?[]const u8, argv: []const []const u8) !std.process.Child.RunResult {
@@ -66,6 +70,22 @@ fn isExitedZero(term: std.process.Child.Term) bool {
         .Exited => |code| code == 0,
         else => false,
     };
+}
+
+fn runShellStdout(allocator: Allocator, cwd: ?[]const u8, cmd: []const u8) ![]u8 {
+    const result = try runShellCapture(allocator, cwd, cmd);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    if (!isExitedZero(result.term)) {
+        if (result.stderr.len > 0) {
+            std.debug.print("{s}\n", .{result.stderr});
+        }
+        return error.CommandFailed;
+    }
+
+    const trimmed = std.mem.trim(u8, result.stdout, " \t\r\n");
+    return allocator.dupe(u8, trimmed);
 }
 
 fn commandExists(allocator: Allocator, cmd: []const u8) bool {
@@ -90,74 +110,152 @@ fn checkHttpService(allocator: Allocator, url: []const u8) bool {
     return isExitedZero(result.term);
 }
 
-fn runShellStdout(allocator: Allocator, cwd: ?[]const u8, cmd: []const u8) ![]u8 {
-    const result = try runShellCapture(allocator, cwd, cmd);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    if (!isExitedZero(result.term)) {
-        if (result.stderr.len > 0) {
-            std.debug.print("{s}\n", .{result.stderr});
-        }
-        return error.CommandFailed;
-    }
-
-    const trimmed = std.mem.trim(u8, result.stdout, " \t\r\n");
-    return allocator.dupe(u8, trimmed);
+fn fileExists(path: []const u8) bool {
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
 }
 
-fn init(config: Config, allocator: Allocator) !void {
-    logInfo("初始化迭代环境...", .{});
-    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, config.work_dir);
+fn writeFileWithPolicy(path: []const u8, content: []const u8, force: bool) !void {
+    if (fileExists(path) and !force) {
+        return error.FileAlreadyExists;
+    }
+
+    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(content);
+}
+
+fn deinitConfig(allocator: Allocator, config: *const Config) void {
+    allocator.free(config.program_file);
+    allocator.free(config.opencode_url);
+    allocator.free(config.work_dir);
+    allocator.free(config.log_dir);
+    allocator.free(config.model);
+    allocator.free(config.main_branch);
+}
+
+fn loadConfigFromJson(allocator: Allocator) !Config {
+    const config_bytes = std.fs.cwd().readFileAlloc(allocator, CONFIG_FILE_NAME, 4 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return error.ConfigFileNotFound,
+        else => return err,
+    };
+    defer allocator.free(config_bytes);
+
+    const parsed = std.json.parseFromSlice(ConfigFile, allocator, config_bytes, .{}) catch {
+        return error.ConfigParseFailed;
+    };
+    defer parsed.deinit();
+
+    const value = parsed.value;
+    if (value.program_file.len == 0 or value.opencode_url.len == 0 or value.work_dir.len == 0 or value.log_dir.len == 0 or value.main_branch.len == 0) {
+        return error.InvalidConfig;
+    }
+
+    return .{
+        .iterations = value.iterations,
+        .program_file = try allocator.dupe(u8, value.program_file),
+        .opencode_url = try allocator.dupe(u8, value.opencode_url),
+        .work_dir = try allocator.dupe(u8, value.work_dir),
+        .log_dir = try allocator.dupe(u8, value.log_dir),
+        .model = try allocator.dupe(u8, value.model),
+        .main_branch = try allocator.dupe(u8, value.main_branch),
+        .max_branches = value.max_branches,
+    };
+}
+
+fn writeDefaultConfig(allocator: Allocator, force: bool) !void {
+    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(abs_work_dir);
-    logInfo("工作目录: {s}", .{abs_work_dir});
 
-    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ config.work_dir, config.program_file });
-    defer allocator.free(program_path);
-
-    std.fs.cwd().access(program_path, .{}) catch {
-        logError("找不到 {s}", .{program_path});
-        return error.MissingProgramFile;
+    const cfg = ConfigFile{
+        .iterations = 20,
+        .program_file = DEFAULT_PROGRAM_FILE,
+        .opencode_url = "http://localhost:4096",
+        .work_dir = abs_work_dir,
+        .log_dir = "./.iteration-logs",
+        .model = "",
+        .main_branch = "master",
+        .max_branches = 10,
     };
 
-    const abs_program_path = try std.fs.cwd().realpathAlloc(allocator, program_path);
-    defer allocator.free(abs_program_path);
-    logInfo("Program 文件: {s}", .{abs_program_path});
+    const final_text = try std.fmt.allocPrint(allocator, "{f}\n", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});
+    defer allocator.free(final_text);
 
-    const log_path = try std.fs.path.join(allocator, &[_][]const u8{ config.work_dir, config.log_dir });
-    defer allocator.free(log_path);
-    try std.fs.cwd().makePath(log_path);
-
-    const git_check = runShellCapture(allocator, config.work_dir, "git rev-parse --git-dir") catch {
-        logError("当前目录不是 git 仓库", .{});
-        return error.NotGitRepo;
-    };
-    defer allocator.free(git_check.stdout);
-    defer allocator.free(git_check.stderr);
-
-    if (!isExitedZero(git_check.term)) {
-        logError("当前目录不是 git 仓库", .{});
-        return error.NotGitRepo;
-    }
-
-    logInfo("Git 仓库检查通过", .{});
-    logSuccess("初始化完成", .{});
-    std.debug.print("\n", .{});
+    try writeFileWithPolicy(CONFIG_FILE_NAME, final_text, force);
 }
 
-fn checkOpencode(config: Config, allocator: Allocator) !void {
-    logInfo("检查 OpenCode server...", .{});
-    if (!checkHttpService(allocator, config.opencode_url)) {
-        logError("无法连接到 OpenCode server at {s}", .{config.opencode_url});
-        logInfo("请确保 OpenCode serve 正在运行:", .{});
-        logInfo("  opencode serve", .{});
-        logInfo("或者指定其他地址:", .{});
-        logInfo("  OPENCODE_URL=http://localhost:8080 zig run iterate.zig", .{});
-        return error.OpencodeUnavailable;
-    }
+fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
 
-    logSuccess("OpenCode server 连接正常", .{});
-    std.debug.print("\n", .{});
+    try out.appendSlice(allocator, "# program.md - Techlead Prompt Template\n\n");
+    try out.appendSlice(allocator, "<!-- TECHLEAD:GOAL:BEGIN -->\n");
+    try out.appendSlice(allocator, goal);
+    try out.appendSlice(allocator, "\n<!-- TECHLEAD:GOAL:END -->\n\n");
+
+    try out.appendSlice(allocator, "<!-- TECHLEAD:CONSTRAINTS:BEGIN -->\n");
+    try out.appendSlice(
+        allocator,
+        "- 保持改动聚焦，不要一次改太多。\n" ++
+            "- 优先保证可运行和可回滚。\n" ++
+            "- 当不确定收益时，倾向舍弃。\n",
+    );
+    try out.appendSlice(allocator, "<!-- TECHLEAD:CONSTRAINTS:END -->\n\n");
+
+    try out.appendSlice(allocator, "<!-- TECHLEAD:CRITERIA:BEGIN -->\n");
+    try out.appendSlice(
+        allocator,
+        "- 是否更接近 Goal。\n" ++
+            "- 代码可读性和复杂度是否更合理。\n" ++
+            "- 若可验证，测试和性能是否改善。\n",
+    );
+    try out.appendSlice(allocator, "<!-- TECHLEAD:CRITERIA:END -->\n\n");
+
+    try out.appendSlice(allocator, "<!-- TECHLEAD:MODE_A:BEGIN -->\n");
+    try out.appendSlice(
+        allocator,
+        "当前处于评估模式（experiment 分支）。\n" ++
+            "1. 查看差异：git diff <MAIN_BRANCH>..HEAD\n" ++
+            "2. 依据 Goal/Criteria 评估收益。\n" ++
+            "3. 若有收益：git checkout <MAIN_BRANCH> && git merge <分支名>，并输出 DECISION: KEEP\n" ++
+            "4. 若无收益：git branch -D <分支名>，并输出 DECISION: DISCARD\n" ++
+            "5. 简要说明理由。\n",
+    );
+    try out.appendSlice(allocator, "<!-- TECHLEAD:MODE_A:END -->\n\n");
+
+    try out.appendSlice(allocator, "<!-- TECHLEAD:MODE_B:BEGIN -->\n");
+    try out.appendSlice(
+        allocator,
+        "当前处于新实验模式（主分支）。\n" ++
+            "1. 基于 Goal 提出一个可验证的小改进。\n" ++
+            "2. 执行：git checkout <MAIN_BRANCH> && git checkout -b experiment-<描述>\n" ++
+            "3. 实现改进并提交：git add . && git commit -m \"迭代X: 描述\"\n" ++
+            "4. 输出 DECISION: EXPERIMENT_CREATED 与简要说明。\n" ++
+            "5. 不要 merge 回主分支。\n",
+    );
+    try out.appendSlice(allocator, "<!-- TECHLEAD:MODE_B:END -->\n");
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn extractTemplateBlock(allocator: Allocator, content: []const u8, block_name: []const u8) ?[]const u8 {
+    const begin_marker = std.fmt.allocPrint(allocator, "<!-- TECHLEAD:{s}:BEGIN -->", .{block_name}) catch return null;
+    defer allocator.free(begin_marker);
+
+    const end_marker = std.fmt.allocPrint(allocator, "<!-- TECHLEAD:{s}:END -->", .{block_name}) catch return null;
+    defer allocator.free(end_marker);
+
+    const begin_index = std.mem.indexOf(u8, content, begin_marker) orelse return null;
+    const begin_content = begin_index + begin_marker.len;
+
+    const rest = content[begin_content..];
+    const end_rel = std.mem.indexOf(u8, rest, end_marker) orelse return null;
+
+    return std.mem.trim(u8, rest[0..end_rel], "\r\n \t");
+}
+
+fn appendSection(writer: anytype, title: []const u8, body: []const u8) !void {
+    try writer.print("=== {s} ===\n{s}\n\n", .{ title, body });
 }
 
 fn getCurrentExperimentBranch(config: Config, allocator: Allocator) ?[]u8 {
@@ -169,12 +267,37 @@ fn getCurrentExperimentBranch(config: Config, allocator: Allocator) ?[]u8 {
     return null;
 }
 
+fn renderModeInstructions(allocator: Allocator, template_mode: []const u8, main_branch: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    const replaced_1 = try std.mem.replaceOwned(u8, allocator, template_mode, "<MAIN_BRANCH>", main_branch);
+    defer allocator.free(replaced_1);
+
+    try out.appendSlice(allocator, replaced_1);
+    return out.toOwnedSlice(allocator);
+}
+
 fn preparePrompt(config: Config, allocator: Allocator, iteration: usize, experiment_branch: ?[]const u8) ![]u8 {
     const program_path = try std.fs.path.join(allocator, &[_][]const u8{ config.work_dir, config.program_file });
     defer allocator.free(program_path);
 
-    const program_content = try std.fs.cwd().readFileAlloc(allocator, program_path, 16 * 1024 * 1024);
+    const program_content = std.fs.cwd().readFileAlloc(allocator, program_path, 16 * 1024 * 1024) catch {
+        return error.MissingProgramFile;
+    };
     defer allocator.free(program_content);
+
+    const goal = extractTemplateBlock(allocator, program_content, "GOAL") orelse return error.InvalidProgramTemplate;
+    const constraints = extractTemplateBlock(allocator, program_content, "CONSTRAINTS") orelse return error.InvalidProgramTemplate;
+    const criteria = extractTemplateBlock(allocator, program_content, "CRITERIA") orelse return error.InvalidProgramTemplate;
+
+    const mode_template = if (experiment_branch != null)
+        extractTemplateBlock(allocator, program_content, "MODE_A") orelse return error.InvalidProgramTemplate
+    else
+        extractTemplateBlock(allocator, program_content, "MODE_B") orelse return error.InvalidProgramTemplate;
+
+    const mode_instructions = try renderModeInstructions(allocator, mode_template, config.main_branch);
+    defer allocator.free(mode_instructions);
 
     var prompt: std.ArrayList(u8) = .empty;
     defer prompt.deinit(allocator);
@@ -189,46 +312,19 @@ fn preparePrompt(config: Config, allocator: Allocator, iteration: usize, experim
 
     if (experiment_branch) |branch| {
         try prompt.writer(allocator).print("- 当前分支: {s}（需要评估）\n", .{branch});
-        try prompt.appendSlice(allocator, "- 需要评估这个分支的工作是否值得保留\n");
+        try prompt.appendSlice(allocator, "- 工作模式: EVALUATE_EXPERIMENT\n\n");
     } else {
-        try prompt.appendSlice(allocator, "- 当前分支: develop（需要开始新的实验）\n");
-        try prompt.appendSlice(allocator, "- 需要创建新的 experiment-* 分支进行改进\n");
+        try prompt.writer(allocator).print("- 当前分支: {s}（需要开始新的实验）\n", .{config.main_branch});
+        try prompt.appendSlice(allocator, "- 工作模式: CREATE_EXPERIMENT\n\n");
     }
 
-    try prompt.appendSlice(
-        allocator,
-        "\n=== program.md 内容 ===\n",
-    );
-    try prompt.appendSlice(allocator, program_content);
-    try prompt.appendSlice(allocator, "\n\n=== 任务指令 ===\n");
+    try appendSection(prompt.writer(allocator), "Goal", goal);
+    try appendSection(prompt.writer(allocator), "重要约束", constraints);
+    try appendSection(prompt.writer(allocator), "评估标准", criteria);
 
-    if (experiment_branch != null) {
-        try prompt.appendSlice(
-            allocator,
-            "\n当前有一个 experiment 分支需要评估。\n\n" ++
-                "请执行以下操作：\n" ++
-                "1. 查看当前分支的改动: git diff develop..HEAD\n" ++
-                "2. 根据 program.md 中的评估标准判断这个改动是否有帮助\n" ++
-                "3. 做出决策并执行：\n" ++
-                "   - 如果有帮助：执行 `git checkout develop && git merge <分支名>`，然后输出 \"DECISION: KEEP\"\n" ++
-                "   - 如果没帮助：执行 `git branch -D <分支名>`，然后输出 \"DECISION: DISCARD\"\n" ++
-                "4. 简要说明你的判断理由\n\n" ++
-                "请直接执行 git 命令，不要只输出命令。\n",
-        );
-    } else {
-        try prompt.appendSlice(
-            allocator,
-            "\n当前在 develop 分支，需要开始新的实验。\n\n" ++
-                "请执行以下操作：\n" ++
-                "1. 根据 program.md 中的 Goal 和已有工作，提出一个改进想法\n" ++
-                "2. 创建一个描述性的分支名（如 experiment-optimize-memory）\n" ++
-                "3. 执行: `git checkout -b experiment-{你的描述}`\n" ++
-                "4. 实现你的改进想法（编辑代码、添加功能、优化性能等）\n" ++
-                "5. 执行: `git add . && git commit -m \"迭代X: 你的描述\"`\n" ++
-                "6. 输出 \"DECISION: EXPERIMENT_CREATED\" 和简要的改进说明\n\n" ++
-                "注意：不要 merge 到 develop，只 commit 到当前分支。\n",
-        );
-    }
+    try prompt.appendSlice(allocator, "=== 任务指令 ===\n");
+    try prompt.appendSlice(allocator, mode_instructions);
+    try prompt.appendSlice(allocator, "\n\n请直接执行 git 命令，不要只输出命令。\n");
 
     return prompt.toOwnedSlice(allocator);
 }
@@ -260,42 +356,50 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
-    try argv.appendSlice(allocator, &[_][]const u8{ "opencode", "run", "--attach", config.opencode_url });
+    try argv.appendSlice(allocator, &[_][]const u8{ "opencode", "run", "--attach", config.opencode_url, "--dir", config.work_dir });
     if (config.model.len > 0) {
         try argv.append(allocator, "--model");
         try argv.append(allocator, config.model);
     }
     try argv.append(allocator, prompt);
 
-    logInfo("执行: opencode run --attach {s}", .{config.opencode_url});
-
-    const result = try runCommandCapture(allocator, config.work_dir, argv.items);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
+    logInfo("执行: opencode run --attach {s} --dir {s}", .{ config.opencode_url, config.work_dir });
 
     var log_file = try std.fs.cwd().createFile(log_file_path, .{ .truncate = true });
     defer log_file.close();
 
-    if (result.stdout.len > 0) {
-        std.debug.print("{s}", .{result.stdout});
-        try log_file.writeAll(result.stdout);
-    }
+    var child = std.process.Child.init(argv.items, allocator);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Inherit;
+    child.cwd = config.work_dir;
 
-    if (result.stderr.len > 0) {
-        std.debug.print("{s}", .{result.stderr});
-        try log_file.writeAll(result.stderr);
-    }
-
-    if (!isExitedZero(result.term)) {
-        logError("调用 OpenCode 失败", .{});
-        logInfo("日志保存在: {s}", .{log_file_path});
-        return false;
+    try child.spawn();
+    errdefer {
+        _ = child.kill() catch {};
     }
 
     var merged: std.ArrayList(u8) = .empty;
     defer merged.deinit(allocator);
-    try merged.appendSlice(allocator, result.stdout);
-    try merged.appendSlice(allocator, result.stderr);
+
+    var buf: [4096]u8 = undefined;
+    const child_stdout = child.stdout orelse return error.CommandFailed;
+    while (true) {
+        const n = try child_stdout.read(&buf);
+        if (n == 0) break;
+
+        const chunk = buf[0..n];
+        std.debug.print("{s}", .{chunk});
+        try log_file.writeAll(chunk);
+        try merged.appendSlice(allocator, chunk);
+    }
+
+    const term = try child.wait();
+    if (!isExitedZero(term)) {
+        logError("调用 OpenCode 失败", .{});
+        logInfo("日志保存在: {s}", .{log_file_path});
+        return false;
+    }
 
     if (findDecision(merged.items)) |decision| {
         if (std.mem.eql(u8, decision, "DECISION: KEEP")) {
@@ -359,85 +463,57 @@ fn cleanupOldBranches(config: Config, allocator: Allocator) void {
     }
 }
 
-fn showHelp() void {
-    std.debug.print(
-        "\nOpenCode 持续迭代控制脚本 (Zig 版本)\n\n" ++
-            "用法:\n" ++
-            "    zig run iterate.zig -- [迭代次数]\n\n" ++
-            "环境变量:\n" ++
-            "    ITERATIONS      默认迭代次数 (默认: 20)\n" ++
-            "    PROGRAM_FILE    program.md 文件路径 (默认: ./program.md)\n" ++
-            "    OPENCODE_URL    OpenCode server URL (默认: http://localhost:4096)\n" ++
-            "    WORK_DIR        工作目录 (默认: 当前目录)\n" ++
-            "    LOG_DIR         日志目录 (默认: ./.iteration-logs)\n" ++
-            "    MODEL           模型选择 (可选)\n" ++
-            "    MAX_BRANCHES    最大保留分支数 (默认: 10)\n\n" ++
-            "示例:\n" ++
-            "    zig run iterate.zig\n" ++
-            "    zig run iterate.zig -- 50\n\n",
-        .{},
-    );
-}
-
-fn buildConfig(allocator: Allocator, arg_iter: ?[]const u8) Config {
-    const iterations = if (arg_iter) |arg| parseUsizeOrDefault(arg, parseUsizeOrDefault(std.process.getEnvVarOwned(allocator, "ITERATIONS") catch null, 20)) else parseUsizeOrDefault(std.process.getEnvVarOwned(allocator, "ITERATIONS") catch null, 20);
-
-    const max_branches = parseUsizeOrDefault(std.process.getEnvVarOwned(allocator, "MAX_BRANCHES") catch null, 10);
-
-    return .{
-        .iterations = iterations,
-        .program_file = envOrDefault("PROGRAM_FILE", "./program.md"),
-        .opencode_url = envOrDefault("OPENCODE_URL", "http://localhost:4096"),
-        .work_dir = envOrDefault("WORK_DIR", "."),
-        .log_dir = envOrDefault("LOG_DIR", "./.iteration-logs"),
-        .model = envOrDefault("MODEL", ""),
-        .max_branches = max_branches,
+fn verifyGitRepo(cwd: []const u8, allocator: Allocator) !void {
+    const git_check = runShellCapture(allocator, cwd, "git rev-parse --git-dir") catch {
+        return error.NotGitRepo;
     };
+    defer allocator.free(git_check.stdout);
+    defer allocator.free(git_check.stderr);
+
+    if (!isExitedZero(git_check.term)) {
+        return error.NotGitRepo;
+    }
 }
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const leaked = gpa_impl.deinit();
-        if (leaked == .leak) {
-            std.debug.print("warning: memory leak detected\n", .{});
-        }
-    }
+fn validateRunEnvironment(config: Config, allocator: Allocator) !void {
+    logInfo("检查运行环境...", .{});
 
-    const allocator = gpa_impl.allocator();
+    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, config.work_dir);
+    defer allocator.free(abs_work_dir);
+    logInfo("工作目录: {s}", .{abs_work_dir});
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ config.work_dir, config.program_file });
+    defer allocator.free(program_path);
 
-    for (args[1..]) |arg| {
-        if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            showHelp();
-            return;
-        }
-    }
+    std.fs.cwd().access(program_path, .{}) catch {
+        logError("找不到 {s}", .{program_path});
+        return error.MissingProgramFile;
+    };
 
-    const iter_arg = if (args.len > 1) args[1] else null;
-    const config = buildConfig(allocator, iter_arg);
-
-    std.debug.print("========================================\n", .{});
-    std.debug.print("  OpenCode 持续迭代系统 (Zig)\n", .{});
-    std.debug.print("========================================\n\n", .{});
-    logInfo("配置:", .{});
-    logInfo("  - 迭代次数: {d}", .{config.iterations});
-    logInfo("  - Program 文件: {s}", .{config.program_file});
-    logInfo("  - OpenCode URL: {s}", .{config.opencode_url});
-    logInfo("  - 日志目录: {s}", .{config.log_dir});
-    if (config.model.len > 0) {
-        logInfo("  - 模型: {s}", .{config.model});
-    }
+    try verifyGitRepo(config.work_dir, allocator);
+    logSuccess("环境检查通过", .{});
     std.debug.print("\n", .{});
+}
 
+fn checkOpencode(config: Config, allocator: Allocator) !void {
+    logInfo("检查 OpenCode server...", .{});
+    if (!checkHttpService(allocator, config.opencode_url)) {
+        logError("无法连接到 OpenCode server at {s}", .{config.opencode_url});
+        logInfo("请确保 OpenCode serve 正在运行: opencode serve", .{});
+        return error.OpencodeUnavailable;
+    }
+
+    logSuccess("OpenCode server 连接正常", .{});
+    std.debug.print("\n", .{});
+}
+
+fn runCommand(config: Config, allocator: Allocator) !void {
     if (!commandExists(allocator, "opencode")) {
         logError("找不到 opencode CLI，请确保已安装", .{});
         return error.MissingOpencode;
     }
 
-    try init(config, allocator);
+    try validateRunEnvironment(config, allocator);
     try checkOpencode(config, allocator);
 
     var i: usize = 1;
@@ -475,7 +551,7 @@ pub fn main() !void {
 
         var bit = std.mem.splitScalar(u8, branch_output, '\n');
         while (bit.next()) |line| {
-            if (std.mem.indexOf(u8, line, "develop") != null or std.mem.indexOf(u8, line, "experiment-") != null) {
+            if (std.mem.indexOf(u8, line, config.main_branch) != null or std.mem.indexOf(u8, line, "experiment-") != null) {
                 std.debug.print("{s}\n", .{line});
             }
         }
@@ -511,5 +587,171 @@ pub fn main() !void {
         logInfo("  无", .{});
     }
     std.debug.print("\n", .{});
-    logInfo("你可以手动评估这些分支，决定最终保留哪些改进。", .{});
+}
+
+fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool) !void {
+    try verifyGitRepo(".", allocator);
+
+    if (!force) {
+        if (fileExists(CONFIG_FILE_NAME)) {
+            logError("{s} 已存在，使用 --force 覆盖", .{CONFIG_FILE_NAME});
+            return error.FileAlreadyExists;
+        }
+        if (fileExists(DEFAULT_PROGRAM_FILE)) {
+            logError("{s} 已存在，使用 --force 覆盖", .{DEFAULT_PROGRAM_FILE});
+            return error.FileAlreadyExists;
+        }
+    }
+
+    const template = try buildProgramTemplate(allocator, goal);
+    defer allocator.free(template);
+
+    try writeDefaultConfig(allocator, force);
+    try writeFileWithPolicy(DEFAULT_PROGRAM_FILE, template, force);
+
+    logSuccess("初始化完成", .{});
+    logInfo("已生成: {s}", .{CONFIG_FILE_NAME});
+    logInfo("已生成: {s}", .{DEFAULT_PROGRAM_FILE});
+    logInfo("下一步执行: zig run iterate.zig -- run", .{});
+}
+
+fn parseInitGoalAndForce(allocator: Allocator, args: []const []const u8) !struct { goal: []u8, force: bool } {
+    var force = false;
+    var goal_parts: std.ArrayList(u8) = .empty;
+    defer goal_parts.deinit(allocator);
+
+    var has_goal_token = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--force")) {
+            force = true;
+            continue;
+        }
+
+        if (arg.len > 0 and arg[0] == '-') {
+            return error.InvalidInitArguments;
+        }
+
+        if (has_goal_token) try goal_parts.append(allocator, ' ');
+        try goal_parts.appendSlice(allocator, arg);
+        has_goal_token = true;
+    }
+
+    if (!has_goal_token) {
+        return error.MissingGoal;
+    }
+
+    return .{ .goal = try goal_parts.toOwnedSlice(allocator), .force = force };
+}
+
+fn showHelp() void {
+    std.debug.print(
+        "\nTechlead 持续迭代 CLI (Zig)\n\n" ++
+            "用法:\n" ++
+            "    zig run iterate.zig -- init \"你的目标描述\" [--force]\n" ++
+            "    zig run iterate.zig -- run\n\n" ++
+            "说明:\n" ++
+            "    - init: 在当前目录生成 techlead.json 和 program.md 模板\n" ++
+            "    - run: 读取 techlead.json 并执行迭代\n" ++
+            "    - run 阶段只读取 JSON 配置，不读取环境变量\n\n",
+        .{},
+    );
+}
+
+pub fn main() !void {
+    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const leaked = gpa_impl.deinit();
+        if (leaked == .leak) {
+            std.debug.print("warning: memory leak detected\n", .{});
+        }
+    }
+
+    const allocator = gpa_impl.allocator();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len < 2) {
+        showHelp();
+        return;
+    }
+
+    const command = args[1];
+    if (std.mem.eql(u8, command, "-h") or std.mem.eql(u8, command, "--help")) {
+        showHelp();
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "init")) {
+        const parsed = parseInitGoalAndForce(allocator, args[2..]) catch |err| {
+            switch (err) {
+                error.MissingGoal => logError("init 需要 Goal 参数", .{}),
+                error.InvalidInitArguments => logError("init 参数无效，只支持 --force", .{}),
+                else => logError("无法解析 init 参数", .{}),
+            }
+            showHelp();
+            return;
+        };
+        defer allocator.free(parsed.goal);
+
+        runInitCommand(allocator, parsed.goal, parsed.force) catch |err| {
+            switch (err) {
+                error.NotGitRepo => logError("当前目录不是 git 仓库", .{}),
+                error.FileAlreadyExists => {},
+                else => logError("init 执行失败: {any}", .{err}),
+            }
+            return;
+        };
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "run")) {
+        if (args.len > 2) {
+            logError("run 不接受额外参数", .{});
+            showHelp();
+            return;
+        }
+
+        const config = loadConfigFromJson(allocator) catch |err| {
+            switch (err) {
+                error.ConfigFileNotFound => logError("找不到 {s}，请先执行 init", .{CONFIG_FILE_NAME}),
+                error.ConfigParseFailed => logError("{s} 解析失败，请检查 JSON 格式", .{CONFIG_FILE_NAME}),
+                error.InvalidConfig => logError("{s} 字段无效或缺失", .{CONFIG_FILE_NAME}),
+                else => logError("读取配置失败: {any}", .{err}),
+            }
+            return;
+        };
+        defer deinitConfig(allocator, &config);
+
+        std.debug.print("========================================\n", .{});
+        std.debug.print("  Techlead 持续迭代系统\n", .{});
+        std.debug.print("========================================\n\n", .{});
+        logInfo("配置:", .{});
+        logInfo("  - 配置文件: {s}", .{CONFIG_FILE_NAME});
+        logInfo("  - 迭代次数: {d}", .{config.iterations});
+        logInfo("  - Program 文件: {s}", .{config.program_file});
+        logInfo("  - OpenCode URL: {s}", .{config.opencode_url});
+        logInfo("  - 主分支: {s}", .{config.main_branch});
+        logInfo("  - 日志目录: {s}", .{config.log_dir});
+        if (config.model.len > 0) {
+            logInfo("  - 模型: {s}", .{config.model});
+        }
+        std.debug.print("\n", .{});
+
+        runCommand(config, allocator) catch |err| {
+            switch (err) {
+                error.MissingProgramFile => logError("program.md 缺失，请重新执行 init --force", .{}),
+                error.InvalidProgramTemplate => logError("program.md 模板块缺失，请重新执行 init --force", .{}),
+                error.NotGitRepo => logError("work_dir 不是 git 仓库", .{}),
+                error.OpencodeUnavailable => {},
+                error.MissingOpencode => {},
+                else => logError("run 失败: {any}", .{err}),
+            }
+            return;
+        };
+        return;
+    }
+
+    logError("未知命令: {s}", .{command});
+    showHelp();
 }
