@@ -4,67 +4,98 @@
 [在这里描述项目目标，纯文本即可]
 示例：优化数据处理脚本的性能，使其能够处理更大的数据集而不内存溢出。
 
-## 迭代流程
+## 系统说明
 
-### Step 1: 了解项目
-- 读取本文件理解 goal
-- 查看项目结构和当前代码
-- 查看 git log 了解已有工作
+这个 program.md 由 `iterate.sh` 脚本调用。脚本负责：
+- 控制总迭代次数
+- 每次迭代都通过 curl 调用新的 OpenCode session
+- 保持上下文干净
 
-### Step 2: 评估当前工作
-检查当前 experiment-* 分支的工作：
-- `git diff master..experiment-xxx` 查看改动
-- 判断这些改动对 goal 是否有帮助
-- [可选] 跑测试验证
+你（AI）只需要关注**单次迭代**的任务：
+- 要么评估现有的 experiment 分支
+- 要么创建新的 experiment 分支并工作
 
-### Step 3: 决策
-```
-IF 改动有帮助（代码更清晰、性能更好、更可靠）：
-  → 保留：git checkout master && git merge experiment-xxx
-ELSE：
-  → 舍弃：git branch -D experiment-xxx
-```
+## 单次迭代流程
 
-### Step 4: 开始新一轮
-1. 确保在 master: `git checkout master`
-2. 基于 goal 和已有工作，提出新想法
-3. 创建新分支: `git checkout -b experiment-{描述}`
-4. 动手实现，commit 到当前分支
-5. **不要 merge 到 master**，留给下一轮评估
+### 情况 A：当前在 experiment-* 分支（需要评估）
 
-### Step 5: 循环
-- 回到 Step 1，开始新一轮迭代
-- 计数器 +1
-- 如果达到 max_iterations，停止并报告总结
+**你的任务**：评估这个分支的工作是否值得保留
 
-## 分支命名规范
-- 格式: `experiment-{简短描述}`
-- 描述由 AI 根据工作内容生成（kebab-case）
-- 长度控制在 3-5 个词
-- 示例: experiment-optimize-memory, experiment-add-caching
+1. **查看改动**：`git diff master..$(git branch --show-current)`
+2. **评估价值**：这个改动对 Goal 有帮助吗？
+   - 代码更清晰？
+   - 性能更好？
+   - 更可靠？
+   - [可选] 跑测试验证
+3. **做出决策**：
+   ```bash
+   # 如果有帮助：
+   git checkout master
+   git merge $(git branch --show-current)
+   echo "DECISION: KEEP"
+   
+   # 如果没帮助：
+   git branch -D $(git branch --show-current)
+   echo "DECISION: DISCARD"
+   ```
+4. **说明理由**：简要解释为什么保留或舍弃
 
-## 终止条件
-- 最大迭代次数: 20
-- 或者用户手动停止 (Ctrl+C)
+### 情况 B：当前在 master 分支（需要开始新实验）
+
+**你的任务**：提出并实施一个改进想法
+
+1. **分析现状**：
+   - 阅读当前代码
+   - 查看 git log 了解已有工作
+   - 思考：如何更接近 Goal？
+
+2. **提出想法**：基于分析，提出具体的改进方向
+   - 优化某个算法？
+   - 重构某个函数？
+   - 添加错误处理？
+   - 改进数据结构？
+
+3. **创建分支**：
+   ```bash
+   git checkout -b experiment-{简短描述}
+   # 示例: experiment-optimize-memory, experiment-add-caching
+   ```
+
+4. **实施改进**：
+   - 编辑代码实现你的想法
+   - 保持改动聚焦（不要一次改太多）
+   - 确保代码能运行
+
+5. **提交工作**：
+   ```bash
+   git add .
+   git commit -m "改进: {你的描述}"
+   echo "DECISION: EXPERIMENT_CREATED"
+   ```
+
+6. **简要说明**：描述你做了什么改进
+
+## 重要约束
+
+**不要**：
+- 不要 merge 到 master（留给下一次迭代评估）
+- 不要一次做太多改动（保持可审查）
+- 不要删除其他 experiment 分支
+
+**要**：
+- 保持代码可运行
+- 如果无法确定价值，宁可舍弃也不要保留问题代码
+- 简单的改进 > 复杂的改进
 
 ## 评估标准
-结合以下两点自主判断：
 
-**主观评估**：
+**主观判断**：
 - 代码是否更清晰易读？
-- 是否更接近 goal？
-- 复杂度是否合理（不引入过度工程）？
+- 是否更接近 Goal？
+- 复杂度是否合理？
 
-**客观验证**：[可选]
+**客观验证**（可选）：
 - 如果有测试，测试是否通过？
 - 如果可以测量，性能是否有改善？
 
-**决策原则**：
-- 当不确定时，宁可舍弃也不要保留可能的问题代码
-- 简单的改进 > 复杂的改进（如果效果相同）
-- 保持代码可工作是第一优先级
-
-## 当前状态
-- 迭代计数: 0
-- 上次保留的分支: N/A
-- 最佳改进: N/A
+**决策原则**：当不确定时，舍弃。质量 > 数量。
