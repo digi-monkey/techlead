@@ -2,8 +2,12 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+const TECHLEAD_DIR_NAME = ".techlead";
 const CONFIG_FILE_NAME = "techlead.json";
 const DEFAULT_PROGRAM_FILE = "program.md";
+const CONFIG_REL_PATH = ".techlead/techlead.json";
+const DEFAULT_PROGRAM_REL_PATH = ".techlead/program.md";
+const DEFAULT_LOG_DIR = ".techlead/iteration-logs";
 
 const Colors = struct {
     const red = "\x1b[0;31m";
@@ -134,8 +138,28 @@ fn deinitConfig(allocator: Allocator, config: *const Config) void {
     allocator.free(config.main_branch);
 }
 
+fn resolveConfigPath(allocator: Allocator, base_dir: []const u8) ![]u8 {
+    const new_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_REL_PATH });
+    if (fileExists(new_path)) {
+        return new_path;
+    }
+    allocator.free(new_path);
+
+    const legacy_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_FILE_NAME });
+    if (fileExists(legacy_path)) {
+        logWarn("检测到旧版配置路径: {s}", .{legacy_path});
+        return legacy_path;
+    }
+    allocator.free(legacy_path);
+
+    return error.ConfigFileNotFound;
+}
+
 fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
-    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_FILE_NAME });
+    const config_path = resolveConfigPath(allocator, base_dir) catch |err| switch (err) {
+        error.ConfigFileNotFound => return error.ConfigFileNotFound,
+        else => return err,
+    };
     defer allocator.free(config_path);
 
     const config_bytes = std.fs.cwd().readFileAlloc(allocator, config_path, 4 * 1024 * 1024) catch |err| switch (err) {
@@ -172,10 +196,10 @@ fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8)
 
     const cfg = ConfigFile{
         .iterations = 20,
-        .program_file = DEFAULT_PROGRAM_FILE,
+        .program_file = DEFAULT_PROGRAM_REL_PATH,
         .opencode_url = "http://localhost:4096",
         .work_dir = abs_work_dir,
-        .log_dir = "./.iteration-logs",
+        .log_dir = DEFAULT_LOG_DIR,
         .model = "",
         .main_branch = "master",
         .max_branches = 10,
@@ -184,7 +208,7 @@ fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8)
     const final_text = try std.fmt.allocPrint(allocator, "{f}\n", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});
     defer allocator.free(final_text);
 
-    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_FILE_NAME });
+    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_REL_PATH });
     defer allocator.free(config_path);
 
     try writeFileWithPolicy(config_path, final_text, force);
@@ -806,9 +830,13 @@ fn runCommand(config: Config, allocator: Allocator) !void {
 fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_dir: []const u8) !void {
     try verifyGitRepo(target_dir, allocator);
 
-    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_FILE_NAME });
+    const techlead_dir = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, TECHLEAD_DIR_NAME });
+    defer allocator.free(techlead_dir);
+    try std.fs.cwd().makePath(techlead_dir);
+
+    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_REL_PATH });
     defer allocator.free(config_path);
-    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, DEFAULT_PROGRAM_FILE });
+    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, DEFAULT_PROGRAM_REL_PATH });
     defer allocator.free(program_path);
 
     if (!force) {
@@ -870,8 +898,8 @@ fn showHelp() void {
             "    zig build run -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
             "    zig build run -- run [--dir 目录]\n\n" ++
             "说明:\n" ++
-            "    - init: 在目标目录生成 techlead.json 和 program.md 模板（默认当前目录）\n" ++
-            "    - run: 从目标目录读取 techlead.json 并执行迭代（默认当前目录）\n" ++
+            "    - init: 在目标目录生成 .techlead/techlead.json 和 .techlead/program.md（默认当前目录）\n" ++
+            "    - run: 从目标目录读取 .techlead/techlead.json 并执行迭代（默认当前目录）\n" ++
             "    - run 阶段只读取 JSON 配置，不读取环境变量\n\n",
         .{},
     );
@@ -947,9 +975,9 @@ pub fn main() !void {
 
         const config = loadConfigFromJson(allocator, target_dir) catch |err| {
             switch (err) {
-                error.ConfigFileNotFound => logError("找不到 {s}，请先执行 init", .{CONFIG_FILE_NAME}),
-                error.ConfigParseFailed => logError("{s} 解析失败，请检查 JSON 格式", .{CONFIG_FILE_NAME}),
-                error.InvalidConfig => logError("{s} 字段无效或缺失", .{CONFIG_FILE_NAME}),
+                error.ConfigFileNotFound => logError("找不到 {s}，请先执行 init", .{CONFIG_REL_PATH}),
+                error.ConfigParseFailed => logError("{s} 解析失败，请检查 JSON 格式", .{CONFIG_REL_PATH}),
+                error.InvalidConfig => logError("{s} 字段无效或缺失", .{CONFIG_REL_PATH}),
                 else => logError("读取配置失败: {any}", .{err}),
             }
             return;
@@ -960,7 +988,7 @@ pub fn main() !void {
         std.debug.print("  Techlead 持续迭代系统\n", .{});
         std.debug.print("========================================\n\n", .{});
         logInfo("配置:", .{});
-        logInfo("  - 配置文件: {s}", .{CONFIG_FILE_NAME});
+        logInfo("  - 配置文件: {s}", .{CONFIG_REL_PATH});
         logInfo("  - 迭代次数: {d}", .{config.iterations});
         logInfo("  - Program 文件: {s}", .{config.program_file});
         logInfo("  - OpenCode URL: {s}", .{config.opencode_url});
@@ -973,8 +1001,8 @@ pub fn main() !void {
 
         runCommand(config, allocator) catch |err| {
             switch (err) {
-                error.MissingProgramFile => logError("program.md 缺失，请重新执行 init --force", .{}),
-                error.InvalidProgramTemplate => logError("program.md 模板块缺失，请重新执行 init --force", .{}),
+                error.MissingProgramFile => logError(".techlead/program.md 缺失，请重新执行 init --force", .{}),
+                error.InvalidProgramTemplate => logError(".techlead/program.md 模板块缺失，请重新执行 init --force", .{}),
                 error.NotGitRepo => logError("work_dir 不是 git 仓库", .{}),
                 error.OpencodeUnavailable => {},
                 error.MissingOpencode => {},
