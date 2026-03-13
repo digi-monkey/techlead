@@ -17,6 +17,22 @@ const Colors = struct {
     const nc = "\x1b[0m";
 };
 
+// 将字符串首字母大写（用于 oh-my-opencode agent 名称）
+fn capitalizeFirstLetter(allocator: Allocator, str: []const u8) ![]u8 {
+    if (str.len == 0) return allocator.dupe(u8, str);
+
+    var result = try allocator.alloc(u8, str.len);
+    errdefer allocator.free(result);
+
+    // 复制原字符串
+    @memcpy(result, str);
+
+    // 首字母大写
+    result[0] = std.ascii.toUpper(result[0]);
+
+    return result;
+}
+
 const ConfigFile = struct {
     iterations: usize,
     program_file: []const u8,
@@ -24,6 +40,7 @@ const ConfigFile = struct {
     work_dir: []const u8,
     log_dir: []const u8,
     model: []const u8,
+    agent: []const u8,
     main_branch: []const u8,
     max_branches: usize,
 };
@@ -35,6 +52,7 @@ const Config = struct {
     work_dir: []u8,
     log_dir: []u8,
     model: []u8,
+    agent: []u8,
     main_branch: []u8,
     max_branches: usize,
 };
@@ -135,6 +153,7 @@ fn deinitConfig(allocator: Allocator, config: *const Config) void {
     allocator.free(config.work_dir);
     allocator.free(config.log_dir);
     allocator.free(config.model);
+    allocator.free(config.agent);
     allocator.free(config.main_branch);
 }
 
@@ -185,6 +204,7 @@ fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
         .work_dir = try allocator.dupe(u8, value.work_dir),
         .log_dir = try allocator.dupe(u8, value.log_dir),
         .model = try allocator.dupe(u8, value.model),
+        .agent = try allocator.dupe(u8, value.agent),
         .main_branch = try allocator.dupe(u8, value.main_branch),
         .max_branches = value.max_branches,
     };
@@ -201,6 +221,7 @@ fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8)
         .work_dir = abs_work_dir,
         .log_dir = DEFAULT_LOG_DIR,
         .model = "",
+        .agent = "Prometheus",
         .main_branch = "master",
         .max_branches = 10,
     };
@@ -669,15 +690,25 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     const session_title = try std.fmt.allocPrint(allocator, "techlead-iter-{d}-{d}", .{ iteration, std.time.timestamp() });
     defer allocator.free(session_title);
 
-    try argv.appendSlice(allocator, &[_][]const u8{ "opencode", "run", "--attach", config.opencode_url, "--dir", config.work_dir, "--format", "json", "--title", session_title });
+    // 使用 oh-my-opencode run 替代 opencode run
+    // oh-my-opencode run 不支持 --title 参数
+    try argv.appendSlice(allocator, &[_][]const u8{ "oh-my-opencode", "run", "--attach", config.opencode_url, "--directory", config.work_dir, "--json" });
 
     if (config.model.len > 0) {
         try argv.append(allocator, "--model");
         try argv.append(allocator, config.model);
     }
+    if (config.agent.len > 0) {
+        try argv.append(allocator, "--agent");
+        // oh-my-opencode 使用首字母大写的 agent 名称
+        const capitalized_agent = try capitalizeFirstLetter(allocator, config.agent);
+        defer allocator.free(capitalized_agent);
+        try argv.append(allocator, capitalized_agent);
+    }
+    // prompt 必须放在最后
     try argv.append(allocator, prompt);
 
-    logInfo("执行: opencode run --attach {s} --dir {s} --format json", .{ config.opencode_url, config.work_dir });
+    logInfo("执行: oh-my-opencode run --attach {s} --directory {s} --json", .{ config.opencode_url, config.work_dir });
 
     var log_file = try std.fs.cwd().createFile(log_file_path, .{ .truncate = true });
     defer log_file.close();
