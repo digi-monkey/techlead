@@ -215,6 +215,52 @@ fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8)
 }
 
 fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
+    // Try to read local program.md file
+    const max_file_size = 1024 * 1024; // 1MB max
+    const local_template = std.fs.cwd().readFileAlloc(allocator, "program.md", max_file_size) catch |err| {
+        // Fallback to hardcoded template if file doesn't exist or read fails
+        std.log.warn("Failed to read local program.md ({}), using default template", .{err});
+        return buildDefaultProgramTemplate(allocator, goal);
+    };
+    defer allocator.free(local_template);
+
+    // Find the GOAL markers in the template
+    const begin_marker = "<!-- TECHLEAD:GOAL:BEGIN -->";
+    const end_marker = "<!-- TECHLEAD:GOAL:END -->";
+
+    const begin_index = std.mem.indexOf(u8, local_template, begin_marker) orelse {
+        // Fallback if markers not found
+        std.log.warn("GOAL markers not found in local program.md, using default template", .{});
+        return buildDefaultProgramTemplate(allocator, goal);
+    };
+
+    const begin_content = begin_index + begin_marker.len;
+    const rest = local_template[begin_content..];
+    const end_rel = std.mem.indexOf(u8, rest, end_marker) orelse {
+        // Fallback if end marker not found
+        std.log.warn("GOAL end marker not found in local program.md, using default template", .{});
+        return buildDefaultProgramTemplate(allocator, goal);
+    };
+
+    // Build the new content: before marker + new goal + after marker
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    // Add content before the GOAL section (including the begin marker)
+    try out.appendSlice(allocator, local_template[0..begin_content]);
+
+    // Add newline and the new goal
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, goal);
+    try out.appendSlice(allocator, "\n");
+
+    // Add content from end marker onwards
+    try out.appendSlice(allocator, rest[end_rel..]);
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn buildDefaultProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
