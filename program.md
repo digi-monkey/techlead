@@ -1,7 +1,7 @@
 # program.md - Techlead Prompt Template
 
 <!-- TECHLEAD:GOAL:BEGIN -->
-验证 init 流程
+例如：测试通过率提升到100%
 <!-- TECHLEAD:GOAL:END -->
 
 <!-- TECHLEAD:CONSTRAINTS:BEGIN -->
@@ -11,7 +11,7 @@
 <!-- TECHLEAD:CONSTRAINTS:END -->
 
 <!-- TECHLEAD:CRITERIA:BEGIN -->
-- 是否实现 Goal。
+- 是否实现 Goal 是最重要的标准。
 - 若可验证，优先实际操作验证。
 - 代码可读性和复杂度是否更合理。
 - 测试和性能是否ok。
@@ -28,7 +28,7 @@
 
 <!-- TECHLEAD:MODE_B:BEGIN -->
 当前处于新实验模式（主分支）。
-1. 基于 Goal 提出一个与之前不一样的可验证的完整想法。
+1. 基于 Goal 提出一个与之前不一样的可验证的完整想法。需要显示的用一句话说出来。
 2. 执行：git checkout <MAIN_BRANCH> && git checkout -b experiment-<描述>
 3. 实现完整的改进，确保达成 goal 并提交：git add . && git commit -m "迭代X: 描述"
 4. 输出 DECISION: EXPERIMENT_CREATED 与简要说明。
