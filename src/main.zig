@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const utils = @import("utils.zig");
+
 const Allocator = std.mem.Allocator;
 
 const TECHLEAD_DIR_NAME = ".techlead";
@@ -79,80 +81,6 @@ fn logWarn(comptime fmt: []const u8, args: anytype) void {
 
 fn logError(comptime fmt: []const u8, args: anytype) void {
     std.debug.print("{s}[ERROR]{s} " ++ fmt ++ "\n", .{ Colors.red, Colors.nc } ++ args);
-}
-
-fn runCommandCapture(allocator: Allocator, cwd: ?[]const u8, argv: []const []const u8) !std.process.Child.RunResult {
-    return std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = argv,
-        .cwd = cwd,
-        .max_output_bytes = 64 * 1024 * 1024,
-    });
-}
-
-fn runShellCapture(allocator: Allocator, cwd: ?[]const u8, cmd: []const u8) !std.process.Child.RunResult {
-    const argv = [_][]const u8{ "/bin/sh", "-lc", cmd };
-    return runCommandCapture(allocator, cwd, &argv);
-}
-
-fn isExitedZero(term: std.process.Child.Term) bool {
-    return switch (term) {
-        .Exited => |code| code == 0,
-        else => false,
-    };
-}
-
-fn runShellStdout(allocator: Allocator, cwd: ?[]const u8, cmd: []const u8) ![]u8 {
-    const result = try runShellCapture(allocator, cwd, cmd);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    if (!isExitedZero(result.term)) {
-        if (result.stderr.len > 0) {
-            std.debug.print("{s}\n", .{result.stderr});
-        }
-        return error.CommandFailed;
-    }
-
-    const trimmed = std.mem.trim(u8, result.stdout, " \t\r\n");
-    return allocator.dupe(u8, trimmed);
-}
-
-fn commandExists(allocator: Allocator, cmd: []const u8) bool {
-    const shell_cmd = std.fmt.allocPrint(allocator, "which {s} >/dev/null 2>&1", .{cmd}) catch return false;
-    defer allocator.free(shell_cmd);
-
-    const result = runShellCapture(allocator, null, shell_cmd) catch return false;
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    return isExitedZero(result.term);
-}
-
-fn checkHttpService(allocator: Allocator, url: []const u8) bool {
-    const shell_cmd = std.fmt.allocPrint(allocator, "curl -fsSI {s} >/dev/null 2>&1", .{url}) catch return false;
-    defer allocator.free(shell_cmd);
-
-    const result = runShellCapture(allocator, null, shell_cmd) catch return false;
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    return isExitedZero(result.term);
-}
-
-fn fileExists(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
-    return true;
-}
-
-fn writeFileWithPolicy(path: []const u8, content: []const u8, force: bool) !void {
-    if (fileExists(path) and !force) {
-        return error.FileAlreadyExists;
-    }
-
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(content);
 }
 
 // PID file management utilities
@@ -269,13 +197,13 @@ fn deinitConfig(allocator: Allocator, config: *const Config) void {
 
 fn resolveConfigPath(allocator: Allocator, base_dir: []const u8) ![]u8 {
     const new_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_REL_PATH });
-    if (fileExists(new_path)) {
+    if (utils.fileExists(new_path)) {
         return new_path;
     }
     allocator.free(new_path);
 
     const legacy_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_FILE_NAME });
-    if (fileExists(legacy_path)) {
+    if (utils.fileExists(legacy_path)) {
         logWarn("检测到旧版配置路径: {s}", .{legacy_path});
         return legacy_path;
     }
@@ -342,7 +270,7 @@ fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const u8)
     const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_REL_PATH });
     defer allocator.free(config_path);
 
-    try writeFileWithPolicy(config_path, final_text, force);
+    try utils.writeFileWithPolicy(config_path, final_text, force);
 }
 
 fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
@@ -544,9 +472,8 @@ fn simplifyShellCommand(raw: []const u8) []const u8 {
     return best;
 }
 
-
 fn getCurrentExperimentBranch(config: Config, allocator: Allocator) ?[]u8 {
-    const current = runShellStdout(allocator, config.work_dir, "git branch --show-current") catch return null;
+    const current = utils.runShellStdout(allocator, config.work_dir, "git branch --show-current") catch return null;
     if (std.mem.startsWith(u8, current, "experiment-")) {
         return current;
     }
@@ -634,7 +561,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     const log_file_path = try std.fs.path.join(allocator, &[_][]const u8{ log_dir_path, log_name });
     defer allocator.free(log_file_path);
 
-    const current_branch = runShellStdout(allocator, config.work_dir, "git branch --show-current") catch "unknown";
+    const current_branch = utils.runShellStdout(allocator, config.work_dir, "git branch --show-current") catch "unknown";
     defer if (!std.mem.eql(u8, current_branch, "unknown")) allocator.free(current_branch);
 
     logInfo("第 {d} 次迭代：调用 OpenCode...", .{iteration});
@@ -683,8 +610,6 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     var merged: std.ArrayList(u8) = .empty;
     defer merged.deinit(allocator);
 
-
-
     var buf: [4096]u8 = undefined;
     const child_stdout = child.stdout orelse return error.CommandFailed;
     while (true) {
@@ -700,7 +625,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     }
 
     const term = try child.wait();
-    if (!isExitedZero(term)) {
+    if (!utils.isExitedZero(term)) {
         logError("调用 OpenCode 失败", .{});
         logInfo("日志保存在: {s}", .{log_file_path});
         return false;
@@ -722,7 +647,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
 }
 
 fn cleanupOldBranches(config: Config, allocator: Allocator) void {
-    const output = runShellStdout(allocator, config.work_dir, "git branch --list 'experiment-*'") catch return;
+    const output = utils.runShellStdout(allocator, config.work_dir, "git branch --list 'experiment-*'") catch return;
     defer allocator.free(output);
 
     var branches: std.ArrayList([]const u8) = .empty;
@@ -753,14 +678,14 @@ fn cleanupOldBranches(config: Config, allocator: Allocator) void {
         const cmd = std.fmt.allocPrint(allocator, "git branch -D {s}", .{branches.items[i]}) catch continue;
         defer allocator.free(cmd);
 
-        const result = runShellCapture(allocator, config.work_dir, cmd) catch {
+        const result = utils.runShellCapture(allocator, config.work_dir, cmd) catch {
             logWarn("无法删除分支 {s}", .{branches.items[i]});
             continue;
         };
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 
-        if (isExitedZero(result.term)) {
+        if (utils.isExitedZero(result.term)) {
             logInfo("已删除分支: {s}", .{branches.items[i]});
         } else {
             logWarn("无法删除分支 {s}", .{branches.items[i]});
@@ -769,13 +694,13 @@ fn cleanupOldBranches(config: Config, allocator: Allocator) void {
 }
 
 fn verifyGitRepo(cwd: []const u8, allocator: Allocator) !void {
-    const git_check = runShellCapture(allocator, cwd, "git rev-parse --git-dir") catch {
+    const git_check = utils.runShellCapture(allocator, cwd, "git rev-parse --git-dir") catch {
         return error.NotGitRepo;
     };
     defer allocator.free(git_check.stdout);
     defer allocator.free(git_check.stderr);
 
-    if (!isExitedZero(git_check.term)) {
+    if (!utils.isExitedZero(git_check.term)) {
         return error.NotGitRepo;
     }
 }
@@ -802,7 +727,7 @@ fn validateRunEnvironment(config: Config, allocator: Allocator) !void {
 
 fn checkOpencode(config: Config, allocator: Allocator) !void {
     logInfo("检查 OpenCode server...", .{});
-    if (!checkHttpService(allocator, config.opencode_url)) {
+    if (!utils.checkHttpService(allocator, config.opencode_url)) {
         logError("无法连接到 OpenCode server at {s}", .{config.opencode_url});
         logInfo("请确保 OpenCode serve 正在运行: opencode serve", .{});
         return error.OpencodeUnavailable;
@@ -813,7 +738,7 @@ fn checkOpencode(config: Config, allocator: Allocator) !void {
 }
 
 fn runCommand(config: Config, allocator: Allocator) !void {
-    if (!commandExists(allocator, "opencode")) {
+    if (!utils.commandExists(allocator, "opencode")) {
         logError("找不到 opencode CLI，请确保已安装", .{});
         return error.MissingOpencode;
     }
@@ -843,7 +768,7 @@ fn runCommand(config: Config, allocator: Allocator) !void {
 
         std.debug.print("\n", .{});
         logInfo("当前 git 状态:", .{});
-        const branch_output = runShellStdout(allocator, config.work_dir, "git branch -v") catch {
+        const branch_output = utils.runShellStdout(allocator, config.work_dir, "git branch -v") catch {
             std.debug.print("\n", .{});
             if (i < config.iterations) {
                 logInfo("等待 2 秒后开始下一次迭代...", .{});
@@ -877,13 +802,13 @@ fn runCommand(config: Config, allocator: Allocator) !void {
     logInfo("  - 总迭代次数: {d}", .{config.iterations});
     logInfo("  - 日志目录: {s}", .{config.log_dir});
 
-    const current_branch = runShellStdout(allocator, config.work_dir, "git branch --show-current") catch "unknown";
+    const current_branch = utils.runShellStdout(allocator, config.work_dir, "git branch --show-current") catch "unknown";
     defer if (!std.mem.eql(u8, current_branch, "unknown")) allocator.free(current_branch);
     logInfo("  - 当前分支: {s}", .{current_branch});
     std.debug.print("\n", .{});
 
     logInfo("保留的 experiment 分支:", .{});
-    const experiment_branches = runShellStdout(allocator, config.work_dir, "git branch -v | grep experiment- || true") catch "";
+    const experiment_branches = utils.runShellStdout(allocator, config.work_dir, "git branch -v | grep experiment- || true") catch "";
     defer if (experiment_branches.len > 0) allocator.free(experiment_branches);
 
     if (experiment_branches.len > 0) {
@@ -907,11 +832,11 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_di
     defer allocator.free(program_path);
 
     if (!force) {
-        if (fileExists(config_path)) {
+        if (utils.fileExists(config_path)) {
             logError("{s} 已存在，使用 --force 覆盖", .{config_path});
             return error.FileAlreadyExists;
         }
-        if (fileExists(program_path)) {
+        if (utils.fileExists(program_path)) {
             logError("{s} 已存在，使用 --force 覆盖", .{program_path});
             return error.FileAlreadyExists;
         }
@@ -921,7 +846,7 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_di
     defer allocator.free(template);
 
     try writeDefaultConfig(allocator, force, target_dir);
-    try writeFileWithPolicy(program_path, template, force);
+    try utils.writeFileWithPolicy(program_path, template, force);
 
     logSuccess("初始化完成", .{});
     logInfo("目标目录: {s}", .{target_dir});
@@ -1238,7 +1163,7 @@ fn runServerStopCommand(allocator: Allocator) !void {
 
 fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
     // 1. Check if opencode CLI exists
-    if (!commandExists(allocator, "opencode")) {
+    if (!utils.commandExists(allocator, "opencode")) {
         logError("找不到 opencode CLI，请确保已安装", .{});
         return error.MissingOpencode;
     }
