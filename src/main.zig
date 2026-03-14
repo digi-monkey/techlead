@@ -20,6 +20,93 @@ const Colors = struct {
     const yellow = "\x1b[1;33m";
     const blue = "\x1b[0;34m";
     const nc = "\x1b[0m";
+    const cyan = "\x1b[0;36m";
+    const magenta = "\x1b[0;35m";
+    const white = "\x1b[1;37m";
+    const gray = "\x1b[0;90m";
+};
+
+const Icons = struct {
+    const session = "📊";
+    const tool = "🔧";
+    const ai = "💬";
+    const step_start = "⚡";
+    const step_finish = "✓";
+    const success = "✅";
+    const err = "❌";
+    const warning = "⚠️";
+    const timer = "⏱️";
+
+    // ASCII fallbacks for non-UTF8 terminals
+    const session_ascii = "[S]";
+    const tool_ascii = "[T]";
+    const ai_ascii = "[AI]";
+    const step_ascii = "[*]";
+    const success_ascii = "[OK]";
+    const err_ascii = "[ERR]";
+    const warning_ascii = "[WARN]";
+    const timer_ascii = "[~]";
+};
+
+fn formatTimestamp(allocator: Allocator, timestamp_ms: i64) ![]u8 {
+    const seconds = @divTrunc(timestamp_ms, 1000);
+    const ms = @mod(timestamp_ms, 1000);
+
+    const hours = @divTrunc(@mod(seconds, 86400), 3600);
+    const remaining = @mod(seconds, 3600);
+    const minutes = @divTrunc(remaining, 60);
+    const secs = @mod(remaining, 60);
+
+    return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}", .{
+        @as(u8, @intCast(hours)),
+        @as(u8, @intCast(minutes)),
+        @as(u8, @intCast(secs)),
+        @as(u16, @intCast(ms)),
+    });
+}
+
+fn shouldUseUnicode(allocator: Allocator) bool {
+    const lang = std.process.getEnvVarOwned(allocator, "LANG") catch return false;
+    defer allocator.free(lang);
+    return std.mem.containsAtLeast(u8, lang, 1, "UTF-8") or
+        std.mem.containsAtLeast(u8, lang, 1, "utf-8");
+}
+
+const EventType = enum {
+    step_start,
+    step_finish,
+    tool_use,
+    text,
+    err,
+    unknown,
+
+    pub fn fromString(str: []const u8) EventType {
+        if (std.mem.eql(u8, str, "step_start")) return .step_start;
+        if (std.mem.eql(u8, str, "step_finish")) return .step_finish;
+        if (std.mem.eql(u8, str, "tool_use")) return .tool_use;
+        if (std.mem.eql(u8, str, "text")) return .text;
+        if (std.mem.eql(u8, str, "error")) return .err;
+        return .unknown;
+    }
+};
+
+const LogLevel = enum {
+    DEBUG,
+    INFO,
+    WARNING,
+    ERROR,
+
+    pub fn fromString(str: []const u8) LogLevel {
+        if (std.mem.eql(u8, str, "DEBUG")) return .DEBUG;
+        if (std.mem.eql(u8, str, "INFO")) return .INFO;
+        if (std.mem.eql(u8, str, "WARNING")) return .WARNING;
+        if (std.mem.eql(u8, str, "ERROR")) return .ERROR;
+        return .INFO;
+    }
+
+    pub fn includes(self: LogLevel, other: LogLevel) bool {
+        return @intFromEnum(self) <= @intFromEnum(other);
+    }
 };
 
 // 将字符串首字母大写（用于 oh-my-opencode agent 名称）
@@ -60,6 +147,9 @@ const Config = struct {
     agent: []u8,
     main_branch: []u8,
     max_branches: usize,
+    log_level: LogLevel = .INFO,
+    use_color: bool = true,
+    use_unicode: bool = true,
 };
 
 fn logInfo(comptime fmt: []const u8, args: anytype) void {
@@ -541,7 +631,7 @@ fn simplifyShellCommand(raw: []const u8) []const u8 {
     return best;
 }
 
-fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session: *bool, ai_loader_active: *bool, spinner_runtime: *SpinnerRuntime) void {
+fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session: *bool, ai_loader_active: *bool, spinner_runtime: *SpinnerRuntime, config: Config) void {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch return;
     defer parsed.deinit();
 
@@ -551,11 +641,31 @@ fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session
         else => return,
     };
 
-    const event_type = if (root_obj.get("type")) |v| switch (v) {
+    // Parse timestamp from event
+    const timestamp_ms = if (root_obj.get("timestamp")) |v| valueAsI64(v) orelse std.time.milliTimestamp() else std.time.milliTimestamp();
+
+    // Parse event type using enum
+    const event_type_str = if (root_obj.get("type")) |v| switch (v) {
         .string => |s| s,
         else => return,
     } else return;
 
+    const event_type = EventType.fromString(event_type_str);
+
+    // Apply log level filtering (skip DEBUG events when level is INFO or higher)
+    const event_level: LogLevel = switch (event_type) {
+        .err => .ERROR,
+        .text => .INFO,
+        .tool_use => .INFO,
+        .step_start, .step_finish => .DEBUG,
+        .unknown => .DEBUG,
+    };
+
+    if (!config.log_level.includes(event_level)) {
+        return;
+    }
+
+    // Handle session display
     if (!seen_session.*) {
         if (root_obj.get("sessionID")) |v| {
             if (v == .string) {
@@ -563,136 +673,267 @@ fn emitOpencodeEventSummary(allocator: Allocator, line: []const u8, seen_session
                     stopAiLoader(spinner_runtime);
                     ai_loader_active.* = false;
                 }
-                const sid = truncateForLog(v.string, 40);
-                printEventLine("SESSION", Colors.blue, sid);
+                printSessionLine(timestamp_ms, v.string, config.use_color, config.use_unicode);
                 seen_session.* = true;
             }
         }
     }
 
-    if (std.mem.eql(u8, event_type, "step_start")) {
-        if (!ai_loader_active.*) {
-            startAiLoader(spinner_runtime);
-            ai_loader_active.* = true;
+    // Route to appropriate handler based on event type
+    switch (event_type) {
+        .step_start => {
+            if (!ai_loader_active.*) {
+                startAiLoader(spinner_runtime);
+                ai_loader_active.* = true;
+            }
+        },
+        .step_finish => {
+            if (ai_loader_active.*) {
+                stopAiLoader(spinner_runtime);
+                ai_loader_active.* = false;
+            }
+        },
+        .tool_use => {
+            handleToolUseEvent(allocator, root_obj, timestamp_ms, ai_loader_active, spinner_runtime, config);
+        },
+        .text => {
+            handleTextEvent(root_obj, timestamp_ms, ai_loader_active, spinner_runtime, config);
+        },
+        .err => {
+            // Error events can be handled similarly to text events
+            handleTextEvent(root_obj, timestamp_ms, ai_loader_active, spinner_runtime, config);
+        },
+        .unknown => {},
+    }
+}
+
+fn handleToolUseEvent(allocator: Allocator, root_obj: std.json.ObjectMap, timestamp_ms: i64, ai_loader_active: *bool, spinner_runtime: *SpinnerRuntime, config: Config) void {
+    const part_v = root_obj.get("part") orelse return;
+    if (part_v != .object) return;
+
+    const tool_name = if (part_v.object.get("tool")) |tv| switch (tv) {
+        .string => |s| s,
+        else => "unknown",
+    } else "unknown";
+
+    var status: []const u8 = "unknown";
+    var details_buf: std.ArrayList(u8) = .empty;
+    defer details_buf.deinit(allocator);
+
+    var duration_ms: ?i64 = null;
+
+    if (part_v.object.get("state")) |state_v| {
+        if (state_v == .object) {
+            if (state_v.object.get("status")) |sv| {
+                if (sv == .string) status = sv.string;
+            }
+
+            if (state_v.object.get("input")) |input_v| {
+                if (input_v == .object) {
+                    if (input_v.object.get("command")) |cv| {
+                        if (valueAsString(cv)) |command| {
+                            const concise = simplifyShellCommand(command);
+                            details_buf.writer(allocator).print("cmd: {s}", .{truncateForLog(concise, 88)}) catch {};
+                        }
+                    } else if (input_v.object.get("filePath")) |fv| {
+                        if (valueAsString(fv)) |file_path| {
+                            details_buf.writer(allocator).print("file: {s}", .{truncateForLog(file_path, 88)}) catch {};
+                        }
+                    } else if (input_v.object.get("path")) |pv| {
+                        if (valueAsString(pv)) |path| {
+                            details_buf.writer(allocator).print("path: {s}", .{truncateForLog(path, 88)}) catch {};
+                        }
+                    } else if (input_v.object.get("query")) |qv| {
+                        if (valueAsString(qv)) |query| {
+                            details_buf.writer(allocator).print("query: {s}", .{truncateForLog(query, 88)}) catch {};
+                        }
+                    }
+                }
+            }
+
+            if (state_v.object.get("metadata")) |metadata_v| {
+                if (metadata_v == .object) {
+                    if (metadata_v.object.get("title")) |title_v| {
+                        if (valueAsString(title_v)) |title| {
+                            if (details_buf.items.len > 0) {
+                                details_buf.writer(allocator).print(" | target: {s}", .{truncateForLog(title, 88)}) catch {};
+                            } else {
+                                details_buf.writer(allocator).print("target: {s}", .{truncateForLog(title, 88)}) catch {};
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (state_v.object.get("time")) |time_v| {
+                if (time_v == .object) {
+                    if (time_v.object.get("start")) |start_v| {
+                        if (time_v.object.get("end")) |end_v| {
+                            if (valueAsI64(start_v)) |start_ms| {
+                                if (valueAsI64(end_v)) |end_ms| {
+                                    if (end_ms >= start_ms) {
+                                        duration_ms = end_ms - start_ms;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        return;
     }
 
-    if (std.mem.eql(u8, event_type, "step_finish")) {
+    const details = if (details_buf.items.len > 0) details_buf.items else "no details";
+
+    if (ai_loader_active.*) {
+        stopAiLoader(spinner_runtime);
+        ai_loader_active.* = false;
+    }
+    printToolUseLine(timestamp_ms, tool_name, status, details, duration_ms, config.use_color, config.use_unicode);
+    if (!ai_loader_active.*) {
+        startAiLoader(spinner_runtime);
+        ai_loader_active.* = true;
+    }
+}
+
+fn handleTextEvent(root_obj: std.json.ObjectMap, timestamp_ms: i64, ai_loader_active: *bool, spinner_runtime: *SpinnerRuntime, config: Config) void {
+    const part_v = root_obj.get("part") orelse return;
+    if (part_v != .object) return;
+
+    const text_v = part_v.object.get("text") orelse return;
+    if (text_v != .string) return;
+
+    const max_lines = 3;
+    var lines: [max_lines][]const u8 = undefined;
+    var line_count: usize = 0;
+
+    var line_it = std.mem.splitScalar(u8, text_v.string, '\n');
+    while (line_it.next()) |raw_line| {
+        const trimmed = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (trimmed.len == 0) continue;
+        if (line_count < max_lines) {
+            lines[line_count] = trimmed;
+            line_count += 1;
+        } else {
+            // Count remaining lines
+            var remaining: usize = 1;
+            while (line_it.next()) |_| remaining += 1;
+            // Show "... (N more lines)"
+            if (ai_loader_active.*) {
+                stopAiLoader(spinner_runtime);
+                ai_loader_active.* = false;
+            }
+            printTextLineWithMoreIndicator(timestamp_ms, lines[0..line_count], remaining, config);
+            return;
+        }
+    }
+
+    if (line_count > 0) {
         if (ai_loader_active.*) {
             stopAiLoader(spinner_runtime);
             ai_loader_active.* = false;
         }
-        return;
+        printTextLines(timestamp_ms, lines[0..line_count], config);
     }
+}
 
-    if (std.mem.eql(u8, event_type, "tool_use")) {
-        if (root_obj.get("part")) |part_v| {
-            if (part_v == .object) {
-                const tool_name = if (part_v.object.get("tool")) |tv| switch (tv) {
-                    .string => |s| s,
-                    else => "unknown",
-                } else "unknown";
+// Helper output functions for structured event logging
 
-                var status: []const u8 = "unknown";
-                if (part_v.object.get("state")) |state_v| {
-                    if (state_v == .object) {
-                        if (state_v.object.get("status")) |sv| {
-                            if (sv == .string) status = sv.string;
-                        }
-                    }
-                }
+fn printSessionLine(timestamp_ms: i64, session_id: []const u8, use_color: bool, use_unicode: bool) void {
+    const allocator = std.heap.page_allocator;
+    const timestamp_str = formatTimestamp(allocator, timestamp_ms) catch return;
+    defer allocator.free(timestamp_str);
 
-                var msg_buf: std.ArrayList(u8) = .empty;
-                defer msg_buf.deinit(allocator);
-                msg_buf.writer(allocator).print("{s} ({s})", .{ tool_name, status }) catch return;
+    const icon = if (use_unicode) Icons.session else Icons.session_ascii;
+    const sid = truncateForLog(session_id, 40);
 
-                if (part_v.object.get("state")) |state_v| {
-                    if (state_v == .object) {
-                        if (state_v.object.get("input")) |input_v| {
-                            if (input_v == .object) {
-                                if (input_v.object.get("command")) |cv| {
-                                    if (valueAsString(cv)) |command| {
-                                        const concise = simplifyShellCommand(command);
-                                        appendToolDetail(&msg_buf, allocator, "cmd", concise) catch {};
-                                    }
-                                } else if (input_v.object.get("filePath")) |fv| {
-                                    if (valueAsString(fv)) |file_path| {
-                                        appendToolDetail(&msg_buf, allocator, "file", file_path) catch {};
-                                    }
-                                } else if (input_v.object.get("path")) |pv| {
-                                    if (valueAsString(pv)) |path| {
-                                        appendToolDetail(&msg_buf, allocator, "path", path) catch {};
-                                    }
-                                } else if (input_v.object.get("query")) |qv| {
-                                    if (valueAsString(qv)) |query| {
-                                        appendToolDetail(&msg_buf, allocator, "query", query) catch {};
-                                    }
-                                }
-                            }
-                        }
+    if (use_color) {
+        std.debug.print("[{s}] {s} {s}Session{s}: {s}\n", .{ timestamp_str, icon, Colors.blue, Colors.nc, sid });
+    } else {
+        std.debug.print("[{s}] {s} Session: {s}\n", .{ timestamp_str, icon, sid });
+    }
+}
 
-                        if (state_v.object.get("metadata")) |metadata_v| {
-                            if (metadata_v == .object) {
-                                if (metadata_v.object.get("title")) |title_v| {
-                                    if (valueAsString(title_v)) |title| {
-                                        appendToolDetail(&msg_buf, allocator, "target", title) catch {};
-                                    }
-                                }
-                            }
-                        }
+fn printToolUseLine(timestamp_ms: i64, tool_name: []const u8, status: []const u8, details: []const u8, duration_ms: ?i64, use_color: bool, use_unicode: bool) void {
+    const allocator = std.heap.page_allocator;
+    const timestamp_str = formatTimestamp(allocator, timestamp_ms) catch return;
+    defer allocator.free(timestamp_str);
 
-                        if (state_v.object.get("time")) |time_v| {
-                            if (time_v == .object) {
-                                if (time_v.object.get("start")) |start_v| {
-                                    if (time_v.object.get("end")) |end_v| {
-                                        if (valueAsI64(start_v)) |start_ms| {
-                                            if (valueAsI64(end_v)) |end_ms| {
-                                                if (end_ms >= start_ms) {
-                                                    msg_buf.writer(allocator).print(" | {d}ms", .{end_ms - start_ms}) catch {};
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    const icon = if (use_unicode) Icons.tool else Icons.tool_ascii;
+    const timer_icon = if (use_unicode) Icons.timer else Icons.timer_ascii;
 
-                if (ai_loader_active.*) {
-                    stopAiLoader(spinner_runtime);
-                    ai_loader_active.* = false;
-                }
-                printEventLine("TOOL", Colors.yellow, msg_buf.items);
-                if (!ai_loader_active.*) {
-                    startAiLoader(spinner_runtime);
-                    ai_loader_active.* = true;
-                }
-                return;
+    const status_color = if (std.mem.eql(u8, status, "completed")) Colors.green else if (std.mem.eql(u8, status, "error")) Colors.red else if (std.mem.eql(u8, status, "running")) Colors.yellow else Colors.gray;
+
+    if (use_color) {
+        if (duration_ms) |dur| {
+            std.debug.print("[{s}] {s} {s}{s}{s} {s}{d}ms{s} | {s}\n", .{ timestamp_str, icon, Colors.yellow, tool_name, Colors.nc, timer_icon, dur, Colors.nc, details });
+        } else {
+            std.debug.print("[{s}] {s} {s}{s}{s} ({s}{s}{s}) | {s}\n", .{ timestamp_str, icon, Colors.yellow, tool_name, Colors.nc, status_color, status, Colors.nc, details });
+        }
+    } else {
+        if (duration_ms) |dur| {
+            std.debug.print("[{s}] {s} {s} [~{d}ms] | {s}\n", .{ timestamp_str, icon, tool_name, dur, details });
+        } else {
+            std.debug.print("[{s}] {s} {s} ({s}) | {s}\n", .{ timestamp_str, icon, tool_name, status, details });
+        }
+    }
+}
+
+fn printTextLine(timestamp_ms: i64, text: []const u8, use_color: bool, use_unicode: bool) void {
+    const allocator = std.heap.page_allocator;
+    const timestamp_str = formatTimestamp(allocator, timestamp_ms) catch return;
+    defer allocator.free(timestamp_str);
+
+    const icon = if (use_unicode) Icons.ai else Icons.ai_ascii;
+    const clipped = truncateForLog(text, 180);
+
+    if (use_color) {
+        std.debug.print("[{s}] {s} {s}{s}{s}\n", .{ timestamp_str, icon, Colors.cyan, clipped, Colors.nc });
+    } else {
+        std.debug.print("[{s}] {s} {s}\n", .{ timestamp_str, icon, clipped });
+    }
+}
+
+fn printTextLines(timestamp_ms: i64, lines: []const []const u8, config: Config) void {
+    const allocator = std.heap.page_allocator;
+    const timestamp_str = formatTimestamp(allocator, timestamp_ms) catch return;
+    defer allocator.free(timestamp_str);
+
+    const icon = if (config.use_unicode) Icons.ai else Icons.ai_ascii;
+    const line_icon = if (config.use_unicode) "  ↳ " else "  > ";
+
+    for (lines, 0..) |line, i| {
+        const clipped = truncateForLog(line, 180);
+        if (i == 0) {
+            // First line with icon
+            if (config.use_color) {
+                std.debug.print("[{s}] {s} {s}{s}{s}\n", .{ timestamp_str, icon, Colors.cyan, clipped, Colors.nc });
+            } else {
+                std.debug.print("[{s}] {s} {s}\n", .{ timestamp_str, icon, clipped });
+            }
+        } else {
+            // Continuation lines
+            if (config.use_color) {
+                std.debug.print("[{s}] {s} {s}{s}{s}\n", .{ timestamp_str, line_icon, Colors.cyan, clipped, Colors.nc });
+            } else {
+                std.debug.print("[{s}] {s} {s}\n", .{ timestamp_str, line_icon, clipped });
             }
         }
-        return;
     }
+}
 
-    if (std.mem.eql(u8, event_type, "text")) {
-        if (root_obj.get("part")) |part_v| {
-            if (part_v == .object) {
-                if (part_v.object.get("text")) |text_v| {
-                    if (text_v == .string) {
-                        var first_line_it = std.mem.splitScalar(u8, text_v.string, '\n');
-                        const first_line = std.mem.trim(u8, first_line_it.next() orelse "", " \t\r\n");
-                        if (first_line.len == 0) return;
-                        if (ai_loader_active.*) {
-                            stopAiLoader(spinner_runtime);
-                            ai_loader_active.* = false;
-                        }
-                        const clipped = truncateForLog(first_line, 180);
-                        printEventLine("AI", Colors.green, clipped);
-                    }
-                }
-            }
-        }
+fn printTextLineWithMoreIndicator(timestamp_ms: i64, lines: []const []const u8, remaining: usize, config: Config) void {
+    printTextLines(timestamp_ms, lines, config);
+
+    const allocator = std.heap.page_allocator;
+    const timestamp_str = formatTimestamp(allocator, timestamp_ms) catch return;
+    defer allocator.free(timestamp_str);
+
+    const more_icon = if (config.use_unicode) "  … " else "  ... ";
+    if (config.use_color) {
+        std.debug.print("[{s}] {s} {s}({d} more lines){s}\n", .{ timestamp_str, more_icon, Colors.gray, remaining, Colors.nc });
+    } else {
+        std.debug.print("[{s}] {s} ({d} more lines)\n", .{ timestamp_str, more_icon, remaining });
     }
 }
 
@@ -855,7 +1096,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
         while (std.mem.indexOfScalar(u8, line_buf.items, '\n')) |nl| {
             const line = std.mem.trimRight(u8, line_buf.items[0..nl], "\r\n");
             if (line.len > 0) {
-                emitOpencodeEventSummary(allocator, line, &seen_session, &ai_loader_active, &spinner_runtime);
+                emitOpencodeEventSummary(allocator, line, &seen_session, &ai_loader_active, &spinner_runtime, config);
             }
 
             const remain = line_buf.items[nl + 1 ..];
@@ -866,7 +1107,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
 
     if (line_buf.items.len > 0) {
         const tail_line = std.mem.trimRight(u8, line_buf.items, "\r\n");
-        if (tail_line.len > 0) emitOpencodeEventSummary(allocator, tail_line, &seen_session, &ai_loader_active, &spinner_runtime);
+        if (tail_line.len > 0) emitOpencodeEventSummary(allocator, tail_line, &seen_session, &ai_loader_active, &spinner_runtime, config);
     }
 
     if (ai_loader_active) {
