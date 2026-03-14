@@ -39,6 +39,26 @@ Run iterations using .techlead/techlead.json:
 
     zig build run -- run
 
+### Server Commands
+
+Manage the OpenCode server lifecycle:
+
+Start server in foreground:
+
+    zig build run -- server start
+
+Start server in background (daemon mode):
+
+    zig build run -- server start --daemon
+
+Stop the running server:
+
+    zig build run -- server stop
+
+Server files:
+- PID file: `~/.config/techlead/server.pid`
+- Log file: `~/.config/techlead/server.log`
+
 ## Typical Local Usage In This Repo
 
 From repository root:

@@ -8,6 +8,11 @@ const DEFAULT_PROGRAM_FILE = "program.md";
 const CONFIG_REL_PATH = ".techlead/techlead.json";
 const DEFAULT_PROGRAM_REL_PATH = ".techlead/program.md";
 const DEFAULT_LOG_DIR = ".techlead/iteration-logs";
+const SERVER_CONFIG_DIR = ".config/techlead";
+const SERVER_PID_FILENAME = "server.pid";
+const SERVER_LOG_FILENAME = "server.log";
+const DEFAULT_OPCENCODE_PORT = 4096;
+const SERVER_SHUTDOWN_TIMEOUT_MS = 5000;
 
 const Colors = struct {
     const red = "\x1b[0;31m";
@@ -145,6 +150,108 @@ fn writeFileWithPolicy(path: []const u8, content: []const u8, force: bool) !void
     var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
     try file.writeAll(content);
+}
+
+// PID file management utilities
+const posix = std.posix;
+
+fn getServerConfigDir(allocator: Allocator) ![]u8 {
+    const home_dir = posix.getenv("HOME") orelse return error.HomeNotFound;
+    return std.fs.path.join(allocator, &[_][]const u8{ home_dir, SERVER_CONFIG_DIR });
+}
+
+fn getPidFilePath(allocator: Allocator) ![]u8 {
+    const config_dir = try getServerConfigDir(allocator);
+    defer allocator.free(config_dir);
+    return std.fs.path.join(allocator, &[_][]const u8{ config_dir, SERVER_PID_FILENAME });
+}
+
+fn isServerRunning(pid: posix.pid_t) bool {
+    // Use kill(pid, 0) to check if process exists
+    // kill returns 0 if process exists and we have permission to send signals
+    // returns ESRCH if process doesn't exist
+    const result = posix.kill(pid, 0);
+    if (result) {
+        return true;
+    } else |err| {
+        return err != error.ProcessNotFound;
+    }
+}
+
+fn readPidFile(allocator: Allocator) !posix.pid_t {
+    const pid_path = try getPidFilePath(allocator);
+    defer allocator.free(pid_path);
+
+    const content = std.fs.cwd().readFileAlloc(allocator, pid_path, 256) catch |err| {
+        switch (err) {
+            error.FileNotFound => return error.ServerNotRunning,
+            else => return err,
+        }
+    };
+    defer allocator.free(content);
+
+    const trimmed = std.mem.trim(u8, content, " \t\r\n");
+    if (trimmed.len == 0) {
+        return error.InvalidPidFile;
+    }
+
+    const pid = std.fmt.parseInt(posix.pid_t, trimmed, 10) catch {
+        return error.InvalidPidFile;
+    };
+
+    // Check if PID is stale (process no longer exists)
+    if (!isServerRunning(pid)) {
+        // Stale PID file, try to clean it up
+        deletePidFile() catch {};
+        return error.ServerNotRunning;
+    }
+
+    return pid;
+}
+
+fn writePidFile(allocator: Allocator, pid: posix.pid_t) !void {
+    const pid_path = try getPidFilePath(allocator);
+    defer allocator.free(pid_path);
+
+    const config_dir = try getServerConfigDir(allocator);
+    defer allocator.free(config_dir);
+
+    // Ensure config directory exists
+    std.fs.cwd().makePath(config_dir) catch |err| {
+        return err;
+    };
+
+    // Create temp file in same directory for atomic write
+    const temp_path = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ pid_path, std.time.timestamp() });
+    defer allocator.free(temp_path);
+
+    const content = try std.fmt.allocPrint(allocator, "{d}\n", .{pid});
+    defer allocator.free(content);
+
+    // Write to temp file
+    var temp_file = try std.fs.cwd().createFile(temp_path, .{ .truncate = true });
+    defer temp_file.close();
+    try temp_file.writeAll(content);
+    temp_file.close();
+
+    // Atomic rename
+    try std.fs.cwd().rename(temp_path, pid_path);
+}
+
+fn deletePidFile() !void {
+    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa_impl.deinit();
+    const allocator = gpa_impl.allocator();
+
+    const pid_path = try getPidFilePath(allocator);
+    defer allocator.free(pid_path);
+
+    std.fs.cwd().deleteFile(pid_path) catch |err| {
+        switch (err) {
+            error.FileNotFound => {}, // Already deleted, that's fine
+            else => return err,
+        }
+    };
 }
 
 fn deinitConfig(allocator: Allocator, config: *const Config) void {
@@ -1031,10 +1138,20 @@ fn showHelp() void {
         "\nTechlead 持续迭代 CLI (Zig)\n\n" ++
             "用法:\n" ++
             "    zig build run -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
-            "    zig build run -- run [--dir 目录]\n\n" ++
+            "    zig build run -- run [--dir 目录]\n" ++
+            "    zig build run -- server start [--daemon]\n" ++
+            "    zig build run -- server stop\n\n" ++
             "说明:\n" ++
             "    - init: 在目标目录生成 .techlead/techlead.json 和 .techlead/program.md（默认当前目录）\n" ++
             "    - run: 从目标目录读取 .techlead/techlead.json 并执行迭代（默认当前目录）\n" ++
+            "    - server start: 在前台启动 opencode serve 服务\n" ++
+            "    - server start --daemon: 在后台启动 opencode serve 服务\n" ++
+            "    - server stop: 停止 opencode serve 服务（发送 SIGTERM，超时后发送 SIGKILL）\n" ++
+            "\n" ++
+            "文件位置:\n" ++
+            "    - PID 文件: ~/.config/techlead/server.pid\n" ++
+            "    - 日志文件: ~/.config/techlead/server.log\n" ++
+            "\n" ++
             "    - run 阶段只读取 JSON 配置，不读取环境变量\n\n",
         .{},
     );
@@ -1148,6 +1265,335 @@ pub fn main() !void {
         return;
     }
 
+    if (std.mem.eql(u8, command, "server")) {
+        if (args.len < 3) {
+            logError("server 需要子命令: start, stop", .{});
+            showHelp();
+            return;
+        }
+        const subcommand = args[2];
+
+        if (std.mem.eql(u8, subcommand, "start")) {
+            // Parse optional --daemon flag
+            var daemon_mode = false;
+            for (args[3..]) |arg| {
+                if (std.mem.eql(u8, arg, "--daemon")) {
+                    daemon_mode = true;
+                    break;
+                }
+            }
+
+            runServerStartCommand(allocator, daemon_mode) catch |err| {
+                switch (err) {
+                    error.ServerAlreadyRunning => logError("服务已在运行", .{}),
+                    error.ServerStartFailed => logError("启动服务失败", .{}),
+                    error.MissingOpencode => logError("找不到 opencode CLI，请确保已安装", .{}),
+                    else => logError("启动服务失败: {any}", .{err}),
+                }
+            };
+            return;
+        }
+
+        if (std.mem.eql(u8, subcommand, "stop")) {
+            runServerStopCommand(allocator) catch |err| {
+                switch (err) {
+                    error.ServerNotRunning => logError("服务未运行", .{}),
+                    error.ServerStopFailed => logError("停止服务失败", .{}),
+                    else => logError("停止服务失败: {any}", .{err}),
+                }
+            };
+            return;
+        }
+
+        logError("未知的 server 子命令: {s}", .{subcommand});
+        showHelp();
+        return;
+    }
+
     logError("未知命令: {s}", .{command});
     showHelp();
 }
+
+fn getServerLogPath(allocator: Allocator) ![]u8 {
+    const home_dir = posix.getenv("HOME") orelse return error.HomeNotFound;
+    return std.fs.path.join(allocator, &[_][]const u8{ home_dir, SERVER_CONFIG_DIR, SERVER_LOG_FILENAME });
+}
+
+fn redirectToLogFile(allocator: Allocator) !std.fs.File {
+    const log_path = try getServerLogPath(allocator);
+    defer allocator.free(log_path);
+
+    // Ensure config directory exists
+    const config_dir = try getServerConfigDir(allocator);
+    defer allocator.free(config_dir);
+    std.fs.cwd().makePath(config_dir) catch |err| {
+        return err;
+    };
+
+    // Open log file for writing (create if not exists, append if exists)
+    const log_file = std.fs.cwd().openFile(log_path, .{ .mode = .write_only }) catch |err| {
+        if (err == error.FileNotFound) {
+            // Create the file
+            return try std.fs.cwd().createFile(log_path, .{ .truncate = false });
+        }
+        return err;
+    };
+
+    return log_file;
+}
+
+fn runServerStopCommand(allocator: Allocator) !void {
+    // 1. Read PID file to get the process ID
+    const pid = readPidFile(allocator) catch |err| {
+        switch (err) {
+            error.ServerNotRunning => {
+                logError("服务未运行", .{});
+                return error.ServerNotRunning;
+            },
+            error.InvalidPidFile => {
+                logError("PID 文件无效", .{});
+                // Try to clean up invalid PID file
+                deletePidFile() catch {};
+                return error.ServerNotRunning;
+            },
+            else => return err,
+        }
+    };
+
+    logInfo("正在停止服务 (PID: {d})...", .{pid});
+
+    // 2. Send SIGTERM for graceful shutdown
+    posix.kill(pid, posix.SIG.TERM) catch |err| {
+        logError("发送 SIGTERM 信号失败: {any}", .{err});
+        // Try to clean up PID file since we can't signal the process
+        deletePidFile() catch {};
+        return error.ServerStopFailed;
+    };
+
+    // 3. Wait for process to exit (up to 5 seconds)
+    const timeout_ms = SERVER_SHUTDOWN_TIMEOUT_MS; // 5000
+    const poll_interval_ms = 100;
+    var waited_ms: usize = 0;
+
+    while (waited_ms < timeout_ms) {
+        if (!isServerRunning(pid)) break;
+        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+        waited_ms += poll_interval_ms;
+    }
+
+    // 4. Check if process is still running
+    if (isServerRunning(pid)) {
+        logWarn("服务未能在 5 秒内退出，发送 SIGKILL...", .{});
+
+        // Send SIGKILL to force terminate
+        posix.kill(pid, posix.SIG.KILL) catch |err| {
+            logError("发送 SIGKILL 信号失败: {any}", .{err});
+            // Still try to clean up PID file
+            deletePidFile() catch {};
+            return error.ServerStopFailed;
+        };
+
+        // Wait a bit more for SIGKILL to take effect
+        std.Thread.sleep(500 * std.time.ns_per_ms);
+
+        // Check if it's still running after SIGKILL
+        if (isServerRunning(pid)) {
+            logError("无法终止服务进程 (PID: {d})", .{pid});
+            return error.ServerStopFailed;
+        }
+    }
+
+    // 5. Clean up PID file
+    deletePidFile() catch |err| {
+        logWarn("清理 PID 文件失败: {any}", .{err});
+    };
+
+    logSuccess("服务已停止", .{});
+}
+
+fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
+    // 1. Check if opencode CLI exists
+    if (!commandExists(allocator, "opencode")) {
+        logError("找不到 opencode CLI，请确保已安装", .{});
+        return error.MissingOpencode;
+    }
+
+    // 2. Check if server is already running
+    const existing_pid = readPidFile(allocator) catch |err| switch (err) {
+        error.ServerNotRunning => null,
+        else => return err,
+    };
+
+    if (existing_pid) |pid| {
+        logError("服务已在运行 (PID: {d})", .{pid});
+        return error.ServerAlreadyRunning;
+    }
+
+    if (daemon_mode) {
+        // Daemon mode: fork and create new session
+        logInfo("正在后台启动 opencode serve...", .{});
+
+        const pid = try posix.fork();
+        if (pid < 0) {
+            return error.ServerStartFailed;
+        }
+
+        if (pid > 0) {
+            // Parent process: write child PID and exit quickly
+            writePidFile(allocator, pid) catch |err| {
+                logError("写入 PID 文件失败: {any}", .{err});
+                // Try to kill the child process
+                _ = posix.kill(@intCast(pid), posix.SIG.TERM) catch {};
+                return error.ServerStartFailed;
+            };
+
+            logSuccess("服务已在后台启动 (PID: {d})", .{pid});
+            // Parent exits with success
+            std.process.exit(0);
+        }
+
+        // Child process: become daemon
+        // Create new session, detach from terminal
+        _ = try posix.setsid();
+
+        // Ignore SIGHUP signal
+        const act = posix.Sigaction{
+            .handler = .{ .handler = posix.SIG.IGN },
+            .mask = posix.sigemptyset(),
+            .flags = 0,
+        };
+        posix.sigaction(posix.SIG.HUP, &act, null);
+
+        // Redirect stdout/stderr to log file
+        const log_file = redirectToLogFile(allocator) catch |err| {
+            // Log to stderr before redirect (will go to terminal briefly)
+            std.debug.print("重定向日志失败: {any}\n", .{err});
+            return error.ServerStartFailed;
+        };
+
+        // Duplicate file descriptor to stdout and stderr
+        posix.dup2(log_file.handle, posix.STDOUT_FILENO) catch {};
+        posix.dup2(log_file.handle, posix.STDERR_FILENO) catch {};
+
+        // We don't close log_file here since stdout/stderr now use it
+        // The file will be closed when the process exits
+
+        // Get our new PID after setsid and update PID file
+        const new_pid = std.c.getpid();
+        writePidFile(allocator, new_pid) catch |err| {
+            // Log to file now
+            std.log.err("更新 PID 文件失败: {any}", .{err});
+        };
+
+        // Start opencode serve in daemon mode
+        const argv = [_][]const u8{ "opencode", "serve" };
+
+        var child = std.process.Child.init(&argv, allocator);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
+
+        try child.spawn();
+
+        // Ensure PID file cleanup on error
+        errdefer deletePidFile() catch {};
+
+        // Wait for process to end
+        const term = child.wait() catch |err| {
+            std.log.err("等待进程失败: {any}", .{err});
+            deletePidFile() catch {};
+            std.process.exit(1);
+        };
+
+        // Cleanup PID file when process exits
+        deletePidFile() catch |err| {
+            std.log.warn("清理 PID 文件失败: {any}", .{err});
+        };
+
+        // Log exit status
+        switch (term) {
+            .Exited => |code| {
+                if (code == 0) {
+                    std.log.info("服务已正常退出", .{});
+                } else {
+                    std.log.warn("服务异常退出 (code: {d})", .{code});
+                }
+            },
+            .Signal => |sig| {
+                std.log.info("服务被信号终止 (signal: {d})", .{sig});
+            },
+            .Stopped => |sig| {
+                std.log.info("服务被停止 (signal: {d})", .{sig});
+            },
+            .Unknown => |code| {
+                std.log.warn("服务以未知状态退出 (code: {d})", .{code});
+            },
+        }
+
+        std.process.exit(0);
+    } else {
+        // Foreground mode (existing behavior)
+        logInfo("正在启动 opencode serve...", .{});
+
+        const argv = [_][]const u8{ "opencode", "serve" };
+
+        var child = std.process.Child.init(&argv, allocator);
+        child.stdin_behavior = .Inherit;
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
+
+        try child.spawn();
+
+        // Write PID file
+        writePidFile(allocator, child.id) catch |err| {
+            logError("写入 PID 文件失败: {any}", .{err});
+            _ = child.kill() catch {};
+            return error.ServerStartFailed;
+        };
+
+        logSuccess("服务已启动 (PID: {d})", .{child.id});
+
+        // Ensure PID file cleanup on error
+        errdefer deletePidFile() catch {};
+
+        // Wait for process to end (foreground mode)
+        const term = child.wait() catch |err| {
+            logError("等待进程失败: {any}", .{err});
+            deletePidFile() catch {};
+            return error.ServerStartFailed;
+        };
+
+        // Cleanup PID file when process exits
+        deletePidFile() catch |err| {
+            logWarn("清理 PID 文件失败: {any}", .{err});
+        };
+
+        switch (term) {
+            .Exited => |code| {
+                if (code == 0) {
+                    logInfo("服务已正常退出", .{});
+                } else {
+                    logWarn("服务异常退出 (code: {d})", .{code});
+                }
+            },
+            .Signal => |sig| {
+                logInfo("服务被信号终止 (signal: {d})", .{sig});
+            },
+            .Stopped => |sig| {
+                logInfo("服务被停止 (signal: {d})", .{sig});
+            },
+            .Unknown => |code| {
+                logWarn("服务以未知状态退出 (code: {d})", .{code});
+            },
+        }
+    }
+}
+
+const ServerError = error{
+    ServerAlreadyRunning,
+    ServerNotRunning,
+    ServerStartFailed,
+    ServerStopFailed,
+    InvalidPidFile,
+    PidFileLocked,
+};
