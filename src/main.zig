@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const utils = @import("utils.zig");
+const ui = @import("ui.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -15,18 +16,6 @@ const SERVER_PID_FILENAME = "server.pid";
 const SERVER_LOG_FILENAME = "server.log";
 const DEFAULT_OPCENCODE_PORT = 4096;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 5000;
-
-const Colors = struct {
-    const red = "\x1b[0;31m";
-    const green = "\x1b[0;32m";
-    const yellow = "\x1b[1;33m";
-    const blue = "\x1b[0;34m";
-    const nc = "\x1b[0m";
-    const cyan = "\x1b[0;36m";
-    const magenta = "\x1b[0;35m";
-    const white = "\x1b[1;37m";
-    const gray = "\x1b[0;90m";
-};
 
 fn capitalizeFirstLetter(allocator: Allocator, str: []const u8) ![]u8 {
     if (str.len == 0) return allocator.dupe(u8, str);
@@ -66,22 +55,6 @@ const Config = struct {
     main_branch: []u8,
     max_branches: usize,
 };
-
-fn logInfo(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("{s}[INFO]{s} " ++ fmt ++ "\n", .{ Colors.blue, Colors.nc } ++ args);
-}
-
-fn logSuccess(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("{s}[SUCCESS]{s} " ++ fmt ++ "\n", .{ Colors.green, Colors.nc } ++ args);
-}
-
-fn logWarn(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("{s}[WARN]{s} " ++ fmt ++ "\n", .{ Colors.yellow, Colors.nc } ++ args);
-}
-
-fn logError(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("{s}[ERROR]{s} " ++ fmt ++ "\n", .{ Colors.red, Colors.nc } ++ args);
-}
 
 // PID file management utilities
 const posix = std.posix;
@@ -204,7 +177,7 @@ fn resolveConfigPath(allocator: Allocator, base_dir: []const u8) ![]u8 {
 
     const legacy_path = try std.fs.path.join(allocator, &[_][]const u8{ base_dir, CONFIG_FILE_NAME });
     if (utils.fileExists(legacy_path)) {
-        logWarn("检测到旧版配置路径: {s}", .{legacy_path});
+        ui.logWarn("检测到旧版配置路径: {s}", .{legacy_path});
         return legacy_path;
     }
     allocator.free(legacy_path);
@@ -393,54 +366,6 @@ fn appendSection(writer: anytype, title: []const u8, body: []const u8) !void {
     try writer.print("=== {s} ===\n{s}\n\n", .{ title, body });
 }
 
-fn truncateForLog(text: []const u8, limit: usize) []const u8 {
-    if (text.len <= limit) return text;
-    return text[0..limit];
-}
-
-fn printEventLine(comptime label: []const u8, comptime color: []const u8, msg: []const u8) void {
-    std.debug.print("{s}[{s}]{s} {s}\n", .{ color, label, Colors.nc, msg });
-}
-
-const AI_SPINNER_FRAMES = [_][]const u8{ "|", "/", "-", "\\" };
-
-const SpinnerRuntime = struct {
-    running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    thread: ?std.Thread = null,
-};
-
-fn renderAiLoader(spinner_index: usize) void {
-    const frame = AI_SPINNER_FRAMES[spinner_index % AI_SPINNER_FRAMES.len];
-    std.debug.print("\r\x1b[2K{s}[AI]{s} 正在工作 {s}", .{ Colors.blue, Colors.nc, frame });
-}
-
-fn spinnerThreadMain(runtime: *SpinnerRuntime) void {
-    var spinner_index: usize = 0;
-    while (runtime.running.load(.seq_cst)) {
-        renderAiLoader(spinner_index);
-        spinner_index = (spinner_index + 1) % AI_SPINNER_FRAMES.len;
-        std.Thread.sleep(120 * std.time.ns_per_ms);
-    }
-}
-
-fn startAiLoader(runtime: *SpinnerRuntime) void {
-    runtime.running.store(true, .seq_cst);
-    runtime.thread = std.Thread.spawn(.{}, spinnerThreadMain, .{runtime}) catch {
-        runtime.running.store(false, .seq_cst);
-        renderAiLoader(0);
-        return;
-    };
-}
-
-fn stopAiLoader(runtime: *SpinnerRuntime) void {
-    runtime.running.store(false, .seq_cst);
-    if (runtime.thread) |thread| {
-        thread.join();
-        runtime.thread = null;
-    }
-    std.debug.print("\r\x1b[2K", .{});
-}
-
 fn valueAsString(v: std.json.Value) ?[]const u8 {
     return switch (v) {
         .string => |s| s,
@@ -459,7 +384,7 @@ fn valueAsI64(v: std.json.Value) ?i64 {
 fn appendToolDetail(msg_buf: *std.ArrayList(u8), allocator: Allocator, key: []const u8, raw_value: []const u8) !void {
     const value = std.mem.trim(u8, raw_value, " \t\r\n");
     if (value.len == 0) return;
-    try msg_buf.writer(allocator).print(" | {s}: {s}", .{ key, truncateForLog(value, 88) });
+    try msg_buf.writer(allocator).print(" | {s}: {s}", .{ key, ui.truncateForLog(value, 88) });
 }
 
 fn simplifyShellCommand(raw: []const u8) []const u8 {
@@ -564,8 +489,8 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     const current_branch = utils.runShellStdout(allocator, config.work_dir, "git branch --show-current") catch "unknown";
     defer if (!std.mem.eql(u8, current_branch, "unknown")) allocator.free(current_branch);
 
-    logInfo("第 {d} 次迭代：调用 OpenCode...", .{iteration});
-    logInfo("当前分支: {s}", .{current_branch});
+    ui.logInfo("第 {d} 次迭代：调用 OpenCode...", .{iteration});
+    ui.logInfo("当前分支: {s}", .{current_branch});
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
@@ -591,7 +516,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     // prompt 必须放在最后
     try argv.append(allocator, prompt);
 
-    logInfo("执行: oh-my-opencode run --attach {s} --directory {s} --json", .{ config.opencode_url, config.work_dir });
+    ui.logInfo("执行: oh-my-opencode run --attach {s} --directory {s} --json", .{ config.opencode_url, config.work_dir });
 
     var log_file = try std.fs.cwd().createFile(log_file_path, .{ .truncate = true });
     defer log_file.close();
@@ -626,21 +551,21 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
 
     const term = try child.wait();
     if (!utils.isExitedZero(term)) {
-        logError("调用 OpenCode 失败", .{});
-        logInfo("日志保存在: {s}", .{log_file_path});
+        ui.logError("调用 OpenCode 失败", .{});
+        ui.logInfo("日志保存在: {s}", .{log_file_path});
         return false;
     }
 
     if (findDecision(merged.items)) |decision| {
         if (std.mem.eql(u8, decision, "DECISION: KEEP")) {
-            logSuccess("决策: 保留分支", .{});
+            ui.logSuccess("决策: 保留分支", .{});
         } else if (std.mem.eql(u8, decision, "DECISION: DISCARD")) {
-            logWarn("决策: 舍弃分支", .{});
+            ui.logWarn("决策: 舍弃分支", .{});
         } else {
-            logSuccess("决策: 创建了新实验分支", .{});
+            ui.logSuccess("决策: 创建了新实验分支", .{});
         }
     } else {
-        logWarn("无法解析决策，请查看日志: {s}", .{log_file_path});
+        ui.logWarn("无法解析决策，请查看日志: {s}", .{log_file_path});
     }
 
     return true;
@@ -669,8 +594,8 @@ fn cleanupOldBranches(config: Config, allocator: Allocator) void {
 
     if (branches.items.len <= config.max_branches) return;
 
-    logWarn("experiment 分支数量 ({d}) 超过限制 ({d})", .{ branches.items.len, config.max_branches });
-    logInfo("清理旧分支...", .{});
+    ui.logWarn("experiment 分支数量 ({d}) 超过限制 ({d})", .{ branches.items.len, config.max_branches });
+    ui.logInfo("清理旧分支...", .{});
 
     const to_delete = branches.items.len - config.max_branches;
     var i: usize = 0;
@@ -679,16 +604,16 @@ fn cleanupOldBranches(config: Config, allocator: Allocator) void {
         defer allocator.free(cmd);
 
         const result = utils.runShellCapture(allocator, config.work_dir, cmd) catch {
-            logWarn("无法删除分支 {s}", .{branches.items[i]});
+            ui.logWarn("无法删除分支 {s}", .{branches.items[i]});
             continue;
         };
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 
         if (utils.isExitedZero(result.term)) {
-            logInfo("已删除分支: {s}", .{branches.items[i]});
+            ui.logInfo("已删除分支: {s}", .{branches.items[i]});
         } else {
-            logWarn("无法删除分支 {s}", .{branches.items[i]});
+            ui.logWarn("无法删除分支 {s}", .{branches.items[i]});
         }
     }
 }
@@ -706,40 +631,40 @@ fn verifyGitRepo(cwd: []const u8, allocator: Allocator) !void {
 }
 
 fn validateRunEnvironment(config: Config, allocator: Allocator) !void {
-    logInfo("检查运行环境...", .{});
+    ui.logInfo("检查运行环境...", .{});
 
     const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, config.work_dir);
     defer allocator.free(abs_work_dir);
-    logInfo("工作目录: {s}", .{abs_work_dir});
+    ui.logInfo("工作目录: {s}", .{abs_work_dir});
 
     const program_path = try std.fs.path.join(allocator, &[_][]const u8{ config.work_dir, config.program_file });
     defer allocator.free(program_path);
 
     std.fs.cwd().access(program_path, .{}) catch {
-        logError("找不到 {s}", .{program_path});
+        ui.logError("找不到 {s}", .{program_path});
         return error.MissingProgramFile;
     };
 
     try verifyGitRepo(config.work_dir, allocator);
-    logSuccess("环境检查通过", .{});
+    ui.logSuccess("环境检查通过", .{});
     std.debug.print("\n", .{});
 }
 
 fn checkOpencode(config: Config, allocator: Allocator) !void {
-    logInfo("检查 OpenCode server...", .{});
+    ui.logInfo("检查 OpenCode server...", .{});
     if (!utils.checkHttpService(allocator, config.opencode_url)) {
-        logError("无法连接到 OpenCode server at {s}", .{config.opencode_url});
-        logInfo("请确保 OpenCode serve 正在运行: opencode serve", .{});
+        ui.logError("无法连接到 OpenCode server at {s}", .{config.opencode_url});
+        ui.logInfo("请确保 OpenCode serve 正在运行: opencode serve", .{});
         return error.OpencodeUnavailable;
     }
 
-    logSuccess("OpenCode server 连接正常", .{});
+    ui.logSuccess("OpenCode server 连接正常", .{});
     std.debug.print("\n", .{});
 }
 
 fn runCommand(config: Config, allocator: Allocator) !void {
     if (!utils.commandExists(allocator, "opencode")) {
-        logError("找不到 opencode CLI，请确保已安装", .{});
+        ui.logError("找不到 opencode CLI，请确保已安装", .{});
         return error.MissingOpencode;
     }
 
@@ -749,7 +674,7 @@ fn runCommand(config: Config, allocator: Allocator) !void {
     var i: usize = 1;
     while (i <= config.iterations) : (i += 1) {
         std.debug.print("========================================\n", .{});
-        logInfo("第 {d} / {d} 次迭代", .{ i, config.iterations });
+        ui.logInfo("第 {d} / {d} 次迭代", .{ i, config.iterations });
         std.debug.print("========================================\n\n", .{});
 
         const experiment_branch = getCurrentExperimentBranch(config, allocator);
@@ -760,18 +685,18 @@ fn runCommand(config: Config, allocator: Allocator) !void {
 
         const success = try invokeOpencode(config, allocator, i, prompt);
         if (!success) {
-            logError("第 {d} 次迭代失败，跳过...", .{i});
+            ui.logError("第 {d} 次迭代失败，跳过...", .{i});
             continue;
         }
 
         cleanupOldBranches(config, allocator);
 
         std.debug.print("\n", .{});
-        logInfo("当前 git 状态:", .{});
+        ui.logInfo("当前 git 状态:", .{});
         const branch_output = utils.runShellStdout(allocator, config.work_dir, "git branch -v") catch {
             std.debug.print("\n", .{});
             if (i < config.iterations) {
-                logInfo("等待 2 秒后开始下一次迭代...", .{});
+                ui.logInfo("等待 2 秒后开始下一次迭代...", .{});
                 std.Thread.sleep(2 * std.time.ns_per_s);
             }
             std.debug.print("\n", .{});
@@ -788,7 +713,7 @@ fn runCommand(config: Config, allocator: Allocator) !void {
         std.debug.print("\n", .{});
 
         if (i < config.iterations) {
-            logInfo("等待 2 秒后开始下一次迭代...", .{});
+            ui.logInfo("等待 2 秒后开始下一次迭代...", .{});
             std.Thread.sleep(2 * std.time.ns_per_s);
         }
 
@@ -796,25 +721,25 @@ fn runCommand(config: Config, allocator: Allocator) !void {
     }
 
     std.debug.print("========================================\n", .{});
-    logSuccess("迭代完成！", .{});
+    ui.logSuccess("迭代完成！", .{});
     std.debug.print("========================================\n\n", .{});
-    logInfo("总结:", .{});
-    logInfo("  - 总迭代次数: {d}", .{config.iterations});
-    logInfo("  - 日志目录: {s}", .{config.log_dir});
+    ui.logInfo("总结:", .{});
+    ui.logInfo("  - 总迭代次数: {d}", .{config.iterations});
+    ui.logInfo("  - 日志目录: {s}", .{config.log_dir});
 
     const current_branch = utils.runShellStdout(allocator, config.work_dir, "git branch --show-current") catch "unknown";
     defer if (!std.mem.eql(u8, current_branch, "unknown")) allocator.free(current_branch);
-    logInfo("  - 当前分支: {s}", .{current_branch});
+    ui.logInfo("  - 当前分支: {s}", .{current_branch});
     std.debug.print("\n", .{});
 
-    logInfo("保留的 experiment 分支:", .{});
+    ui.logInfo("保留的 experiment 分支:", .{});
     const experiment_branches = utils.runShellStdout(allocator, config.work_dir, "git branch -v | grep experiment- || true") catch "";
     defer if (experiment_branches.len > 0) allocator.free(experiment_branches);
 
     if (experiment_branches.len > 0) {
         std.debug.print("{s}\n", .{experiment_branches});
     } else {
-        logInfo("  无", .{});
+        ui.logInfo("  无", .{});
     }
     std.debug.print("\n", .{});
 }
@@ -833,11 +758,11 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_di
 
     if (!force) {
         if (utils.fileExists(config_path)) {
-            logError("{s} 已存在，使用 --force 覆盖", .{config_path});
+            ui.logError("{s} 已存在，使用 --force 覆盖", .{config_path});
             return error.FileAlreadyExists;
         }
         if (utils.fileExists(program_path)) {
-            logError("{s} 已存在，使用 --force 覆盖", .{program_path});
+            ui.logError("{s} 已存在，使用 --force 覆盖", .{program_path});
             return error.FileAlreadyExists;
         }
     }
@@ -848,11 +773,11 @@ fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_di
     try writeDefaultConfig(allocator, force, target_dir);
     try utils.writeFileWithPolicy(program_path, template, force);
 
-    logSuccess("初始化完成", .{});
-    logInfo("目标目录: {s}", .{target_dir});
-    logInfo("已生成: {s}", .{config_path});
-    logInfo("已生成: {s}", .{program_path});
-    logInfo("下一步执行: zig build run -- run --dir {s}", .{target_dir});
+    ui.logSuccess("初始化完成", .{});
+    ui.logInfo("目标目录: {s}", .{target_dir});
+    ui.logInfo("已生成: {s}", .{config_path});
+    ui.logInfo("已生成: {s}", .{program_path});
+    ui.logInfo("下一步执行: zig build run -- run --dir {s}", .{target_dir});
 }
 
 fn parseInitGoalAndForce(allocator: Allocator, args: []const []const u8) !struct { goal: []u8, force: bool } {
@@ -942,9 +867,9 @@ pub fn main() !void {
 
         const parsed = parseInitGoalAndForce(allocator, init_args) catch |err| {
             switch (err) {
-                error.MissingGoal => logError("init 需要 Goal 参数", .{}),
-                error.InvalidInitArguments => logError("init 参数无效，只支持 --force（以及命令后的可选 --dir 目录）", .{}),
-                else => logError("无法解析 init 参数", .{}),
+                error.MissingGoal => ui.logError("init 需要 Goal 参数", .{}),
+                error.InvalidInitArguments => ui.logError("init 参数无效，只支持 --force（以及命令后的可选 --dir 目录）", .{}),
+                else => ui.logError("无法解析 init 参数", .{}),
             }
             showHelp();
             return;
@@ -953,9 +878,9 @@ pub fn main() !void {
 
         runInitCommand(allocator, parsed.goal, parsed.force, target_dir) catch |err| {
             switch (err) {
-                error.NotGitRepo => logError("目标目录不是 git 仓库: {s}", .{target_dir}),
+                error.NotGitRepo => ui.logError("目标目录不是 git 仓库: {s}", .{target_dir}),
                 error.FileAlreadyExists => {},
-                else => logError("init 执行失败: {any}", .{err}),
+                else => ui.logError("init 执行失败: {any}", .{err}),
             }
             return;
         };
@@ -970,17 +895,17 @@ pub fn main() !void {
             run_args = run_args[2..];
         }
         if (run_args.len > 0) {
-            logError("run 参数无效，仅支持可选 --dir 目录", .{});
+            ui.logError("run 参数无效，仅支持可选 --dir 目录", .{});
             showHelp();
             return;
         }
 
         const config = loadConfigFromJson(allocator, target_dir) catch |err| {
             switch (err) {
-                error.ConfigFileNotFound => logError("找不到 {s}，请先执行 init", .{CONFIG_REL_PATH}),
-                error.ConfigParseFailed => logError("{s} 解析失败，请检查 JSON 格式", .{CONFIG_REL_PATH}),
-                error.InvalidConfig => logError("{s} 字段无效或缺失", .{CONFIG_REL_PATH}),
-                else => logError("读取配置失败: {any}", .{err}),
+                error.ConfigFileNotFound => ui.logError("找不到 {s}，请先执行 init", .{CONFIG_REL_PATH}),
+                error.ConfigParseFailed => ui.logError("{s} 解析失败，请检查 JSON 格式", .{CONFIG_REL_PATH}),
+                error.InvalidConfig => ui.logError("{s} 字段无效或缺失", .{CONFIG_REL_PATH}),
+                else => ui.logError("读取配置失败: {any}", .{err}),
             }
             return;
         };
@@ -989,26 +914,26 @@ pub fn main() !void {
         std.debug.print("========================================\n", .{});
         std.debug.print("  Techlead 持续迭代系统\n", .{});
         std.debug.print("========================================\n\n", .{});
-        logInfo("配置:", .{});
-        logInfo("  - 配置文件: {s}", .{CONFIG_REL_PATH});
-        logInfo("  - 迭代次数: {d}", .{config.iterations});
-        logInfo("  - Program 文件: {s}", .{config.program_file});
-        logInfo("  - OpenCode URL: {s}", .{config.opencode_url});
-        logInfo("  - 主分支: {s}", .{config.main_branch});
-        logInfo("  - 日志目录: {s}", .{config.log_dir});
+        ui.logInfo("配置:", .{});
+        ui.logInfo("  - 配置文件: {s}", .{CONFIG_REL_PATH});
+        ui.logInfo("  - 迭代次数: {d}", .{config.iterations});
+        ui.logInfo("  - Program 文件: {s}", .{config.program_file});
+        ui.logInfo("  - OpenCode URL: {s}", .{config.opencode_url});
+        ui.logInfo("  - 主分支: {s}", .{config.main_branch});
+        ui.logInfo("  - 日志目录: {s}", .{config.log_dir});
         if (config.model.len > 0) {
-            logInfo("  - 模型: {s}", .{config.model});
+            ui.logInfo("  - 模型: {s}", .{config.model});
         }
         std.debug.print("\n", .{});
 
         runCommand(config, allocator) catch |err| {
             switch (err) {
-                error.MissingProgramFile => logError(".techlead/program.md 缺失，请重新执行 init --force", .{}),
-                error.InvalidProgramTemplate => logError(".techlead/program.md 模板块缺失，请重新执行 init --force", .{}),
-                error.NotGitRepo => logError("work_dir 不是 git 仓库", .{}),
+                error.MissingProgramFile => ui.logError(".techlead/program.md 缺失，请重新执行 init --force", .{}),
+                error.InvalidProgramTemplate => ui.logError(".techlead/program.md 模板块缺失，请重新执行 init --force", .{}),
+                error.NotGitRepo => ui.logError("work_dir 不是 git 仓库", .{}),
                 error.OpencodeUnavailable => {},
                 error.MissingOpencode => {},
-                else => logError("run 失败: {any}", .{err}),
+                else => ui.logError("run 失败: {any}", .{err}),
             }
             return;
         };
@@ -1017,7 +942,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "server")) {
         if (args.len < 3) {
-            logError("server 需要子命令: start, stop", .{});
+            ui.logError("server 需要子命令: start, stop", .{});
             showHelp();
             return;
         }
@@ -1035,10 +960,10 @@ pub fn main() !void {
 
             runServerStartCommand(allocator, daemon_mode) catch |err| {
                 switch (err) {
-                    error.ServerAlreadyRunning => logError("服务已在运行", .{}),
-                    error.ServerStartFailed => logError("启动服务失败", .{}),
-                    error.MissingOpencode => logError("找不到 opencode CLI，请确保已安装", .{}),
-                    else => logError("启动服务失败: {any}", .{err}),
+                    error.ServerAlreadyRunning => ui.logError("服务已在运行", .{}),
+                    error.ServerStartFailed => ui.logError("启动服务失败", .{}),
+                    error.MissingOpencode => ui.logError("找不到 opencode CLI，请确保已安装", .{}),
+                    else => ui.logError("启动服务失败: {any}", .{err}),
                 }
             };
             return;
@@ -1047,20 +972,20 @@ pub fn main() !void {
         if (std.mem.eql(u8, subcommand, "stop")) {
             runServerStopCommand(allocator) catch |err| {
                 switch (err) {
-                    error.ServerNotRunning => logError("服务未运行", .{}),
-                    error.ServerStopFailed => logError("停止服务失败", .{}),
-                    else => logError("停止服务失败: {any}", .{err}),
+                    error.ServerNotRunning => ui.logError("服务未运行", .{}),
+                    error.ServerStopFailed => ui.logError("停止服务失败", .{}),
+                    else => ui.logError("停止服务失败: {any}", .{err}),
                 }
             };
             return;
         }
 
-        logError("未知的 server 子命令: {s}", .{subcommand});
+        ui.logError("未知的 server 子命令: {s}", .{subcommand});
         showHelp();
         return;
     }
 
-    logError("未知命令: {s}", .{command});
+    ui.logError("未知命令: {s}", .{command});
     showHelp();
 }
 
@@ -1097,11 +1022,11 @@ fn runServerStopCommand(allocator: Allocator) !void {
     const pid = readPidFile(allocator) catch |err| {
         switch (err) {
             error.ServerNotRunning => {
-                logError("服务未运行", .{});
+                ui.logError("服务未运行", .{});
                 return error.ServerNotRunning;
             },
             error.InvalidPidFile => {
-                logError("PID 文件无效", .{});
+                ui.logError("PID 文件无效", .{});
                 // Try to clean up invalid PID file
                 deletePidFile() catch {};
                 return error.ServerNotRunning;
@@ -1110,11 +1035,11 @@ fn runServerStopCommand(allocator: Allocator) !void {
         }
     };
 
-    logInfo("正在停止服务 (PID: {d})...", .{pid});
+    ui.logInfo("正在停止服务 (PID: {d})...", .{pid});
 
     // 2. Send SIGTERM for graceful shutdown
     posix.kill(pid, posix.SIG.TERM) catch |err| {
-        logError("发送 SIGTERM 信号失败: {any}", .{err});
+        ui.logError("发送 SIGTERM 信号失败: {any}", .{err});
         // Try to clean up PID file since we can't signal the process
         deletePidFile() catch {};
         return error.ServerStopFailed;
@@ -1133,11 +1058,11 @@ fn runServerStopCommand(allocator: Allocator) !void {
 
     // 4. Check if process is still running
     if (isServerRunning(pid)) {
-        logWarn("服务未能在 5 秒内退出，发送 SIGKILL...", .{});
+        ui.logWarn("服务未能在 5 秒内退出，发送 SIGKILL...", .{});
 
         // Send SIGKILL to force terminate
         posix.kill(pid, posix.SIG.KILL) catch |err| {
-            logError("发送 SIGKILL 信号失败: {any}", .{err});
+            ui.logError("发送 SIGKILL 信号失败: {any}", .{err});
             // Still try to clean up PID file
             deletePidFile() catch {};
             return error.ServerStopFailed;
@@ -1148,23 +1073,23 @@ fn runServerStopCommand(allocator: Allocator) !void {
 
         // Check if it's still running after SIGKILL
         if (isServerRunning(pid)) {
-            logError("无法终止服务进程 (PID: {d})", .{pid});
+            ui.logError("无法终止服务进程 (PID: {d})", .{pid});
             return error.ServerStopFailed;
         }
     }
 
     // 5. Clean up PID file
     deletePidFile() catch |err| {
-        logWarn("清理 PID 文件失败: {any}", .{err});
+        ui.logWarn("清理 PID 文件失败: {any}", .{err});
     };
 
-    logSuccess("服务已停止", .{});
+    ui.logSuccess("服务已停止", .{});
 }
 
 fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
     // 1. Check if opencode CLI exists
     if (!utils.commandExists(allocator, "opencode")) {
-        logError("找不到 opencode CLI，请确保已安装", .{});
+        ui.logError("找不到 opencode CLI，请确保已安装", .{});
         return error.MissingOpencode;
     }
 
@@ -1175,13 +1100,13 @@ fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
     };
 
     if (existing_pid) |pid| {
-        logError("服务已在运行 (PID: {d})", .{pid});
+        ui.logError("服务已在运行 (PID: {d})", .{pid});
         return error.ServerAlreadyRunning;
     }
 
     if (daemon_mode) {
         // Daemon mode: fork and create new session
-        logInfo("正在后台启动 opencode serve...", .{});
+        ui.logInfo("正在后台启动 opencode serve...", .{});
 
         const pid = try posix.fork();
         if (pid < 0) {
@@ -1191,13 +1116,13 @@ fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
         if (pid > 0) {
             // Parent process: write child PID and exit quickly
             writePidFile(allocator, pid) catch |err| {
-                logError("写入 PID 文件失败: {any}", .{err});
+                ui.logError("写入 PID 文件失败: {any}", .{err});
                 // Try to kill the child process
                 _ = posix.kill(@intCast(pid), posix.SIG.TERM) catch {};
                 return error.ServerStartFailed;
             };
 
-            logSuccess("服务已在后台启动 (PID: {d})", .{pid});
+            ui.logSuccess("服务已在后台启动 (PID: {d})", .{pid});
             // Parent exits with success
             std.process.exit(0);
         }
@@ -1283,7 +1208,7 @@ fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
         std.process.exit(0);
     } else {
         // Foreground mode (existing behavior)
-        logInfo("正在启动 opencode serve...", .{});
+        ui.logInfo("正在启动 opencode serve...", .{});
 
         const argv = [_][]const u8{ "opencode", "serve" };
 
@@ -1296,44 +1221,44 @@ fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
 
         // Write PID file
         writePidFile(allocator, child.id) catch |err| {
-            logError("写入 PID 文件失败: {any}", .{err});
+            ui.logError("写入 PID 文件失败: {any}", .{err});
             _ = child.kill() catch {};
             return error.ServerStartFailed;
         };
 
-        logSuccess("服务已启动 (PID: {d})", .{child.id});
+        ui.logSuccess("服务已启动 (PID: {d})", .{child.id});
 
         // Ensure PID file cleanup on error
         errdefer deletePidFile() catch {};
 
         // Wait for process to end (foreground mode)
         const term = child.wait() catch |err| {
-            logError("等待进程失败: {any}", .{err});
+            ui.logError("等待进程失败: {any}", .{err});
             deletePidFile() catch {};
             return error.ServerStartFailed;
         };
 
         // Cleanup PID file when process exits
         deletePidFile() catch |err| {
-            logWarn("清理 PID 文件失败: {any}", .{err});
+            ui.logWarn("清理 PID 文件失败: {any}", .{err});
         };
 
         switch (term) {
             .Exited => |code| {
                 if (code == 0) {
-                    logInfo("服务已正常退出", .{});
+                    ui.logInfo("服务已正常退出", .{});
                 } else {
-                    logWarn("服务异常退出 (code: {d})", .{code});
+                    ui.logWarn("服务异常退出 (code: {d})", .{code});
                 }
             },
             .Signal => |sig| {
-                logInfo("服务被信号终止 (signal: {d})", .{sig});
+                ui.logInfo("服务被信号终止 (signal: {d})", .{sig});
             },
             .Stopped => |sig| {
-                logInfo("服务被停止 (signal: {d})", .{sig});
+                ui.logInfo("服务被停止 (signal: {d})", .{sig});
             },
             .Unknown => |code| {
-                logWarn("服务以未知状态退出 (code: {d})", .{code});
+                ui.logWarn("服务以未知状态退出 (code: {d})", .{code});
             },
         }
     }
