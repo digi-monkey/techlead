@@ -1075,12 +1075,7 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
     var merged: std.ArrayList(u8) = .empty;
     defer merged.deinit(allocator);
 
-    var line_buf: std.ArrayList(u8) = .empty;
-    defer line_buf.deinit(allocator);
 
-    var seen_session = false;
-    var ai_loader_active = false;
-    var spinner_runtime = SpinnerRuntime{};
 
     var buf: [4096]u8 = undefined;
     const child_stdout = child.stdout orelse return error.CommandFailed;
@@ -1092,27 +1087,8 @@ fn invokeOpencode(config: Config, allocator: Allocator, iteration: usize, prompt
         try log_file.writeAll(chunk);
         try merged.appendSlice(allocator, chunk);
 
-        try line_buf.appendSlice(allocator, chunk);
-        while (std.mem.indexOfScalar(u8, line_buf.items, '\n')) |nl| {
-            const line = std.mem.trimRight(u8, line_buf.items[0..nl], "\r\n");
-            if (line.len > 0) {
-                emitOpencodeEventSummary(allocator, line, &seen_session, &ai_loader_active, &spinner_runtime, config);
-            }
-
-            const remain = line_buf.items[nl + 1 ..];
-            std.mem.copyForwards(u8, line_buf.items[0..remain.len], remain);
-            line_buf.items.len = remain.len;
-        }
-    }
-
-    if (line_buf.items.len > 0) {
-        const tail_line = std.mem.trimRight(u8, line_buf.items, "\r\n");
-        if (tail_line.len > 0) emitOpencodeEventSummary(allocator, tail_line, &seen_session, &ai_loader_active, &spinner_runtime, config);
-    }
-
-    if (ai_loader_active) {
-        stopAiLoader(&spinner_runtime);
-        ai_loader_active = false;
+        // Print directly to console (no JSON parsing)
+        std.debug.print("{s}", .{chunk});
     }
 
     const term = try child.wait();
