@@ -114,7 +114,6 @@ pub fn writePidFile(allocator: Allocator, pid: posix.pid_t) !void {
 
     // Write to temp file
     var temp_file = try std.fs.cwd().createFile(temp_path, .{ .truncate = true });
-    defer temp_file.close();
     try temp_file.writeAll(content);
     temp_file.close();
 
