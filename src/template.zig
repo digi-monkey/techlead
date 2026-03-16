@@ -1,35 +1,32 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-/// Builds a program template by reading local program.md and injecting the goal.
-/// Falls back to default template if local file doesn't exist or markers not found.
-pub fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
-    const max_file_size = 1024 * 1024; // 1MB max
-    const local_template = std.fs.cwd().readFileAlloc(allocator, "program.md", max_file_size) catch |err| {
-        std.log.warn("Failed to read local program.md ({}), using default template", .{err});
-        return buildDefaultProgramTemplate(allocator, goal);
-    };
-    defer allocator.free(local_template);
+// Embed the program.md template at compile time
+// This ensures the template is baked into the binary for distribution
+const embedded_template = @embedFile("program.md");
 
+/// Builds a program template by using the embedded program.md and injecting the goal.
+/// Falls back to default template if embedded template markers not found.
+pub fn buildProgramTemplate(allocator: Allocator, goal: []const u8) ![]u8 {
     const begin_marker = "<!-- TECHLEAD:GOAL:BEGIN -->";
     const end_marker = "<!-- TECHLEAD:GOAL:END -->";
 
-    const begin_index = std.mem.indexOf(u8, local_template, begin_marker) orelse {
-        std.log.warn("GOAL markers not found in local program.md, using default template", .{});
+    const begin_index = std.mem.indexOf(u8, embedded_template, begin_marker) orelse {
+        std.log.warn("GOAL markers not found in embedded program.md, using default template", .{});
         return buildDefaultProgramTemplate(allocator, goal);
     };
 
     const begin_content = begin_index + begin_marker.len;
-    const rest = local_template[begin_content..];
+    const rest = embedded_template[begin_content..];
     const end_rel = std.mem.indexOf(u8, rest, end_marker) orelse {
-        std.log.warn("GOAL end marker not found in local program.md, using default template", .{});
+        std.log.warn("GOAL end marker not found in embedded program.md, using default template", .{});
         return buildDefaultProgramTemplate(allocator, goal);
     };
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
-    try out.appendSlice(allocator, local_template[0..begin_content]);
+    try out.appendSlice(allocator, embedded_template[0..begin_content]);
     try out.appendSlice(allocator, "\n");
     try out.appendSlice(allocator, goal);
     try out.appendSlice(allocator, "\n");
