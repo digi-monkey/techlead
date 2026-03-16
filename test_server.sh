@@ -42,7 +42,7 @@ trap cleanup EXIT
 
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY_PATH="$PROJECT_ROOT/zig-out/bin/autocode"
+BINARY_PATH="$PROJECT_ROOT/zig-out/bin/techlead"
 TEST_PID_FILE="/tmp/test_techlead_server.pid"
 TEST_LOG_FILE="/tmp/test_techlead_server.log"
 

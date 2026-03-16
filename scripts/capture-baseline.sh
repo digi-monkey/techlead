@@ -33,7 +33,7 @@ tmpdir=""
 
 # 获取项目根目录
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI_PATH="${PROJECT_ROOT}/zig-out/bin/autocode"
+CLI_PATH="${PROJECT_ROOT}/zig-out/bin/techlead"
 
 # 清理函数
 cleanup() {

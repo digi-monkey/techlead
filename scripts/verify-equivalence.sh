@@ -48,7 +48,7 @@ trap cleanup EXIT
 
 # 获取项目根目录
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI_PATH="${PROJECT_ROOT}/zig-out/bin/autocode"
+CLI_PATH="${PROJECT_ROOT}/zig-out/bin/techlead"
 
 # 打印带颜色的消息
 print_info() {
@@ -292,7 +292,7 @@ run_verification() {
         setup_scenario_env "$i"
         
         # 替换命令中的 CLI 路径
-        cmd=$(echo "$cmd" | sed "s|[^[:space:]]*/autocode|$CLI_PATH|g")
+        cmd=$(echo "$cmd" | sed "s|[^[:space:]]*/techlead|$CLI_PATH|g")
         
         # 验证场景
         verify_scenario "$name" "$cmd" "$exit_code" "$stdout" "$stderr" "$work_dir" || true
