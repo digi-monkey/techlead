@@ -1,4 +1,4 @@
-# autocode 项目可用 API 盘点（基于本机已安装 opencode / oh-my-opencode）
+# techlead 项目可用 API 盘点（基于本机已安装 opencode / oh-my-opencode）
 
 更新时间：2026-03-13
 
@@ -165,7 +165,7 @@ oh-my-opencode run --help
 oh-my-opencode doctor --help
 ```
 
-## 7. 在 autocode 项目里接入 oh-my-opencode 强能力
+## 7. 在 techlead 项目里接入 oh-my-opencode 强能力
 
 结论：**可以**，而且有两种方式。
 
@@ -198,7 +198,7 @@ oh-my-opencode doctor --help
 
 ### 关键前提（很重要）
 
-你的 autocode 在 `src/main.zig` 中使用了 `--attach <opencode_url>`，因此**最终能力取决于被 attach 的那台 server 环境**：
+你的 techlead 在 `src/main.zig` 中使用了 `--attach <opencode_url>`，因此**最终能力取决于被 attach 的那台 server 环境**：
 
 - 若 server 端装了并启用了 oh-my-opencode 插件，你的自动调用就能用到增强能力。
 - 若 server 端没有插件，即便你本机装了 oh-my-opencode，也不会自动获得同等能力。
