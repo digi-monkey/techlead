@@ -1,0 +1,66 @@
+#!/bin/bash
+# Characterization test for init-agent command
+
+set -e
+
+CLI="${CLI:-./zig-out/bin/techlead}"
+TEST_DIR="$(mktemp -d)"
+
+cleanup() {
+    rm -rf "$TEST_DIR"
+}
+trap cleanup EXIT
+
+echo "=== Test: init-agent requires goal ==="
+if $CLI init-agent 2>&1 | grep -q "缺少目标参数"; then
+    echo "✓ PASS: Shows error without goal"
+else
+    echo "✗ FAIL: Should show error without goal"
+    exit 1
+fi
+
+echo "=== Test: init-agent requires git repo ==="
+mkdir -p "$TEST_DIR/not-git"
+if $CLI init-agent "test" --dir "$TEST_DIR/not-git" 2>&1 | grep -q "不是 git 仓库"; then
+    echo "✓ PASS: Detects non-git directory"
+else
+    echo "✗ FAIL: Should detect non-git"
+    exit 1
+fi
+
+echo "=== Test: init-agent generates prompt ==="
+mkdir -p "$TEST_DIR/git-project"
+cd "$TEST_DIR/git-project"
+git init
+echo '{}' > package.json
+git add .
+git commit -m "init"
+cd - > /dev/null
+
+OUTPUT=$($CLI init-agent "Build REST API" --dir "$TEST_DIR/git-project" 2>&1)
+
+# Check that it ran successfully (detected Node.js)
+if echo "$OUTPUT" | grep -q "Node.js/npm"; then
+    echo "✓ PASS: Detects Node.js from package.json"
+else
+    echo "✗ FAIL: Should detect Node.js"
+    exit 1
+fi
+
+# Check that it reports success
+if echo "$OUTPUT" | grep -q "init-agent 完成"; then
+    echo "✓ PASS: Command completed successfully"
+else
+    echo "✗ FAIL: Should complete successfully"
+    exit 1
+fi
+
+# Check clipboard was used (indicated by the info message)
+if echo "$OUTPUT" | grep -q "已复制到剪贴板"; then
+    echo "✓ PASS: Prompt copied to clipboard"
+else
+    echo "✗ FAIL: Should copy to clipboard"
+    exit 1
+fi
+
+echo "=== All tests passed ==="

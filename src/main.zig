@@ -32,11 +32,13 @@ fn showHelp() void {
         "\nTechlead 持续迭代 CLI (Zig)\n\n" ++
             "用法:\n" ++
             "    zig build run -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
+            "    zig build run -- init-agent \"目标描述\" [--dir 目录]\n" ++
             "    zig build run -- run [--dir 目录]\n" ++
             "    zig build run -- server start [--daemon]\n" ++
             "    zig build run -- server stop\n\n" ++
             "说明:\n" ++
             "    - init: 在目标目录生成 .techlead/techlead.json 和 .techlead/program.md\n" ++
+            "    - init-agent: 创建目标目录下的 sisyphus 代理项目\n" ++
             "    - run: 从目标目录读取配置并执行迭代\n" ++
             "    - server start: 在前台启动 opencode serve 服务\n" ++
             "    - server start --daemon: 在后台启动 opencode serve 服务\n" ++
@@ -181,6 +183,38 @@ pub fn main() !void {
         }
         ui.logError("未知的 server 子命令: {s}", .{subcommand});
         showHelp();
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "init-agent")) {
+        runner.runInitAgentCommand(allocator, args[2..]) catch |err| {
+            switch (err) {
+                error.MissingGoal => {
+                    ui.logError("缺少目标参数", .{});
+                    std.process.exit(1);
+                },
+                error.InvalidPath => {
+                    ui.logError("无效的路径参数", .{});
+                    std.process.exit(1);
+                },
+                error.PathNotAccessible => {
+                    ui.logError("路径无法访问", .{});
+                    std.process.exit(1);
+                },
+                error.GitRepoRequired => {
+                    ui.logError("目标目录必须是 git 仓库", .{});
+                    std.process.exit(1);
+                },
+                error.OutOfMemory => {
+                    ui.logError("内存不足", .{});
+                    std.process.exit(1);
+                },
+                error.MarkerNotFound => {
+                    ui.logError("模板标记未找到", .{});
+                    std.process.exit(1);
+                },
+            }
+        };
         return;
     }
 

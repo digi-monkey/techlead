@@ -35,6 +35,36 @@ Force overwrite existing generated files:
 
     zig build run -- init "your goal description" --force
 
+### `init-agent` Command
+
+Generate an AI agent prompt for a target project (copies to clipboard):
+
+    zig build run -- init-agent "your goal description"
+
+Specify a target directory:
+
+    zig build run -- init-agent "your goal description" --dir /path/to/project
+
+What it does:
+- Analyzes the target directory to detect tech stack (language, framework, build tool, test command)
+- Generates a comprehensive AI agent prompt with project context
+- Copies the prompt to your clipboard
+- Outputs instructions for using the prompt with Claude Code or other AI agents
+
+The AI agent will use this prompt to:
+- Understand the project structure and technology stack
+- Follow project-specific conventions and patterns
+- Run tests and validate changes
+- Make iterative improvements based on your goal
+
+Example workflow:
+
+    # Generate agent prompt for a JavaScript project
+    zig build run -- init-agent "Refactor to improve performance" --dir ./demo-topk
+    
+    # Paste into Claude Code or your preferred AI agent
+    # The agent receives full context about the project
+
 Run iterations using .techlead/techlead.json:
 
     zig build run -- run

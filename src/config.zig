@@ -9,6 +9,47 @@ pub const CONFIG_REL_PATH = ".techlead/techlead.json";
 pub const DEFAULT_PROGRAM_REL_PATH = ".techlead/program.md";
 pub const DEFAULT_LOG_DIR = ".techlead/iteration-logs";
 
+/// Technology stack indicators for detection
+pub const TECH_INDICATORS = [_]struct {
+    file: []const u8,
+    tech: []const u8,
+    priority: u8,
+}{
+    .{ .file = "package.json", .tech = "Node.js/npm", .priority = 1 },
+    .{ .file = "Cargo.toml", .tech = "Rust", .priority = 1 },
+    .{ .file = "go.mod", .tech = "Go", .priority = 1 },
+    .{ .file = "pyproject.toml", .tech = "Python", .priority = 1 },
+    .{ .file = "requirements.txt", .tech = "Python", .priority = 2 },
+    .{ .file = "pom.xml", .tech = "Java (Maven)", .priority = 1 },
+    .{ .file = "build.gradle", .tech = "Java (Gradle)", .priority = 1 },
+    .{ .file = "Gemfile", .tech = "Ruby", .priority = 1 },
+    .{ .file = "composer.json", .tech = "PHP", .priority = 1 },
+    .{ .file = "zig.mod", .tech = "Zig", .priority = 1 },
+};
+
+/// Result of technology stack detection
+pub const TechStackDetection = struct {
+    primary: []const u8 = "unknown",
+    secondary: ?[]const u8 = null,
+    indicators_found: []const []const u8 = &.{},
+
+    pub fn format(
+        self: TechStackDetection,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.writeAll(self.primary);
+        if (self.secondary) |sec| {
+            try writer.writeAll(", ");
+            try writer.writeAll(sec);
+        }
+    }
+};
+
 /// Configuration structure for JSON serialization/deserialization.
 /// This is the on-disk format used in techlead.json config files.
 pub const ConfigFile = struct {
