@@ -1,90 +1,69 @@
 import { useEffect, useMemo, useState } from 'react'
 
-type Mode = 'observe' | 'control' | 'session'
-type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
-
-type JsonValue = Record<string, unknown>
-
-type EventRow = {
-  id: number
-  type: string
-  source: string
-  ts: number
-  payload: string
-}
-
-const MODE_LABEL: Record<Mode, string> = {
-  observe: 'Observe',
-  control: 'Control',
-  session: 'Session',
-}
-
-function newRequestId() {
-  return `web-${Date.now()}-${Math.floor(Math.random() * 1e9)}`
-}
-
-function statusClass(tone: StatusTone): string {
-  if (tone === 'ok') return 'text-[var(--ok)]'
-  if (tone === 'warn') return 'text-[var(--warn)]'
-  if (tone === 'bad') return 'text-[var(--bad)]'
-  return 'text-[var(--muted)]'
-}
-
-function toEventRows(events: unknown[]): EventRow[] {
-  return events
-    .map((item) => {
-      const rec = item as JsonValue
-      const id = Number(rec.event_id ?? 0)
-      const raw = typeof rec.event_jsonl === 'string' ? rec.event_jsonl : '{}'
-      let parsed: JsonValue = {}
-      try {
-        parsed = JSON.parse(raw) as JsonValue
-      } catch {
-        parsed = { raw }
-      }
-      return {
-        id,
-        type: String(parsed.event_type ?? '-'),
-        source: String(parsed.source ?? '-'),
-        ts: Number(parsed.ts ?? 0),
-        payload: JSON.stringify(parsed.payload ?? parsed.raw ?? parsed, null, 2),
-      }
-    })
-    .filter((row) => Number.isFinite(row.id))
-}
-
-async function apiRequest<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
-  if (!token) throw new Error('token missing')
-
-  const headers = new Headers(options.headers ?? {})
-  headers.set('Authorization', `Bearer ${token}`)
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-
-  const resp = await fetch(path, { ...options, headers })
-  const text = await resp.text()
-  if (!resp.ok) throw new Error(`${resp.status} ${text}`)
-  if (!text.trim()) return {} as T
-  return JSON.parse(text) as T
-}
+import { Sidebar } from './components/Sidebar'
+import { apiRequest, newRequestId, toEventRows } from './lib/api'
+import { ControlView } from './views/ControlView'
+import { ObserveView } from './views/ObserveView'
+import { SessionView } from './views/SessionView'
+import { TasksView } from './views/TasksView'
+import {
+  MODE_META,
+  type EventRow,
+  type JsonValue,
+  type Mode,
+  type SessionMessage,
+  type StatusTone,
+  type TaskDetailResponse,
+  type TaskListResponse,
+} from './types'
 
 export default function App() {
-  const tokenFromQuery = useMemo(() => new URLSearchParams(window.location.search).get('token') ?? '', [])
+  const queryTokens = useMemo(() => {
+    const params = new URLSearchParams(window.location.search)
+    const shared = params.get('token') ?? ''
+    return {
+      observe: params.get('observe_token') ?? shared,
+      control: params.get('control_token') ?? params.get('ctrl_token') ?? shared,
+    }
+  }, [])
 
   const [mode, setMode] = useState<Mode>('observe')
-  const [observeToken, setObserveToken] = useState(tokenFromQuery)
-  const [controlToken, setControlToken] = useState(tokenFromQuery)
+  const [observeToken, setObserveToken] = useState(queryTokens.observe)
+  const [controlToken, setControlToken] = useState(queryTokens.control)
   const [statusText, setStatusText] = useState('ready')
   const [statusTone, setStatusTone] = useState<StatusTone>('idle')
 
   const [after, setAfter] = useState(0)
   const [events, setEvents] = useState<EventRow[]>([])
   const [tasksRaw, setTasksRaw] = useState('{"tasks":[]}')
+  const [tasksList, setTasksList] = useState<TaskListResponse>({
+    tasks: [],
+    summary: {},
+    cursor: 0,
+    next_cursor: null,
+    limit: 50,
+    total: 0,
+  })
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [taskDetail, setTaskDetail] = useState<TaskDetailResponse | null>(null)
+  const [taskStatusFilter, setTaskStatusFilter] = useState('')
+  const [taskSearch, setTaskSearch] = useState('')
+  const [createTitle, setCreateTitle] = useState('')
+  const [createPrompt, setCreatePrompt] = useState('')
+  const [createPriority, setCreatePriority] = useState('0')
+  const [createMaxRetries, setCreateMaxRetries] = useState('')
+  const [editTitle, setEditTitle] = useState('')
+  const [editPrompt, setEditPrompt] = useState('')
+  const [editPriority, setEditPriority] = useState('0')
+  const [editMaxRetries, setEditMaxRetries] = useState('')
 
   const [runMode, setRunMode] = useState<'optimize' | 'pool'>('optimize')
   const [askPrompt, setAskPrompt] = useState('')
 
   const [sessionState, setSessionState] = useState<JsonValue>({})
   const [sessionInput, setSessionInput] = useState('')
+
+  const sessionMessages = (Array.isArray(sessionState.messages) ? sessionState.messages : []) as SessionMessage[]
 
   async function refreshSessionOnce() {
     try {
@@ -93,6 +72,106 @@ export default function App() {
     } catch (err) {
       setStatusTone('warn')
       setStatusText(`refresh session failed: ${(err as Error).message}`)
+    }
+  }
+
+  async function refreshTasksList() {
+    const params = new URLSearchParams()
+    params.set('limit', '100')
+    if (taskStatusFilter) params.set('status', taskStatusFilter)
+    if (taskSearch.trim()) params.set('q', taskSearch.trim())
+    const list = await apiRequest<TaskListResponse>(`/tasks?${params.toString()}`, observeToken)
+    setTasksList(list)
+    setTasksRaw(JSON.stringify(list, null, 2))
+    if (selectedTaskId && !list.tasks.some((t) => t.task_id === selectedTaskId)) {
+      setSelectedTaskId(null)
+      setTaskDetail(null)
+    }
+  }
+
+  async function refreshTaskDetail(taskId: string) {
+    const detail = await apiRequest<TaskDetailResponse>(`/tasks/${encodeURIComponent(taskId)}`, observeToken)
+    setTaskDetail(detail)
+    setEditTitle(detail.task.title)
+    setEditPrompt(detail.task.prompt ?? '')
+    setEditPriority(String(detail.task.priority))
+    setEditMaxRetries(detail.task.max_retries == null ? '' : String(detail.task.max_retries))
+  }
+
+  async function createTask() {
+    if (!createTitle.trim()) {
+      setStatusTone('warn')
+      setStatusText('title required')
+      return
+    }
+    try {
+      const requestId = newRequestId()
+      await apiRequest<JsonValue>('/tasks', controlToken, {
+        method: 'POST',
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({
+          title: createTitle.trim(),
+          prompt: createPrompt || null,
+          priority: Number(createPriority || '0'),
+          max_retries: createMaxRetries.trim() ? Number(createMaxRetries) : null,
+          request_id: requestId,
+        }),
+      })
+      setCreateTitle('')
+      setCreatePrompt('')
+      setCreatePriority('0')
+      setCreateMaxRetries('')
+      await refreshTasksList()
+      setStatusTone('ok')
+      setStatusText('task created')
+    } catch (err) {
+      setStatusTone('bad')
+      setStatusText((err as Error).message)
+    }
+  }
+
+  async function patchSelectedTask() {
+    if (!selectedTaskId || !taskDetail) return
+    try {
+      const requestId = newRequestId()
+      await apiRequest<JsonValue>(`/tasks/${encodeURIComponent(selectedTaskId)}`, controlToken, {
+        method: 'PATCH',
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({
+          title: editTitle,
+          prompt: editPrompt,
+          priority: Number(editPriority || '0'),
+          max_retries: editMaxRetries.trim() ? Number(editMaxRetries) : null,
+          version: taskDetail.task.version,
+          request_id: requestId,
+        }),
+      })
+      await refreshTaskDetail(selectedTaskId)
+      await refreshTasksList()
+      setStatusTone('ok')
+      setStatusText('task updated')
+    } catch (err) {
+      setStatusTone('bad')
+      setStatusText((err as Error).message)
+    }
+  }
+
+  async function runTaskAction(action: 'requeue' | 'cancel' | 'resume' | 'force_fail') {
+    if (!selectedTaskId) return
+    try {
+      const requestId = newRequestId()
+      await apiRequest<JsonValue>(`/tasks/${encodeURIComponent(selectedTaskId)}/actions`, controlToken, {
+        method: 'POST',
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({ action, request_id: requestId }),
+      })
+      await refreshTaskDetail(selectedTaskId)
+      await refreshTasksList()
+      setStatusTone('ok')
+      setStatusText(`task action: ${action}`)
+    } catch (err) {
+      setStatusTone('bad')
+      setStatusText((err as Error).message)
     }
   }
 
@@ -176,10 +255,7 @@ export default function App() {
     let cancelled = false
     const tick = async () => {
       try {
-        const [eventBody, tasksBody] = await Promise.all([
-          apiRequest<{ events?: unknown[]; last_event_id?: number }>(`/runs/current/events?after=${after}`, observeToken),
-          apiRequest<JsonValue>('/tasks', observeToken),
-        ])
+        const eventBody = await apiRequest<{ events?: unknown[]; last_event_id?: number }>(`/runs/current/events?after=${after}`, observeToken)
         if (cancelled) return
 
         const rows = toEventRows(eventBody.events ?? [])
@@ -189,7 +265,6 @@ export default function App() {
         if (typeof eventBody.last_event_id === 'number' && eventBody.last_event_id > after) {
           setAfter(eventBody.last_event_id)
         }
-        setTasksRaw(JSON.stringify(tasksBody, null, 2))
       } catch (err) {
         if (cancelled) return
         setStatusTone('warn')
@@ -210,6 +285,65 @@ export default function App() {
       window.clearInterval(timer)
     }
   }, [observeToken, after])
+
+  useEffect(() => {
+    if (!observeToken) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        await refreshTasksList()
+      } catch (err) {
+        if (cancelled) return
+        setStatusTone('warn')
+        setStatusText(`refresh tasks failed: ${(err as Error).message}`)
+      }
+    }
+    const warmup = window.setTimeout(() => {
+      void tick()
+    }, 0)
+    const timer = window.setInterval(() => {
+      void tick()
+    }, 3000)
+    return () => {
+      cancelled = true
+      window.clearTimeout(warmup)
+      window.clearInterval(timer)
+    }
+  }, [observeToken, taskStatusFilter, taskSearch])
+
+  useEffect(() => {
+    if (!observeToken || !selectedTaskId) {
+      setTaskDetail(null)
+      return
+    }
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const detail = await apiRequest<TaskDetailResponse>(`/tasks/${encodeURIComponent(selectedTaskId)}`, observeToken)
+        if (cancelled) return
+        setTaskDetail(detail)
+        setEditTitle(detail.task.title)
+        setEditPrompt(detail.task.prompt ?? '')
+        setEditPriority(String(detail.task.priority))
+        setEditMaxRetries(detail.task.max_retries == null ? '' : String(detail.task.max_retries))
+      } catch (err) {
+        if (cancelled) return
+        setStatusTone('warn')
+        setStatusText(`refresh task detail failed: ${(err as Error).message}`)
+      }
+    }
+    const warmup = window.setTimeout(() => {
+      void tick()
+    }, 0)
+    const timer = window.setInterval(() => {
+      void tick()
+    }, 3000)
+    return () => {
+      cancelled = true
+      window.clearTimeout(warmup)
+      window.clearInterval(timer)
+    }
+  }, [observeToken, selectedTaskId])
 
   useEffect(() => {
     if (!observeToken) return
@@ -241,198 +375,84 @@ export default function App() {
     }
   }, [observeToken])
 
-  const sessionMessages = Array.isArray(sessionState.messages)
-    ? (sessionState.messages as JsonValue[])
-    : []
+  const meta = MODE_META[mode]
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-6 md:px-8">
-      <header className="rounded-2xl border border-[var(--line)] bg-[var(--panel)]/85 p-5 shadow-sm backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Techlead Observe UI</div>
-            <h1 className="m-0 text-2xl font-semibold">Remote Agent Console</h1>
-          </div>
-          <div className={`text-sm font-medium ${statusClass(statusTone)}`}>status: {statusText}</div>
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm text-[var(--muted)]">
-            observe token
-            <input
-              className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-[var(--ink)] outline-none focus:border-[var(--accent)]"
-              value={observeToken}
-              onChange={(e) => setObserveToken(e.target.value.trim())}
-              placeholder="observe token"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-[var(--muted)]">
-            control token
-            <input
-              className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-[var(--ink)] outline-none focus:border-[var(--accent)]"
-              value={controlToken}
-              onChange={(e) => setControlToken(e.target.value.trim())}
-              placeholder="control token"
-            />
-          </label>
-        </div>
-      </header>
+    <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-4 md:p-6 lg:grid-cols-[280px_1fr]">
+      <Sidebar
+        mode={mode}
+        onModeChange={setMode}
+        statusText={statusText}
+        statusTone={statusTone}
+        observeToken={observeToken}
+        controlToken={controlToken}
+        onObserveTokenChange={setObserveToken}
+        onControlTokenChange={setControlToken}
+      />
 
-      <nav className="mt-5 grid grid-cols-3 gap-2">
-        {(Object.keys(MODE_LABEL) as Mode[]).map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setMode(k)}
-            className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-              mode === k
-                ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
-                : 'border-[var(--line)] bg-white text-[var(--ink)] hover:bg-slate-50'
-            }`}
-          >
-            {MODE_LABEL[k]}
-          </button>
-        ))}
-      </nav>
+      <main className="space-y-4">
+        <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">{meta.title}</h2>
+          <p className="mt-1 text-sm text-slate-600">{meta.subtitle}</p>
+        </header>
 
-      {mode === 'observe' && (
-        <section className="mt-5 grid gap-4 lg:grid-cols-[2fr_1fr]">
-          <article className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-sm">
-            <div className="mb-2 text-sm font-semibold">Events Stream</div>
-            <div className="max-h-[560px] overflow-auto rounded-lg border border-[var(--line)] bg-slate-50 p-3">
-              {events.length === 0 ? (
-                <div className="text-sm text-[var(--muted)]">(no events)</div>
-              ) : (
-                <div className="space-y-3">
-                  {events.map((evt) => (
-                    <div key={`${evt.id}-${evt.ts}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                      <div className="mb-1 text-xs text-[var(--muted)]">
-                        #{evt.id} | {evt.source} | {evt.type} | {evt.ts || '-'}
-                      </div>
-                      <pre className="text-xs leading-5 text-slate-800">{evt.payload}</pre>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </article>
+        {mode === 'observe' && <ObserveView events={events} tasksRaw={tasksRaw} />}
 
-          <article className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-sm">
-            <div className="mb-2 text-sm font-semibold">Tasks</div>
-            <div className="max-h-[560px] overflow-auto rounded-lg border border-[var(--line)] bg-slate-50 p-3">
-              <pre className="text-xs leading-5 text-slate-800">{tasksRaw}</pre>
-            </div>
-          </article>
-        </section>
-      )}
+        {mode === 'control' && (
+          <ControlView
+            runMode={runMode}
+            askPrompt={askPrompt}
+            onRunModeChange={setRunMode}
+            onAskPromptChange={setAskPrompt}
+            onStartRun={startRun}
+            onControlRun={controlRun}
+          />
+        )}
 
-      {mode === 'control' && (
-        <section className="mt-5 grid gap-4 lg:grid-cols-2">
-          <article className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-sm">
-            <div className="text-sm font-semibold">Run Bootstrap</div>
-            <div className="mt-3 flex items-center gap-2">
-              <select
-                className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm"
-                value={runMode}
-                onChange={(e) => setRunMode(e.target.value as 'optimize' | 'pool')}
-              >
-                <option value="optimize">optimize</option>
-                <option value="pool">pool</option>
-              </select>
-              <button
-                type="button"
-                onClick={startRun}
-                className="rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
-              >
-                start run
-              </button>
-            </div>
-          </article>
+        {mode === 'tasks' && (
+          <TasksView
+            list={tasksList}
+            selectedTaskId={selectedTaskId}
+            detail={taskDetail}
+            statusFilter={taskStatusFilter}
+            search={taskSearch}
+            createTitle={createTitle}
+            createPrompt={createPrompt}
+            createPriority={createPriority}
+            createMaxRetries={createMaxRetries}
+            editTitle={editTitle}
+            editPrompt={editPrompt}
+            editPriority={editPriority}
+            editMaxRetries={editMaxRetries}
+            onStatusFilterChange={setTaskStatusFilter}
+            onSearchChange={setTaskSearch}
+            onSelectTask={setSelectedTaskId}
+            onRefresh={() => void refreshTasksList()}
+            onCreateTitleChange={setCreateTitle}
+            onCreatePromptChange={setCreatePrompt}
+            onCreatePriorityChange={setCreatePriority}
+            onCreateMaxRetriesChange={setCreateMaxRetries}
+            onCreateTask={() => void createTask()}
+            onEditTitleChange={setEditTitle}
+            onEditPromptChange={setEditPrompt}
+            onEditPriorityChange={setEditPriority}
+            onEditMaxRetriesChange={setEditMaxRetries}
+            onPatchTask={() => void patchSelectedTask()}
+            onTaskAction={(action) => void runTaskAction(action)}
+          />
+        )}
 
-          <article className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-sm">
-            <div className="text-sm font-semibold">Run Controls</div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => controlRun('pause')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                pause
-              </button>
-              <button type="button" onClick={() => controlRun('resume')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                resume
-              </button>
-              <button type="button" onClick={() => controlRun('abort')} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                abort
-              </button>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <input
-                className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm"
-                value={askPrompt}
-                onChange={(e) => setAskPrompt(e.target.value)}
-                placeholder="ask prompt"
-              />
-              <button
-                type="button"
-                onClick={() => controlRun('ask')}
-                className="rounded-lg border border-amber-400 bg-amber-100 px-3 py-2 text-sm text-amber-900"
-              >
-                ask
-              </button>
-            </div>
-          </article>
-        </section>
-      )}
-
-      {mode === 'session' && (
-        <section className="mt-5 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm font-semibold">Session Chat</div>
-            <button
-              type="button"
-              onClick={startSession}
-              className="rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white"
-            >
-              start session
-            </button>
-          </div>
-
-          <div className="mt-3 rounded-lg border border-[var(--line)] bg-slate-50 p-3 text-xs text-[var(--muted)]">
-            session: {String(sessionState.session_id ?? '(none)')} | status: {String(sessionState.status ?? '-')} | provider:{' '}
-            {String(sessionState.provider ?? '-')}
-          </div>
-
-          <div className="mt-3 max-h-[420px] overflow-auto rounded-lg border border-[var(--line)] bg-slate-50 p-3">
-            {sessionMessages.length === 0 ? (
-              <div className="text-sm text-[var(--muted)]">(no messages)</div>
-            ) : (
-              <div className="space-y-3">
-                {sessionMessages.slice(-80).map((m, idx) => (
-                  <div key={idx} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <div className="mb-1 text-xs uppercase tracking-wide text-[var(--muted)]">{String(m.role ?? '-')}</div>
-                    <pre className="text-sm leading-6 text-slate-800">{String(m.content ?? '')}</pre>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-3 flex gap-2">
-            <input
-              className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm"
-              value={sessionInput}
-              onChange={(e) => setSessionInput(e.target.value)}
-              placeholder="say something to agent"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void sendSessionMessage()
-              }}
-            />
-            <button
-              type="button"
-              onClick={sendSessionMessage}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm"
-            >
-              send
-            </button>
-          </div>
-        </section>
-      )}
+        {mode === 'session' && (
+          <SessionView
+            sessionState={sessionState}
+            sessionMessages={sessionMessages}
+            sessionInput={sessionInput}
+            onSessionInputChange={setSessionInput}
+            onStartSession={startSession}
+            onSendMessage={sendSessionMessage}
+          />
+        )}
+      </main>
     </div>
   )
 }

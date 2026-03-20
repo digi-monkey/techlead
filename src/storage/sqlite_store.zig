@@ -26,7 +26,7 @@ pub const SqliteEventStore = struct {
     closed: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, work_dir: []const u8, log_dir: []const u8) !SqliteEventStore {
-        var dylib = std.DynLib.open("libsqlite3.so.0") catch return error.StoreNotAvailable;
+        var dylib = openSqliteDynLib() catch return error.StoreNotAvailable;
         errdefer dylib.close();
 
         const api = SqliteApi{
@@ -158,6 +158,18 @@ pub const SqliteEventStore = struct {
         .close = close,
     };
 };
+
+fn openSqliteDynLib() !std.DynLib {
+    const candidates = [_][]const u8{
+        "libsqlite3.so.0",
+        "/lib/x86_64-linux-gnu/libsqlite3.so.0",
+        "libsqlite3.so",
+    };
+    for (candidates) |name| {
+        if (std.DynLib.open(name)) |lib| return lib else |_| {}
+    }
+    return error.StoreNotAvailable;
+}
 
 test "sqlite event store can initialize and write one event" {
     const allocator = std.testing.allocator;

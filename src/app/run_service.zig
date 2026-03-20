@@ -4,8 +4,8 @@ const git = @import("../git.zig");
 const ui = @import("../ui.zig");
 const utils = @import("../utils.zig");
 const control_service = @import("control_service.zig");
-const task_service = @import("task_service.zig");
 const event_store = @import("../storage/store.zig");
+const sqlite_task_store = @import("../storage/sqlite_task_store.zig");
 const opencode_provider = @import("../providers/opencode_provider.zig");
 const codex_cli_provider = @import("../providers/codex_cli_provider.zig");
 const claude_cli_provider = @import("../providers/claude_cli_provider.zig");
@@ -386,89 +386,68 @@ fn runPoolMode(
     mirror_es: ?event_store.EventStore,
     run_id: []const u8,
 ) !void {
-    var loaded = try task_service.loadOrInitTasks(allocator, cfg.work_dir);
-    defer loaded.deinit();
+    var sqlite = try sqlite_task_store.SqliteTaskStore.init(allocator, cfg.work_dir);
+    defer sqlite.deinit();
+    const ts = sqlite.asTaskStore();
 
     var iteration: usize = 1;
     while (true) {
-        const now = std.time.timestamp();
-        var claimed_any = false;
-        for (loaded.parsed.value.tasks) |*t| {
-            const task_max_retries = t.max_retries orelse cfg.pool_max_retries;
-            var claimable = std.mem.eql(u8, t.status, "queued");
-            if (!claimable and (std.mem.eql(u8, t.status, "claimed") or std.mem.eql(u8, t.status, "running"))) {
-                if (t.lease_until) |until| {
-                    if (until <= now) claimable = true;
-                }
-            }
-            if (!claimable and std.mem.eql(u8, t.status, "failed") and t.retry_count < task_max_retries) {
-                claimable = true;
-            }
-            if (!claimable) continue;
+        const claimed_task = try ts.claimNext(.{
+            .owner = run_id,
+            .lease_seconds = cfg.pool_lease_seconds,
+            .default_max_retries = cfg.pool_max_retries,
+        });
+        if (claimed_task == null) break;
+        var task = claimed_task.?;
+        defer task.deinit(allocator);
 
-            claimed_any = true;
-            t.status = "claimed";
-            t.lease_owner = run_id;
-            t.lease_until = now + @as(i64, @intCast(cfg.pool_lease_seconds));
+        var claim_buf: [384]u8 = undefined;
+        const claim_payload = std.fmt.bufPrint(
+            &claim_buf,
+            "{{\"task_id\":{f},\"status\":\"claimed\",\"lease_until\":{d},\"retry_count\":{d}}}",
+            .{ std.json.fmt(task.task_id, .{}), task.lease_until orelse 0, task.retry_count },
+        ) catch "{\"status\":\"claimed\"}";
+        appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.claimed", claim_payload);
 
-            var claim_buf: [384]u8 = undefined;
-            const claim_payload = std.fmt.bufPrint(
-                &claim_buf,
-                "{{\"task_id\":{f},\"status\":\"claimed\",\"lease_until\":{d},\"retry_count\":{d}}}",
-                .{ std.json.fmt(t.id, .{}), t.lease_until.?, t.retry_count },
-            ) catch "{\"status\":\"claimed\"}";
-            appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.claimed", claim_payload);
+        try ts.markRunning(task.task_id, run_id, cfg.pool_lease_seconds, run_id);
+        var run_buf: [384]u8 = undefined;
+        const run_payload = std.fmt.bufPrint(
+            &run_buf,
+            "{{\"task_id\":{f},\"status\":\"running\"}}",
+            .{std.json.fmt(task.task_id, .{})},
+        ) catch "{\"status\":\"running\"}";
+        appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.running", run_payload);
 
-            t.status = "running";
-            t.lease_until = std.time.timestamp() + @as(i64, @intCast(cfg.pool_lease_seconds));
-            var run_buf: [384]u8 = undefined;
-            const run_payload = std.fmt.bufPrint(
-                &run_buf,
-                "{{\"task_id\":{f},\"status\":\"running\",\"lease_until\":{d}}}",
-                .{ std.json.fmt(t.id, .{}), t.lease_until.? },
-            ) catch "{\"status\":\"running\"}";
-            appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.running", run_payload);
+        var provider_started_buf: [128]u8 = undefined;
+        const provider_started_payload = std.fmt.bufPrint(&provider_started_buf, "{{\"provider\":\"{s}\"}}", .{provider_name}) catch "{\"provider\":\"unknown\"}";
+        appendRunEvent(primary_es, mirror_es, run_id, .provider, "provider.invoke.started", provider_started_payload);
+        const exec_result = try provider.runIteration(cfg, allocator, iteration, null, task.prompt);
+        iteration += 1;
 
-            var provider_started_buf: [128]u8 = undefined;
-            const provider_started_payload = std.fmt.bufPrint(&provider_started_buf, "{{\"provider\":\"{s}\"}}", .{provider_name}) catch "{\"provider\":\"unknown\"}";
-            appendRunEvent(primary_es, mirror_es, run_id, .provider, "provider.invoke.started", provider_started_payload);
-            const exec_result = try provider.runIteration(cfg, allocator, iteration, null, t.prompt);
-            iteration += 1;
-
-            if (exec_result.success) {
-                t.status = "done";
-                t.lease_owner = null;
-                t.lease_until = null;
-                var done_buf: [256]u8 = undefined;
-                const done_payload = std.fmt.bufPrint(&done_buf, "{{\"task_id\":{f},\"status\":\"done\"}}", .{std.json.fmt(t.id, .{})}) catch "{\"status\":\"done\"}";
-                appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.done", done_payload);
+        if (exec_result.success) {
+            try ts.markDone(task.task_id, run_id, run_id);
+            var done_buf: [256]u8 = undefined;
+            const done_payload = std.fmt.bufPrint(&done_buf, "{{\"task_id\":{f},\"status\":\"done\"}}", .{std.json.fmt(task.task_id, .{})}) catch "{\"status\":\"done\"}";
+            appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.done", done_payload);
+        } else {
+            const fail_res = try ts.markFailedOrRequeue(task.task_id, run_id, run_id, "provider_failed", cfg.pool_max_retries);
+            if (fail_res.status == .queued) {
+                var requeue_buf: [256]u8 = undefined;
+                const requeue_payload = std.fmt.bufPrint(
+                    &requeue_buf,
+                    "{{\"task_id\":{f},\"status\":\"queued\",\"retry_count\":{d},\"max_retries\":{d}}}",
+                    .{ std.json.fmt(task.task_id, .{}), fail_res.retry_count, fail_res.max_retries },
+                ) catch "{\"status\":\"queued\"}";
+                appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.requeued", requeue_payload);
             } else {
-                t.retry_count += 1;
-                t.lease_owner = null;
-                t.lease_until = null;
-                if (t.retry_count < task_max_retries) {
-                    t.status = "queued";
-                    var requeue_buf: [256]u8 = undefined;
-                    const requeue_payload = std.fmt.bufPrint(
-                        &requeue_buf,
-                        "{{\"task_id\":{f},\"status\":\"queued\",\"retry_count\":{d},\"max_retries\":{d}}}",
-                        .{ std.json.fmt(t.id, .{}), t.retry_count, task_max_retries },
-                    ) catch "{\"status\":\"queued\"}";
-                    appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.requeued", requeue_payload);
-                } else {
-                    t.status = "failed";
-                    var failed_buf: [256]u8 = undefined;
-                    const failed_payload = std.fmt.bufPrint(
-                        &failed_buf,
-                        "{{\"task_id\":{f},\"status\":\"failed\",\"retry_count\":{d},\"max_retries\":{d}}}",
-                        .{ std.json.fmt(t.id, .{}), t.retry_count, task_max_retries },
-                    ) catch "{\"status\":\"failed\"}";
-                    appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.failed", failed_payload);
-                }
+                var failed_buf: [256]u8 = undefined;
+                const failed_payload = std.fmt.bufPrint(
+                    &failed_buf,
+                    "{{\"task_id\":{f},\"status\":\"failed\",\"retry_count\":{d},\"max_retries\":{d}}}",
+                    .{ std.json.fmt(task.task_id, .{}), fail_res.retry_count, fail_res.max_retries },
+                ) catch "{\"status\":\"failed\"}";
+                appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.failed", failed_payload);
             }
         }
-        if (!claimed_any) break;
     }
-
-    try task_service.saveTasks(allocator, &loaded);
 }

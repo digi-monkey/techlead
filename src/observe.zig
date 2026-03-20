@@ -5,6 +5,8 @@ const config = @import("config.zig");
 const ui = @import("ui.zig");
 const runner = @import("runner.zig");
 const replay = @import("storage/replay.zig");
+const task_store = @import("storage/task_store.zig");
+const sqlite_task_store = @import("storage/sqlite_task_store.zig");
 const session_service = @import("app/session_service.zig");
 
 const Allocator = std.mem.Allocator;
@@ -53,6 +55,28 @@ const StartSessionBody = struct {
 
 const SessionMessageBody = struct {
     message: ?[]const u8 = null,
+    request_id: ?[]const u8 = null,
+};
+
+const CreateTaskBody = struct {
+    title: ?[]const u8 = null,
+    prompt: ?[]const u8 = null,
+    priority: ?i32 = null,
+    max_retries: ?u32 = null,
+    request_id: ?[]const u8 = null,
+};
+
+const PatchTaskBody = struct {
+    title: ?[]const u8 = null,
+    prompt: ?[]const u8 = null,
+    priority: ?i32 = null,
+    max_retries: ?u32 = null,
+    version: ?i64 = null,
+    request_id: ?[]const u8 = null,
+};
+
+const TaskActionBody = struct {
+    action: ?[]const u8 = null,
     request_id: ?[]const u8 = null,
 };
 
@@ -201,10 +225,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/tasks")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
-        const tasks = readTasks(ctx.allocator, ctx.target_dir) catch "{\"tasks\":[]}";
-        defer if (tasks.ptr != "{\"tasks\":[]}".ptr) ctx.allocator.free(tasks);
-        return respondJson(req, .ok, tasks);
+        return handleTasksApi(ctx, req, target);
     }
 
     if (std.mem.startsWith(u8, target, "/sessions/current")) {
@@ -599,15 +620,207 @@ fn isDuplicateRequestId(ctx: *ServerContext, request_id: []const u8) bool {
     return false;
 }
 
-fn readTasks(allocator: Allocator, target_dir: []const u8) ![]u8 {
-    const path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, ".techlead/tasks.json" });
-    defer allocator.free(path);
-    const raw = std.fs.cwd().readFileAlloc(allocator, path, 4 * 1024 * 1024) catch |err| switch (err) {
-        error.FileNotFound => return allocator.dupe(u8, "{\"tasks\":[]}"),
-        else => return err,
+fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []const u8) !void {
+    var store = sqlite_task_store.SqliteTaskStore.init(ctx.allocator, ctx.target_dir) catch |err| switch (err) {
+        error.LegacyTasksFileDetected => return respondJson(req, .conflict, "{\"error\":\"legacy_tasks_json_detected\",\"hint\":\"run scripts/migrate-tasks-to-sqlite.sh\"}"),
+        error.StoreNotAvailable => return respondJson(req, .service_unavailable, "{\"error\":\"sqlite_unavailable\"}"),
+        else => return respondJson(req, .bad_request, "{\"error\":\"task_store_init_failed\"}"),
     };
-    defer allocator.free(raw);
-    return allocator.dupe(u8, raw);
+    defer store.deinit();
+    const ts = store.asTaskStore();
+
+    if (std.mem.eql(u8, target, "/tasks/events") or std.mem.startsWith(u8, target, "/tasks/events?")) {
+        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (req.head.method != .GET) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+        const after = parseAfterI64Query(target);
+        const out = ts.getTaskEventsJson(ctx.allocator, after, 200) catch return respondJson(req, .bad_request, "{\"error\":\"events_failed\"}");
+        defer ctx.allocator.free(out);
+        return respondJson(req, .ok, out);
+    }
+
+    if (std.mem.eql(u8, target, "/tasks") or std.mem.startsWith(u8, target, "/tasks?")) {
+        if (req.head.method == .GET) {
+            if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            const status_text = queryValue(target, "status");
+            const q = queryValue(target, "q");
+            const limit = parseLimitQuery(target, 50);
+            const cursor = parseCursorQuery(target);
+            const status = if (status_text) |s| task_store.taskStatusFromString(s) catch return respondJson(req, .bad_request, "{\"error\":\"invalid_status\"}") else null;
+            const out = ts.listTasksJson(ctx.allocator, .{
+                .status = status,
+                .q = q,
+                .limit = limit,
+                .cursor = cursor,
+            }) catch return respondJson(req, .bad_request, "{\"error\":\"list_failed\"}");
+            defer ctx.allocator.free(out);
+            return respondJson(req, .ok, out);
+        }
+
+        if (req.head.method == .POST) {
+            if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
+
+            var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
+            defer if (request_id) |rid| ctx.allocator.free(rid);
+            const body = (try parseCreateTaskBody(req, ctx.allocator)) orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
+            defer {
+                if (body.title) |v| ctx.allocator.free(v);
+                if (body.prompt) |v| ctx.allocator.free(v);
+                if (body.request_id) |v| ctx.allocator.free(v);
+            }
+            if (body.request_id) |rid| {
+                if (request_id) |old| ctx.allocator.free(old);
+                request_id = try ctx.allocator.dupe(u8, rid);
+            }
+            if (request_id) |rid| {
+                if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
+            }
+            const title = body.title orelse return respondJson(req, .bad_request, "{\"error\":\"title_required\"}");
+            if (std.mem.trim(u8, title, " \t\r\n").len == 0) return respondJson(req, .bad_request, "{\"error\":\"title_required\"}");
+            const task_id = try std.fmt.allocPrint(ctx.allocator, "task-{d}-{d}", .{ std.time.timestamp(), std.crypto.random.int(u32) });
+            defer ctx.allocator.free(task_id);
+
+            ts.createTask(.{
+                .task_id = task_id,
+                .title = title,
+                .prompt = body.prompt,
+                .priority = body.priority orelse 0,
+                .max_retries = body.max_retries,
+            }, .{
+                .operator = "observe-user",
+                .source = "observe-api",
+                .request_id = request_id,
+            }) catch return respondJson(req, .bad_request, "{\"error\":\"create_failed\"}");
+            return respondJson(req, .ok, "{\"ok\":true}");
+        }
+
+        return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+    }
+
+    const task_id = taskIdFromPath(target) orelse return respondJson(req, .not_found, "{\"error\":\"not_found\"}");
+
+    if (std.mem.endsWith(u8, pathNoQuery(target), "/actions")) {
+        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+        if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
+
+        var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
+        defer if (request_id) |rid| ctx.allocator.free(rid);
+        const body = (try parseTaskActionBody(req, ctx.allocator)) orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
+        defer {
+            if (body.action) |v| ctx.allocator.free(v);
+            if (body.request_id) |v| ctx.allocator.free(v);
+        }
+        if (body.request_id) |rid| {
+            if (request_id) |old| ctx.allocator.free(old);
+            request_id = try ctx.allocator.dupe(u8, rid);
+        }
+        if (request_id) |rid| {
+            if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
+        }
+        const action_text = body.action orelse return respondJson(req, .bad_request, "{\"error\":\"action_required\"}");
+        const action = parseTaskAction(action_text) orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_action\"}");
+        ts.applyAction(task_id, action, .{
+            .operator = "observe-user",
+            .source = "observe-api",
+            .request_id = request_id,
+        }) catch |err| switch (err) {
+            error.ActionRejected => return respondJson(req, .conflict, "{\"error\":\"action_rejected\"}"),
+            else => return respondJson(req, .bad_request, "{\"error\":\"action_failed\"}"),
+        };
+        return respondJson(req, .ok, "{\"ok\":true}");
+    }
+
+    if (req.head.method == .GET) {
+        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        const out = ts.getTaskDetailJson(ctx.allocator, task_id) catch |err| switch (err) {
+            error.TaskNotFound => return respondJson(req, .not_found, "{\"error\":\"task_not_found\"}"),
+            else => return respondJson(req, .bad_request, "{\"error\":\"detail_failed\"}"),
+        };
+        defer ctx.allocator.free(out);
+        return respondJson(req, .ok, out);
+    }
+
+    if (req.head.method == .PATCH) {
+        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
+
+        var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
+        defer if (request_id) |rid| ctx.allocator.free(rid);
+        const body = (try parsePatchTaskBody(req, ctx.allocator)) orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
+        defer {
+            if (body.title) |v| ctx.allocator.free(v);
+            if (body.prompt) |v| ctx.allocator.free(v);
+            if (body.request_id) |v| ctx.allocator.free(v);
+        }
+        if (body.request_id) |rid| {
+            if (request_id) |old| ctx.allocator.free(old);
+            request_id = try ctx.allocator.dupe(u8, rid);
+        }
+        if (request_id) |rid| {
+            if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
+        }
+        const version = body.version orelse return respondJson(req, .bad_request, "{\"error\":\"version_required\"}");
+        ts.patchTask(task_id, .{
+            .title = body.title,
+            .prompt = body.prompt,
+            .priority = body.priority,
+            .max_retries = body.max_retries,
+            .version = version,
+        }, .{
+            .operator = "observe-user",
+            .source = "observe-api",
+            .request_id = request_id,
+        }) catch |err| switch (err) {
+            error.VersionConflict => return respondJson(req, .conflict, "{\"error\":\"version_conflict\"}"),
+            else => return respondJson(req, .bad_request, "{\"error\":\"patch_failed\"}"),
+        };
+        return respondJson(req, .ok, "{\"ok\":true}");
+    }
+
+    return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+}
+
+fn taskIdFromPath(target: []const u8) ?[]const u8 {
+    const p = pathNoQuery(target);
+    if (!std.mem.startsWith(u8, p, "/tasks/")) return null;
+    const rest = p["/tasks/".len..];
+    if (rest.len == 0) return null;
+    if (std.mem.eql(u8, rest, "events")) return null;
+    if (std.mem.endsWith(u8, rest, "/actions")) {
+        const action_idx = rest.len - "/actions".len;
+        if (action_idx == 0) return null;
+        return rest[0..action_idx];
+    }
+    return rest;
+}
+
+fn pathNoQuery(target: []const u8) []const u8 {
+    const q = std.mem.indexOfScalar(u8, target, '?') orelse return target;
+    return target[0..q];
+}
+
+fn parseTaskAction(text: []const u8) ?task_store.Action {
+    if (std.mem.eql(u8, text, "requeue")) return .requeue;
+    if (std.mem.eql(u8, text, "cancel")) return .cancel;
+    if (std.mem.eql(u8, text, "resume")) return .@"resume";
+    if (std.mem.eql(u8, text, "force_fail")) return .force_fail;
+    return null;
+}
+
+fn parseAfterI64Query(target: []const u8) i64 {
+    const after_raw = queryValue(target, "after") orelse return 0;
+    return std.fmt.parseInt(i64, after_raw, 10) catch 0;
+}
+
+fn parseLimitQuery(target: []const u8, default_value: usize) usize {
+    const raw = queryValue(target, "limit") orelse return default_value;
+    return std.fmt.parseInt(usize, raw, 10) catch default_value;
+}
+
+fn parseCursorQuery(target: []const u8) usize {
+    const raw = queryValue(target, "cursor") orelse return 0;
+    return std.fmt.parseInt(usize, raw, 10) catch 0;
 }
 
 fn parseAfterQuery(target: []const u8) usize {
@@ -750,6 +963,67 @@ fn parseSessionMessageBody(req: *http.Server.Request, allocator: Allocator) !?Se
     return .{
         .message = if (parsed.value.message) |m| try allocator.dupe(u8, m) else null,
         .request_id = if (parsed.value.request_id) |rid| try allocator.dupe(u8, rid) else null,
+    };
+}
+
+fn parseCreateTaskBody(req: *http.Server.Request, allocator: Allocator) !?CreateTaskBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(CreateTaskBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+    return .{
+        .title = if (parsed.value.title) |v| try allocator.dupe(u8, v) else null,
+        .prompt = if (parsed.value.prompt) |v| try allocator.dupe(u8, v) else null,
+        .priority = parsed.value.priority,
+        .max_retries = parsed.value.max_retries,
+        .request_id = if (parsed.value.request_id) |v| try allocator.dupe(u8, v) else null,
+    };
+}
+
+fn parsePatchTaskBody(req: *http.Server.Request, allocator: Allocator) !?PatchTaskBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(PatchTaskBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+    return .{
+        .title = if (parsed.value.title) |v| try allocator.dupe(u8, v) else null,
+        .prompt = if (parsed.value.prompt) |v| try allocator.dupe(u8, v) else null,
+        .priority = parsed.value.priority,
+        .max_retries = parsed.value.max_retries,
+        .version = parsed.value.version,
+        .request_id = if (parsed.value.request_id) |v| try allocator.dupe(u8, v) else null,
+    };
+}
+
+fn parseTaskActionBody(req: *http.Server.Request, allocator: Allocator) !?TaskActionBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(TaskActionBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+    return .{
+        .action = if (parsed.value.action) |v| try allocator.dupe(u8, v) else null,
+        .request_id = if (parsed.value.request_id) |v| try allocator.dupe(u8, v) else null,
     };
 }
 
