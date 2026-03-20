@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 const TOKEN_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 const CONTROL_MIN_INTERVAL_MS: i64 = 300;
 const REQUEST_ID_TTL_SECONDS: i64 = 5 * 60;
+const OBSERVE_UI_DIST_DIR = "web/observe-ui/dist";
 
 const TokenFile = struct {
     observe_token: []const u8,
@@ -139,6 +140,7 @@ fn handleConnection(ctx: *ServerContext, conn: std.net.Server.Connection) !void 
 
 fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     const target = req.head.target;
+    if (try serveObserveUiAsset(ctx, req, target)) return;
     if (std.mem.eql(u8, target, "/") or std.mem.startsWith(u8, target, "/?")) {
         return respondHtml(req, dashboardHtml());
     }
@@ -440,10 +442,50 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     return respondJson(req, .not_found, "{\"error\":\"not_found\"}");
 }
 
-fn respondJson(req: *http.Server.Request, status: http.Status, body: []const u8) !void {
+fn serveObserveUiAsset(ctx: *ServerContext, req: *http.Server.Request, target: []const u8) !bool {
+    if (req.head.method != .GET) return false;
+
+    const path_no_query = blk: {
+        if (std.mem.indexOfScalar(u8, target, '?')) |q| break :blk target[0..q];
+        break :blk target;
+    };
+
+    if (!(std.mem.eql(u8, path_no_query, "/") or std.mem.startsWith(u8, path_no_query, "/assets/"))) {
+        return false;
+    }
+
+    const rel_path = if (std.mem.eql(u8, path_no_query, "/")) "index.html" else path_no_query[1..];
+    if (std.mem.indexOf(u8, rel_path, "..") != null) return false;
+
+    const full_path = try std.fs.path.join(ctx.allocator, &[_][]const u8{ OBSERVE_UI_DIST_DIR, rel_path });
+    defer ctx.allocator.free(full_path);
+
+    const data = std.fs.cwd().readFileAlloc(ctx.allocator, full_path, 8 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer ctx.allocator.free(data);
+
+    const content_type = contentTypeForPath(rel_path);
+    try respondBody(req, .ok, data, content_type, "no-store");
+    return true;
+}
+
+fn contentTypeForPath(path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, path, ".html")) return "text/html; charset=utf-8";
+    if (std.mem.endsWith(u8, path, ".js")) return "application/javascript; charset=utf-8";
+    if (std.mem.endsWith(u8, path, ".css")) return "text/css; charset=utf-8";
+    if (std.mem.endsWith(u8, path, ".svg")) return "image/svg+xml";
+    if (std.mem.endsWith(u8, path, ".png")) return "image/png";
+    if (std.mem.endsWith(u8, path, ".ico")) return "image/x-icon";
+    if (std.mem.endsWith(u8, path, ".json")) return "application/json; charset=utf-8";
+    return "application/octet-stream";
+}
+
+fn respondBody(req: *http.Server.Request, status: http.Status, body: []const u8, content_type: []const u8, cache_control: []const u8) !void {
     const headers = [_]http.Header{
-        .{ .name = "content-type", .value = "application/json; charset=utf-8" },
-        .{ .name = "cache-control", .value = "no-store" },
+        .{ .name = "content-type", .value = content_type },
+        .{ .name = "cache-control", .value = cache_control },
     };
     try req.respond(body, .{
         .status = status,
@@ -452,16 +494,12 @@ fn respondJson(req: *http.Server.Request, status: http.Status, body: []const u8)
     });
 }
 
+fn respondJson(req: *http.Server.Request, status: http.Status, body: []const u8) !void {
+    try respondBody(req, status, body, "application/json; charset=utf-8", "no-store");
+}
+
 fn respondHtml(req: *http.Server.Request, body: []const u8) !void {
-    const headers = [_]http.Header{
-        .{ .name = "content-type", .value = "text/html; charset=utf-8" },
-        .{ .name = "cache-control", .value = "no-store" },
-    };
-    try req.respond(body, .{
-        .status = .ok,
-        .keep_alive = false,
-        .extra_headers = &headers,
-    });
+    try respondBody(req, .ok, body, "text/html; charset=utf-8", "no-store");
 }
 
 fn streamEvents(req: *http.Server.Request, ctx: *ServerContext, after_start: usize) !void {
