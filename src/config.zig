@@ -60,8 +60,11 @@ pub const ConfigFile = struct {
     log_dir: []const u8,
     model: []const u8,
     agent: []const u8,
+    provider: []const u8 = "opencode",
     main_branch: []const u8,
     max_branches: usize,
+    pool_lease_seconds: u64 = 300,
+    pool_max_retries: u32 = 2,
 };
 
 /// Runtime configuration structure with owned strings.
@@ -74,8 +77,11 @@ pub const Config = struct {
     log_dir: []u8,
     model: []u8,
     agent: []u8,
+    provider: []u8,
     main_branch: []u8,
     max_branches: usize,
+    pool_lease_seconds: u64,
+    pool_max_retries: u32,
 };
 
 /// Free all memory owned by a Config struct.
@@ -87,6 +93,7 @@ pub fn deinitConfig(allocator: Allocator, config: *const Config) void {
     allocator.free(config.log_dir);
     allocator.free(config.model);
     allocator.free(config.agent);
+    allocator.free(config.provider);
     allocator.free(config.main_branch);
 }
 
@@ -144,8 +151,11 @@ pub fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
         .log_dir = try allocator.dupe(u8, value.log_dir),
         .model = try allocator.dupe(u8, value.model),
         .agent = try allocator.dupe(u8, value.agent),
+        .provider = try allocator.dupe(u8, value.provider),
         .main_branch = try allocator.dupe(u8, value.main_branch),
         .max_branches = value.max_branches,
+        .pool_lease_seconds = value.pool_lease_seconds,
+        .pool_max_retries = value.pool_max_retries,
     };
 }
 
@@ -164,8 +174,11 @@ pub fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const
         .log_dir = DEFAULT_LOG_DIR,
         .model = "",
         .agent = "Prometheus",
+        .provider = "opencode",
         .main_branch = "master",
         .max_branches = 10,
+        .pool_lease_seconds = 300,
+        .pool_max_retries = 2,
     };
 
     const final_text = try std.fmt.allocPrint(allocator, "{f}\n", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});

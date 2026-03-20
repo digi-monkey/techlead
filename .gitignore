@@ -6,3 +6,4 @@ techlead.json
 .tmp_demo_path
 .zig-cache/
 zig-out/
+main

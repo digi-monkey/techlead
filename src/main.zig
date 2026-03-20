@@ -4,6 +4,13 @@ const ui = @import("ui.zig");
 const config = @import("config.zig");
 const server = @import("server.zig");
 const runner = @import("runner.zig");
+const observe = @import("observe.zig");
+const replay = @import("storage/replay.zig");
+comptime {
+    _ = @import("providers/provider_contract_test.zig");
+    _ = @import("core/domain.zig");
+    _ = @import("core/scheduler.zig");
+}
 
 const Allocator = std.mem.Allocator;
 const CONFIG_REL_PATH = ".techlead/techlead.json";
@@ -33,13 +40,21 @@ fn showHelp() void {
             "用法:\n" ++
             "    zig build run -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
             "    zig build run -- init-agent \"目标描述\" [--dir 目录]\n" ++
-            "    zig build run -- run [--dir 目录]\n" ++
+            "    zig build run -- run [--dir 目录] [--mode optimize|pool]\n" ++
+            "    zig build run -- control <pause|resume|abort|inject_prompt> [--dir 目录] [--prompt 文本]\n" ++
+            "    zig build run -- observe start [--dir 目录] [--host 0.0.0.0] [--port 7788]\n" ++
+            "    zig build run -- observe rotate-tokens [--dir 目录]\n" ++
+            "    zig build run -- trace show [--dir 目录]\n" ++
             "    zig build run -- server start [--daemon]\n" ++
             "    zig build run -- server stop\n\n" ++
             "说明:\n" ++
             "    - init: 在目标目录生成 .techlead/techlead.json 和 .techlead/program.md\n" ++
             "    - init-agent: 创建目标目录下的 sisyphus 代理项目\n" ++
-            "    - run: 从目标目录读取配置并执行迭代\n" ++
+            "    - run: 从目标目录读取配置并执行迭代（默认 mode=pool）\n" ++
+            "    - control: 向正在运行的任务写入控制命令\n" ++
+            "    - observe start: 启动 Web 观察与控制接口\n" ++
+            "    - observe rotate-tokens: 轮换 observe/control token\n" ++
+            "    - trace show: 输出结构化 tracing 事件\n" ++
             "    - server start: 在前台启动 opencode serve 服务\n" ++
             "    - server start --daemon: 在后台启动 opencode serve 服务\n" ++
             "    - server stop: 停止 opencode serve 服务\n\n" ++
@@ -100,13 +115,40 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "run")) {
         var target_dir: []const u8 = ".";
-        var run_args = args[2..];
-        if (run_args.len >= 2 and std.mem.eql(u8, run_args[0], "--dir")) {
-            target_dir = run_args[1];
-            run_args = run_args[2..];
-        }
-        if (run_args.len > 0) {
-            ui.logError("run 参数无效，仅支持可选 --dir 目录", .{});
+        var mode: runner.RunMode = .pool;
+        var i: usize = 2;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--dir")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("run 参数无效，--dir 需要目录参数", .{});
+                    showHelp();
+                    return;
+                }
+                target_dir = args[i + 1];
+                i += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, arg, "--mode")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("run 参数无效，--mode 需要取值 optimize|pool", .{});
+                    showHelp();
+                    return;
+                }
+                const mode_str = args[i + 1];
+                if (std.mem.eql(u8, mode_str, "optimize")) {
+                    mode = .optimize;
+                } else if (std.mem.eql(u8, mode_str, "pool")) {
+                    mode = .pool;
+                } else {
+                    ui.logError("run 参数无效，--mode 仅支持 optimize|pool", .{});
+                    showHelp();
+                    return;
+                }
+                i += 1;
+                continue;
+            }
+            ui.logError("run 参数无效，仅支持 --dir 目录 和 --mode optimize|pool", .{});
             showHelp();
             return;
         }
@@ -130,15 +172,21 @@ pub fn main() !void {
         ui.logInfo("  - OpenCode URL: {s}", .{cfg.opencode_url});
         ui.logInfo("  - 主分支: {s}", .{cfg.main_branch});
         ui.logInfo("  - 日志目录: {s}", .{cfg.log_dir});
+        ui.logInfo("  - 运行模式: {s}", .{@tagName(mode)});
+        ui.logInfo("  - Provider: {s}", .{cfg.provider});
+        ui.logInfo("  - Pool lease(s): {d}", .{cfg.pool_lease_seconds});
+        ui.logInfo("  - Pool max retries: {d}", .{cfg.pool_max_retries});
         if (cfg.model.len > 0) ui.logInfo("  - 模型: {s}", .{cfg.model});
         std.debug.print("\n", .{});
-        runner.runCommand(cfg, allocator) catch |err| {
+        runner.runCommandWithMode(cfg, allocator, mode) catch |err| {
             switch (err) {
                 error.MissingProgramFile => ui.logError(".techlead/program.md 缺失，请重新执行 init --force", .{}),
                 error.InvalidProgramTemplate => ui.logError(".techlead/program.md 模板块缺失，请重新执行 init --force", .{}),
                 error.NotGitRepo => ui.logError("work_dir 不是 git 仓库", .{}),
                 error.OpencodeUnavailable => {},
                 error.MissingOpencode => {},
+                error.ModeNotImplemented => {},
+                error.AllIterationsFailed => {},
                 else => ui.logError("run 失败: {any}", .{err}),
             }
             return;
@@ -183,6 +231,143 @@ pub fn main() !void {
         }
         ui.logError("未知的 server 子命令: {s}", .{subcommand});
         showHelp();
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "control")) {
+        if (args.len < 3) {
+            ui.logError("control 需要 action: pause|resume|abort|inject_prompt", .{});
+            showHelp();
+            return;
+        }
+        const action = args[2];
+        var target_dir: []const u8 = ".";
+        var prompt: ?[]const u8 = null;
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--dir")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("control 参数无效，--dir 需要目录参数", .{});
+                    return;
+                }
+                target_dir = args[i + 1];
+                i += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, args[i], "--prompt")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("control 参数无效，--prompt 需要文本参数", .{});
+                    return;
+                }
+                prompt = args[i + 1];
+                i += 1;
+                continue;
+            }
+            ui.logError("control 参数无效", .{});
+            showHelp();
+            return;
+        }
+        runner.runControlCommand(allocator, target_dir, action, prompt) catch |err| {
+            ui.logError("写入控制命令失败: {any}", .{err});
+        };
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "observe")) {
+        if (args.len < 3) {
+            ui.logError("observe 需要子命令: start 或 rotate-tokens", .{});
+            showHelp();
+            return;
+        }
+        const observe_sub = args[2];
+        var target_dir: []const u8 = ".";
+        var host: []const u8 = "127.0.0.1";
+        var port: u16 = 7788;
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--dir")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("observe 参数无效，--dir 需要目录参数", .{});
+                    return;
+                }
+                target_dir = args[i + 1];
+                i += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, args[i], "--host")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("observe 参数无效，--host 需要参数", .{});
+                    return;
+                }
+                host = args[i + 1];
+                i += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, args[i], "--port")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("observe 参数无效，--port 需要参数", .{});
+                    return;
+                }
+                port = std.fmt.parseInt(u16, args[i + 1], 10) catch {
+                    ui.logError("observe 参数无效，--port 需要数字", .{});
+                    return;
+                };
+                i += 1;
+                continue;
+            }
+            ui.logError("observe 参数无效", .{});
+            showHelp();
+            return;
+        }
+        if (std.mem.eql(u8, observe_sub, "start")) {
+            observe.runObserveStartCommand(allocator, target_dir, host, port) catch |err| {
+                ui.logError("observe 启动失败: {any}", .{err});
+            };
+            return;
+        }
+        if (std.mem.eql(u8, observe_sub, "rotate-tokens")) {
+            observe.runObserveRotateTokensCommand(allocator, target_dir) catch |err| {
+                ui.logError("token 轮换失败: {any}", .{err});
+            };
+            return;
+        }
+        ui.logError("observe 仅支持子命令: start 或 rotate-tokens", .{});
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "trace")) {
+        if (args.len < 3 or !std.mem.eql(u8, args[2], "show")) {
+            ui.logError("trace 仅支持子命令: show", .{});
+            showHelp();
+            return;
+        }
+        var target_dir: []const u8 = ".";
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--dir")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("trace 参数无效，--dir 需要目录参数", .{});
+                    return;
+                }
+                target_dir = args[i + 1];
+                i += 1;
+                continue;
+            }
+            ui.logError("trace 参数无效", .{});
+            showHelp();
+            return;
+        }
+        const cfg = config.loadConfigFromJson(allocator, target_dir) catch |err| {
+            ui.logError("读取配置失败: {any}", .{err});
+            return;
+        };
+        defer config.deinitConfig(allocator, &cfg);
+        const events = replay.readEventsJsonl(allocator, cfg.work_dir, cfg.log_dir) catch |err| {
+            ui.logError("读取 tracing 失败: {any}", .{err});
+            return;
+        };
+        defer allocator.free(events);
+        std.debug.print("{s}\n", .{events});
         return;
     }
 

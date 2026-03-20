@@ -1,246 +1,103 @@
 const std = @import("std");
 
-const utils = @import("utils.zig");
 const ui = @import("ui.zig");
 const config = @import("config.zig");
-const git = @import("git.zig");
-const opencode = @import("opencode.zig");
-const template = @import("template.zig");
-const tech_detect = @import("tech_detect.zig");
-const prompt_builder = @import("prompt_builder.zig");
-const clipboard_helper = @import("clipboard_helper.zig");
+const event_store = @import("storage/store.zig");
+const jsonl_store = @import("storage/jsonl_store.zig");
+const sqlite_store = @import("storage/sqlite_store.zig");
+const control_service = @import("app/control_service.zig");
+const run_service = @import("app/run_service.zig");
+const init_service = @import("app/init_service.zig");
+const agent_service = @import("app/agent_service.zig");
 
 const Allocator = std.mem.Allocator;
 
-const TECHLEAD_DIR_NAME = ".techlead";
-const CONFIG_REL_PATH = ".techlead/techlead.json";
-const DEFAULT_PROGRAM_REL_PATH = ".techlead/program.md";
+pub const RunMode = enum {
+    optimize,
+    pool,
+};
+
 
 /// Validates the runtime environment for the run command.
 pub fn validateRunEnvironment(cfg: config.Config, allocator: Allocator) !void {
-    ui.logInfo("检查运行环境...", .{});
-
-    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, cfg.work_dir);
-    defer allocator.free(abs_work_dir);
-    ui.logInfo("工作目录: {s}", .{abs_work_dir});
-
-    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ cfg.work_dir, cfg.program_file });
-    defer allocator.free(program_path);
-
-    std.fs.cwd().access(program_path, .{}) catch {
-        ui.logError("找不到 {s}", .{program_path});
-        return error.MissingProgramFile;
-    };
-
-    try git.verifyGitRepo(cfg.work_dir, allocator);
-    ui.logSuccess("环境检查通过", .{});
-    std.debug.print("\n", .{});
+    return run_service.validateRunEnvironment(cfg, allocator);
 }
 
 /// Checks if OpenCode server is available.
 pub fn checkOpencode(cfg: config.Config, allocator: Allocator) !void {
-    ui.logInfo("检查 OpenCode server...", .{});
-    if (!utils.checkHttpService(allocator, cfg.opencode_url)) {
-        ui.logError("无法连接到 OpenCode server at {s}", .{cfg.opencode_url});
-        ui.logInfo("请确保 OpenCode serve 正在运行: opencode serve", .{});
-        return error.OpencodeUnavailable;
-    }
-
-    ui.logSuccess("OpenCode server 连接正常", .{});
-    std.debug.print("\n", .{});
+    return run_service.checkOpencode(cfg, allocator);
 }
 
 /// Runs the main iteration command.
 pub fn runCommand(cfg: config.Config, allocator: Allocator) !void {
-    if (!utils.commandExists(allocator, "opencode")) {
-        ui.logError("找不到 opencode CLI，请确保已安装", .{});
-        return error.MissingOpencode;
-    }
+    return runCommandWithMode(cfg, allocator, .pool);
+}
 
+/// Runs the main command with explicit execution mode.
+pub fn runCommandWithMode(cfg: config.Config, allocator: Allocator, mode: RunMode) !void {
     try validateRunEnvironment(cfg, allocator);
-    try checkOpencode(cfg, allocator);
 
-    var i: usize = 1;
-    while (i <= cfg.iterations) : (i += 1) {
-        std.debug.print("========================================\n", .{});
-        ui.logInfo("第 {d} / {d} 次迭代", .{ i, cfg.iterations });
-        std.debug.print("========================================\n\n", .{});
+    var jsonl = try jsonl_store.JsonlEventStore.init(allocator, cfg.work_dir, cfg.log_dir);
+    defer jsonl.deinit();
+    const primary_es = jsonl.asEventStore();
 
-        const experiment_branch = git.getCurrentExperimentBranch(cfg, allocator);
-        defer if (experiment_branch) |b| allocator.free(b);
-
-        const prompt = try opencode.preparePrompt(cfg, allocator, i, experiment_branch);
-        defer allocator.free(prompt);
-
-        const success = try opencode.invokeOpencode(cfg, allocator, i, prompt);
-        if (!success) {
-            ui.logError("第 {d} 次迭代失败，跳过...", .{i});
-            continue;
-        }
-
-        git.cleanupOldBranches(cfg, allocator);
-
-        std.debug.print("\n", .{});
-        ui.logInfo("当前 git 状态:", .{});
-        const branch_output = utils.runShellStdout(allocator, cfg.work_dir, "git branch -v") catch {
-            std.debug.print("\n", .{});
-            if (i < cfg.iterations) {
-                ui.logInfo("等待 2 秒后开始下一次迭代...", .{});
-                std.Thread.sleep(2 * std.time.ns_per_s);
-            }
-            std.debug.print("\n", .{});
-            continue;
-        };
-        defer allocator.free(branch_output);
-
-        var bit = std.mem.splitScalar(u8, branch_output, '\n');
-        while (bit.next()) |line| {
-            if (std.mem.indexOf(u8, line, cfg.main_branch) != null or std.mem.indexOf(u8, line, "experiment-") != null) {
-                std.debug.print("{s}\n", .{line});
-            }
-        }
-        std.debug.print("\n", .{});
-
-        if (i < cfg.iterations) {
-            ui.logInfo("等待 2 秒后开始下一次迭代...", .{});
-            std.Thread.sleep(2 * std.time.ns_per_s);
-        }
-
-        std.debug.print("\n", .{});
+    var sqlite: ?sqlite_store.SqliteEventStore = null;
+    if (sqlite_store.SqliteEventStore.init(allocator, cfg.work_dir, cfg.log_dir)) |s| {
+        sqlite = s;
+    } else |err| {
+        ui.logWarn("SQLite 事件存储不可用，继续使用 JSONL: {any}", .{err});
     }
+    const mirror_es: ?event_store.EventStore = if (sqlite) |*s| s.asEventStore() else null;
+    defer if (sqlite) |*s| s.deinit();
 
-    std.debug.print("========================================\n", .{});
-    ui.logSuccess("迭代完成！", .{});
-    std.debug.print("========================================\n\n", .{});
-    ui.logInfo("总结:", .{});
-    ui.logInfo("  - 总迭代次数: {d}", .{cfg.iterations});
-    ui.logInfo("  - 日志目录: {s}", .{cfg.log_dir});
+    const run_id = try std.fmt.allocPrint(allocator, "run-{d}", .{std.time.timestamp()});
+    defer allocator.free(run_id);
 
-    const current_branch = utils.runShellStdout(allocator, cfg.work_dir, "git branch --show-current") catch "unknown";
-    defer if (!std.mem.eql(u8, current_branch, "unknown")) allocator.free(current_branch);
-    ui.logInfo("  - 当前分支: {s}", .{current_branch});
-    std.debug.print("\n", .{});
-
-    ui.logInfo("保留的 experiment 分支:", .{});
-    const experiment_branches = utils.runShellStdout(allocator, cfg.work_dir, "git branch -v | grep experiment- || true") catch "";
-    defer if (experiment_branches.len > 0) allocator.free(experiment_branches);
-
-    if (experiment_branches.len > 0) {
-        std.debug.print("{s}\n", .{experiment_branches});
-    } else {
-        ui.logInfo("  无", .{});
-    }
-    std.debug.print("\n", .{});
+    const exec_mode: run_service.ExecutionMode = if (mode == .pool) .pool else .optimize;
+    try run_service.executeConfiguredRun(
+        cfg,
+        allocator,
+        exec_mode,
+        primary_es,
+        mirror_es,
+        run_id,
+    );
 }
 
 /// Runs the init command to set up a new project.
 pub fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, target_dir: []const u8) !void {
-    try git.verifyGitRepo(target_dir, allocator);
-
-    const techlead_dir = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, TECHLEAD_DIR_NAME });
-    defer allocator.free(techlead_dir);
-    try std.fs.cwd().makePath(techlead_dir);
-
-    const config_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, CONFIG_REL_PATH });
-    defer allocator.free(config_path);
-    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, DEFAULT_PROGRAM_REL_PATH });
-    defer allocator.free(program_path);
-
-    if (!force) {
-        if (utils.fileExists(config_path)) {
-            ui.logError("{s} 已存在，使用 --force 覆盖", .{config_path});
-            return error.FileAlreadyExists;
-        }
-        if (utils.fileExists(program_path)) {
-            ui.logError("{s} 已存在，使用 --force 覆盖", .{program_path});
-            return error.FileAlreadyExists;
-        }
-    }
-
-    const program_template = try template.buildProgramTemplate(allocator, goal);
-    defer allocator.free(program_template);
-
-    try config.writeDefaultConfig(allocator, force, target_dir);
-    try utils.writeFileWithPolicy(program_path, program_template, force);
-
-    ui.logSuccess("初始化完成", .{});
-    ui.logInfo("目标目录: {s}", .{target_dir});
-    ui.logInfo("已生成: {s}", .{config_path});
-    ui.logInfo("已生成: {s}", .{program_path});
-    ui.logInfo("下一步执行: zig build run -- run --dir {s}", .{target_dir});
+    return init_service.runInitCommand(allocator, goal, force, target_dir);
 }
 
-/// Errors that can occur during init-agent command
-const InitAgentError = error{
-    MissingGoal,
-    InvalidPath,
-    PathNotAccessible,
-    GitRepoRequired,
-    OutOfMemory,
-};
+pub fn runControlCommand(allocator: Allocator, target_dir: []const u8, action: []const u8, prompt: ?[]const u8) !void {
+    return control_service.sendControl(allocator, target_dir, action, prompt);
+}
+
+pub fn runControlCommandWithMeta(
+    allocator: Allocator,
+    target_dir: []const u8,
+    action: []const u8,
+    prompt: ?[]const u8,
+    operator: []const u8,
+    source: []const u8,
+) !void {
+    return control_service.sendControlWithMeta(allocator, target_dir, action, prompt, operator, source);
+}
+
+pub fn runControlCommandWithMetaAndRequestId(
+    allocator: Allocator,
+    target_dir: []const u8,
+    action: []const u8,
+    prompt: ?[]const u8,
+    operator: []const u8,
+    source: []const u8,
+    request_id: []const u8,
+) !void {
+    return control_service.sendControlWithMetaAndRequestId(allocator, target_dir, action, prompt, operator, source, request_id);
+}
 
 /// Runs the init-agent command to detect tech stack and generate agent prompt.
 /// Detects technology stack, builds an agent prompt, and copies it to clipboard.
 pub fn runInitAgentCommand(allocator: Allocator, args: []const []const u8) !void {
-    // Parse arguments: first is goal, then --dir (optional)
-    if (args.len == 0) {
-        return InitAgentError.MissingGoal;
-    }
-    const goal = args[0];
-
-    var target_dir: []const u8 = ".";
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--dir")) {
-            if (i + 1 >= args.len) {
-                return InitAgentError.InvalidPath;
-            }
-            target_dir = args[i + 1];
-            i += 1;
-        }
-    }
-
-    // Validate path is accessible
-    std.fs.cwd().access(target_dir, .{}) catch {
-        ui.logError("路径不可访问: {s}", .{target_dir});
-        return InitAgentError.PathNotAccessible;
-    };
-
-    // Validate git repo exists
-    git.verifyGitRepo(target_dir, allocator) catch {
-        ui.logError("目录不是 git 仓库: {s}", .{target_dir});
-        return InitAgentError.GitRepoRequired;
-    };
-
-    ui.logInfo("正在分析项目...", .{});
-
-    // Detect tech stack
-    const detection = tech_detect.detectTechStack(allocator, target_dir) catch |err| {
-        ui.logError("技术栈检测失败: {s}", .{@errorName(err)});
-        return err;
-    };
-    defer tech_detect.deinitDetection(allocator, &detection);
-
-    // Log detected tech stack
-    var tech_buf: [256]u8 = undefined;
-    const tech_str = if (detection.secondary) |sec|
-        std.fmt.bufPrint(&tech_buf, "{s}, {s}", .{ detection.primary, sec }) catch detection.primary
-    else
-        detection.primary;
-    ui.logInfo("检测到的技术栈: {s}", .{tech_str});
-
-    // Build agent prompt
-    ui.logInfo("正在构建代理提示...", .{});
-    const prompt = prompt_builder.buildAgentPrompt(allocator, goal, target_dir, detection) catch |err| {
-        ui.logError("构建提示失败: {s}", .{@errorName(err)});
-        return err;
-    };
-    defer allocator.free(prompt);
-
-    // Copy to clipboard (or stdout fallback)
-    ui.logInfo("正在复制到剪贴板...", .{});
-    clipboard_helper.copyToClipboardOrStdout(prompt);
-
-    ui.logSuccess("init-agent 完成！", .{});
-    ui.logInfo("提示已准备就绪。请粘贴到 OpenCode 中开始工作。", .{});
+    return agent_service.runInitAgentCommand(allocator, args);
 }

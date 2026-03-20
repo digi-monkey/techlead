@@ -285,17 +285,8 @@ pub fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
             std.process.exit(0);
         }
 
-        // Child process: become daemon
-        // Create new session, detach from terminal
-        _ = try posix.setsid();
-
-        // Ignore SIGHUP signal
-        const act = posix.Sigaction{
-            .handler = .{ .handler = posix.SIG.IGN },
-            .mask = posix.sigemptyset(),
-            .flags = 0,
-        };
-        posix.sigaction(posix.SIG.HUP, &act, null);
+        // Child process in background mode.
+        // NOTE: Avoid setsid() for Zig 0.15.2 compatibility in this codebase.
 
         // Redirect stdout/stderr to log file
         const log_file = redirectToLogFile(allocator) catch |err| {
@@ -311,12 +302,8 @@ pub fn runServerStartCommand(allocator: Allocator, daemon_mode: bool) !void {
         // We don't close log_file here since stdout/stderr now use it
         // The file will be closed when the process exits
 
-        // Get our new PID after setsid and update PID file
-        const new_pid = std.c.getpid();
-        writePidFile(allocator, new_pid) catch |err| {
-            // Log to file now
-            std.log.err("更新 PID 文件失败: {any}", .{err});
-        };
+        // Parent process has already written the child PID file.
+        // After setsid(), PID stays unchanged, so no update is required here.
 
         // Start opencode serve in daemon mode
         const argv = [_][]const u8{ "opencode", "serve" };
