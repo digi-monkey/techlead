@@ -313,6 +313,8 @@ export default function App() {
         body: JSON.stringify({ ttl_seconds: 600 }),
       })
       if (resp.url) {
+        // Reset countdown baseline to avoid stale initial TTL after long idle time.
+        setNowTickMs(safeNow())
         setConnectUrl(resp.url)
         setConnectExpiresAt(typeof resp.expires_at === 'number' ? resp.expires_at : null)
         setCopiedShareLink(false)
@@ -684,6 +686,7 @@ export default function App() {
 
   useEffect(() => {
     if (!connectExpiresAt) return
+    setNowTickMs(safeNow())
     const timer = window.setInterval(() => {
       setNowTickMs(safeNow())
     }, 1000)
