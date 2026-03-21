@@ -43,13 +43,16 @@ VITE_BACKEND_URL=http://127.0.0.1:7810 pnpm dev
 
 ## 扫码连接（推荐）
 
-后端启动后会输出扫码链接（`/connect?...`），移动端打开后前端会自动：
+后端启动后会输出扫码链接（`/connect?...`）和终端二维码（需安装 `qrencode`），前端扫码后会自动：
 
 1. 调用 `POST /auth/token/exchange`
 2. 写入 HttpOnly Cookie（observe/control）
 3. 清理 URL 中的敏感参数
 
 默认不需要手动填写 token。
+
+前端操作入口：
+- `Scan QR`：打开摄像头扫码入口，识别后自动触发换票授权
 
 ## Token 兼容模式（调试）
 

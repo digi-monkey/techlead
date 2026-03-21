@@ -3,6 +3,7 @@ const http = std.http;
 
 const config = @import("config.zig");
 const ui = @import("ui.zig");
+const utils = @import("utils.zig");
 const runner = @import("runner.zig");
 const replay = @import("storage/replay.zig");
 const task_store = @import("storage/task_store.zig");
@@ -165,6 +166,7 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
     defer allocator.free(share_issue.code);
     defer allocator.free(share_issue.url);
     ui.logInfo("扫码/分享入口: {s}", .{share_issue.url});
+    printStartupQr(allocator, share_issue.url);
     if (std.mem.eql(u8, host, "0.0.0.0")) {
         ui.logWarn("当前 host=0.0.0.0；扫码前请将链接中的主机替换为本机局域网 IP", .{});
     }
@@ -187,6 +189,44 @@ pub fn runObserveRotateTokensCommand(allocator: Allocator, target_dir: []const u
     ui.logSuccess("tokens 已轮换", .{});
     ui.logInfo("observe token: {s}", .{tokens.observe_token});
     ui.logInfo("control token: {s}", .{tokens.control_token});
+}
+
+fn printStartupQr(allocator: Allocator, url: []const u8) void {
+    ui.logInfo("二维码（终端扫码）:", .{});
+
+    if (!utils.commandExists(allocator, "qrencode")) {
+        ui.logWarn("未检测到 qrencode，无法直接输出终端二维码", .{});
+        ui.logInfo("安装示例: sudo apt-get install -y qrencode", .{});
+        return;
+    }
+
+    const run_result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "qrencode", "-t", "ANSIUTF8", "-m", "1", url },
+        .max_output_bytes = 1024 * 1024,
+    }) catch |err| {
+        ui.logWarn("二维码渲染失败: {s}", .{@errorName(err)});
+        return;
+    };
+    defer allocator.free(run_result.stdout);
+    defer allocator.free(run_result.stderr);
+
+    if (!utils.isExitedZero(run_result.term)) {
+        const err_trimmed = std.mem.trim(u8, run_result.stderr, " \r\n\t");
+        if (err_trimmed.len > 0) {
+            ui.logWarn("二维码渲染失败: {s}", .{err_trimmed});
+        } else {
+            ui.logWarn("二维码渲染失败: qrencode exited non-zero", .{});
+        }
+        return;
+    }
+
+    if (run_result.stdout.len == 0) {
+        ui.logWarn("二维码渲染失败: empty output", .{});
+        return;
+    }
+
+    std.debug.print("{s}\n", .{run_result.stdout});
 }
 
 fn handleConnection(ctx: *ServerContext, conn: std.net.Server.Connection) !void {

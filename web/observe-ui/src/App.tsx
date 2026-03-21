@@ -1,15 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Panel } from './components/Panel'
 import { apiRequest, isApiError, newRequestId, toEventRows, toneClass } from './lib/api'
 import { ControlView } from './views/ControlView'
 import { SessionView, type PendingCommand } from './views/SessionView'
 import type { EventRow, JsonValue, SessionMessage, StatusTone } from './types'
-
-type BootstrapResp = {
-  url?: string
-  expires_at?: number
-}
 
 type SessionSendResp = {
   ok?: boolean
@@ -114,6 +109,29 @@ function nextRetryDelayMs(attempts: number): number {
   return Math.min(30000, base * 2 ** cappedPower)
 }
 
+function extractBootstrapParams(raw: string): { bootstrapId: string; code: string } | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+
+  const fromSearchParams = (params: URLSearchParams) => {
+    const bootstrapId = params.get('bootstrap_id') ?? params.get('bootstrap') ?? ''
+    const code = params.get('code') ?? params.get('one_time_code') ?? ''
+    if (!bootstrapId || !code) return null
+    return { bootstrapId, code }
+  }
+
+  try {
+    const url = new URL(trimmed)
+    const parsed = fromSearchParams(url.searchParams)
+    if (parsed) return parsed
+  } catch {
+    // Keep fallback parsing below for plain query string payloads.
+  }
+
+  const query = trimmed.includes('?') ? trimmed.slice(trimmed.indexOf('?') + 1) : trimmed
+  return fromSearchParams(new URLSearchParams(query))
+}
+
 export default function App() {
   const query = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
@@ -158,10 +176,14 @@ export default function App() {
   const [runMode, setRunMode] = useState<'optimize' | 'pool'>('optimize')
   const [askPrompt, setAskPrompt] = useState('')
 
-  const [connectUrl, setConnectUrl] = useState('')
-  const [connectExpiresAt, setConnectExpiresAt] = useState<number | null>(null)
-  const [copiedShareLink, setCopiedShareLink] = useState(false)
-  const [nowTickMs, setNowTickMs] = useState(() => safeNow())
+  const [showScanner, setShowScanner] = useState(false)
+  const [scannerStatus, setScannerStatus] = useState('scanner idle')
+  const [scannerActive, setScannerActive] = useState(false)
+
+  const scannerVideoRef = useRef<HTMLVideoElement | null>(null)
+  const scannerStreamRef = useRef<MediaStream | null>(null)
+  const scannerTimerRef = useRef<number | null>(null)
+  const scannerBusyRef = useRef(false)
 
   const [sessionState, setSessionState] = useState<JsonValue>({})
   const [sessionInput, setSessionInput] = useState('')
@@ -202,7 +224,7 @@ export default function App() {
   const isSessionBusy = pendingCommands.length > 0 || sessionStatus === 'processing'
   const sessionSyncHint = useMemo(() => syncHintLabel(sessionSync), [sessionSync])
 
-  function normalizeStatus(message: string) {
+  const normalizeStatus = useCallback((message: string) => {
     if (message.includes('401')) {
       setStatusTone('warn')
       setStatusText('waiting for authorization, please scan again')
@@ -215,7 +237,7 @@ export default function App() {
     }
     setStatusTone('bad')
     setStatusText(message)
-  }
+  }, [])
 
   function updateOutbox(requestId: string, updater: (item: OutboxItem) => OutboxItem): void {
     setOutbox((prev) =>
@@ -306,38 +328,125 @@ export default function App() {
     })
   }
 
-  async function createShareLink() {
-    try {
-      const resp = await apiRequest<BootstrapResp>('/auth/qr/bootstrap', controlAuth ?? observeAuth, {
-        method: 'POST',
-        body: JSON.stringify({ ttl_seconds: 600 }),
-      })
-      if (resp.url) {
-        // Reset countdown baseline to avoid stale initial TTL after long idle time.
-        setNowTickMs(safeNow())
-        setConnectUrl(resp.url)
-        setConnectExpiresAt(typeof resp.expires_at === 'number' ? resp.expires_at : null)
-        setCopiedShareLink(false)
-        setStatusTone('ok')
-        setStatusText('share link generated')
-      } else {
-        setStatusTone('warn')
-        setStatusText('share link missing in response')
-      }
-    } catch (err) {
-      normalizeStatus(`create share link failed: ${(err as Error).message}`)
+  function stopScanner() {
+    if (scannerTimerRef.current != null) {
+      window.clearInterval(scannerTimerRef.current)
+      scannerTimerRef.current = null
     }
+
+    scannerBusyRef.current = false
+
+    if (scannerStreamRef.current) {
+      for (const track of scannerStreamRef.current.getTracks()) {
+        track.stop()
+      }
+      scannerStreamRef.current = null
+    }
+
+    if (scannerVideoRef.current) {
+      scannerVideoRef.current.pause()
+      scannerVideoRef.current.srcObject = null
+    }
+
+    setScannerActive(false)
   }
 
-  async function copyShareLink() {
-    if (!connectUrl) return
+  const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
+    setStatusTone('idle')
+    setStatusText('exchanging QR ticket...')
     try {
-      await navigator.clipboard.writeText(connectUrl)
-      setCopiedShareLink(true)
+      await apiRequest<JsonValue>('/auth/token/exchange', undefined, {
+        method: 'POST',
+        body: JSON.stringify({ bootstrap_id: bootstrapId, code }),
+      })
+      setObserveToken('')
+      setControlToken('')
       setStatusTone('ok')
-      setStatusText('share link copied')
+      setStatusText('connected via QR')
+      return true
     } catch (err) {
-      normalizeStatus(`copy link failed: ${(err as Error).message}`)
+      normalizeStatus(`exchange failed: ${(err as Error).message}`)
+      return false
+    }
+  }, [normalizeStatus])
+
+  async function applyScannedPayload(rawPayload: string) {
+    const parsed = extractBootstrapParams(rawPayload)
+    if (!parsed) {
+      setStatusTone('warn')
+      setStatusText('invalid QR payload')
+      setScannerStatus('invalid payload: missing bootstrap_id/code')
+      return
+    }
+
+    setScannerStatus('ticket parsed, authorizing...')
+    const ok = await exchangeBootstrapTicket(parsed.bootstrapId, parsed.code)
+    setScannerStatus(ok ? 'connected via scan' : 'authorization failed')
+  }
+
+  async function startScanner() {
+    if (scannerActive) return
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setScannerStatus('camera API unavailable in this browser')
+      return
+    }
+
+    const Detector = window.BarcodeDetector
+    if (typeof Detector !== 'function') {
+      setScannerStatus('live scan unsupported, paste scanned link below')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' } },
+      })
+
+      const video = scannerVideoRef.current
+      if (!video) {
+        for (const track of stream.getTracks()) track.stop()
+        setScannerStatus('scanner view unavailable')
+        return
+      }
+
+      scannerStreamRef.current = stream
+      video.srcObject = stream
+      await video.play()
+
+      const detector = new Detector({ formats: ['qr_code'] })
+      setScannerStatus('scanner active, point camera at QR')
+      setScannerActive(true)
+      scannerBusyRef.current = false
+
+      scannerTimerRef.current = window.setInterval(() => {
+        const currentVideo = scannerVideoRef.current
+        if (!currentVideo || currentVideo.readyState < 2) return
+        if (scannerBusyRef.current) return
+
+        scannerBusyRef.current = true
+        void detector
+          .detect(currentVideo)
+          .then((codes) => {
+            const rawValue =
+              codes.find((item) => typeof item.rawValue === 'string' && item.rawValue.trim().length > 0)?.rawValue ?? ''
+            if (!rawValue) return
+
+            setScannerStatus('QR detected, authorizing...')
+            stopScanner()
+            void applyScannedPayload(rawValue)
+          })
+          .catch(() => {
+            // Keep scanning; decode errors are expected for most frames.
+          })
+          .finally(() => {
+            scannerBusyRef.current = false
+          })
+      }, 280)
+    } catch (err) {
+      stopScanner()
+      setScannerStatus(`camera error: ${(err as Error).message}`)
     }
   }
 
@@ -413,8 +522,6 @@ export default function App() {
   }, [outbox])
 
   useEffect(() => {
-    let cancelled = false
-
     const removeQuerySecrets = () => {
       if (query.hasSensitive) {
         history.replaceState({}, '', location.pathname)
@@ -434,30 +541,13 @@ export default function App() {
         return
       }
 
-      setStatusTone('idle')
-      setStatusText('exchanging QR ticket...')
       removeQuerySecrets()
-      try {
-        await apiRequest<JsonValue>('/auth/token/exchange', undefined, {
-          method: 'POST',
-          body: JSON.stringify({ bootstrap_id: query.bootstrapId, code: query.code }),
-        })
-        if (cancelled) return
-        setObserveToken('')
-        setControlToken('')
-        setStatusTone('ok')
-        setStatusText('connected via QR')
-      } catch (err) {
-        if (cancelled) return
-        normalizeStatus(`exchange failed: ${(err as Error).message}`)
-      }
+      await exchangeBootstrapTicket(query.bootstrapId, query.code)
     }
 
     void exchange()
-    return () => {
-      cancelled = true
-    }
-  }, [query.bootstrapId, query.code, query.hasSensitive, query.observe, query.control])
+    return undefined
+  }, [exchangeBootstrapTicket, query.bootstrapId, query.code, query.hasSensitive, query.observe, query.control])
 
   useEffect(() => {
     afterRef.current = after
@@ -502,7 +592,7 @@ export default function App() {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [observeAuth])
+  }, [normalizeStatus, observeAuth])
 
   useEffect(() => {
     let cancelled = false
@@ -558,7 +648,7 @@ export default function App() {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [observeAuth])
+  }, [normalizeStatus, observeAuth])
 
   useEffect(() => {
     let cancelled = false
@@ -679,19 +769,18 @@ export default function App() {
     return 'cookie session mode'
   }, [observeToken, controlToken])
 
-  const connectRemainingSec = useMemo(() => {
-    if (!connectExpiresAt) return null
-    return Math.max(0, connectExpiresAt - Math.floor(nowTickMs / 1000))
-  }, [connectExpiresAt, nowTickMs])
-
   useEffect(() => {
-    if (!connectExpiresAt) return
-    setNowTickMs(safeNow())
-    const timer = window.setInterval(() => {
-      setNowTickMs(safeNow())
-    }, 1000)
-    return () => window.clearInterval(timer)
-  }, [connectExpiresAt])
+    return () => {
+      if (scannerTimerRef.current != null) {
+        window.clearInterval(scannerTimerRef.current)
+      }
+      if (scannerStreamRef.current) {
+        for (const track of scannerStreamRef.current.getTracks()) {
+          track.stop()
+        }
+      }
+    }
+  }, [])
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 p-4 md:p-6">
@@ -717,10 +806,16 @@ export default function App() {
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
           <button
             type="button"
-            onClick={() => void createShareLink()}
+            onClick={() => {
+              setShowScanner((prev) => {
+                const next = !prev
+                if (!next) stopScanner()
+                return next
+              })
+            }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs hover:border-slate-400"
           >
-            Generate QR Link
+            {showScanner ? 'Hide Scanner' : 'Scan QR'}
           </button>
           <button
             type="button"
@@ -729,23 +824,37 @@ export default function App() {
           >
             {showTokenDebug ? 'Hide Token Debug' : 'Show Token Debug'}
           </button>
-          {connectUrl ? (
-            <button
-              type="button"
-              onClick={() => void copyShareLink()}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs hover:border-slate-400"
-            >
-              {copiedShareLink ? 'Copied' : 'Copy Link'}
-            </button>
-          ) : null}
         </div>
 
-        {connectUrl ? (
-          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
-            <div className="break-all">{connectUrl}</div>
-            <div className="mt-1 text-slate-500">
-              {connectRemainingSec == null ? 'ttl: unknown' : `ttl: ${connectRemainingSec}s`}
+        {showScanner ? (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void startScanner()}
+                disabled={scannerActive}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Start Camera Scan
+              </button>
+              <button
+                type="button"
+                onClick={() => stopScanner()}
+                disabled={!scannerActive}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Stop Scan
+              </button>
+              <span className="text-slate-500">{scannerStatus}</span>
             </div>
+
+            <video
+              ref={scannerVideoRef}
+              muted
+              playsInline
+              autoPlay
+              className={`mt-2 max-h-56 w-full rounded-lg border border-slate-200 bg-black object-cover ${scannerActive ? '' : 'hidden'}`}
+            />
           </div>
         ) : null}
 
