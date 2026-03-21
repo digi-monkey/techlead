@@ -12,8 +12,11 @@ export type EventRow = {
 }
 
 export type SessionMessage = {
+  id?: number
   role: string
   content: string
+  ts?: number
+  request_id?: string | null
 }
 
 export type TaskStatus = 'queued' | 'claimed' | 'running' | 'review' | 'done' | 'failed' | 'canceled'
