@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Panel } from '../components/Panel'
+import type { PendingOutboxCommand } from '../hooks/useSessionOutbox'
 import type { JsonValue, SessionMessage } from '../types'
 
-export type PendingCommand = {
-  requestId: string
-  text: string
-  state: 'queued' | 'sending' | 'processing' | 'retry_wait' | 'failed'
-  attempts: number
-  nextRetryAt?: number
-  lastError?: string
-}
+export type PendingCommand = PendingOutboxCommand
 
 type SessionViewProps = {
   sessionState: JsonValue
