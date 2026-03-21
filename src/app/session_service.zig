@@ -6,9 +6,11 @@ const utils = @import("../utils.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Message = struct {
+    id: u64 = 0,
     role: []const u8,
     content: []const u8,
     ts: i64,
+    request_id: ?[]const u8 = null,
 };
 
 pub const SessionFile = struct {
@@ -16,9 +18,26 @@ pub const SessionFile = struct {
     status: []const u8,
     provider: []const u8,
     model: []const u8,
+    provider_session_id: ?[]const u8 = null,
+    last_message_id: u64 = 0,
+    in_flight_request_id: ?[]const u8 = null,
+    last_error: ?[]const u8 = null,
     created_at: i64,
     updated_at: i64,
     messages: []Message,
+};
+
+pub const SendMessageResult = struct {
+    status: []const u8,
+    deduplicated: bool,
+    reply: ?[]u8 = null,
+};
+
+pub const EnqueueMessageResult = struct {
+    status: []const u8,
+    deduplicated: bool,
+    reply: ?[]u8 = null,
+    accepted: bool,
 };
 
 const LoadedSession = struct {
@@ -79,6 +98,10 @@ pub fn startSession(
         .status = "active",
         .provider = provider,
         .model = model,
+        .provider_session_id = null,
+        .last_message_id = 0,
+        .in_flight_request_id = null,
+        .last_error = null,
         .created_at = now,
         .updated_at = now,
         .messages = empty_messages,
@@ -93,11 +116,30 @@ pub fn getSessionStateJson(allocator: Allocator, target_dir: []const u8) ![]u8 {
     return std.fs.cwd().readFileAlloc(allocator, path, 8 * 1024 * 1024);
 }
 
-pub fn sendMessage(allocator: Allocator, target_dir: []const u8, text: []const u8) ![]u8 {
+pub fn sendMessage(allocator: Allocator, target_dir: []const u8, text: []const u8, request_id: []const u8) !SendMessageResult {
+    const queued = try enqueueMessage(allocator, target_dir, text, request_id);
+    if (!queued.accepted) {
+        return .{
+            .status = queued.status,
+            .deduplicated = queued.deduplicated,
+            .reply = queued.reply,
+        };
+    }
+    return processInFlightMessage(allocator, target_dir, request_id);
+}
+
+pub fn enqueueMessage(allocator: Allocator, target_dir: []const u8, text: []const u8, request_id: []const u8) !EnqueueMessageResult {
     var loaded = try loadSession(allocator, target_dir);
     defer loaded.deinit();
 
-    if (!std.mem.eql(u8, loaded.parsed.value.status, "active")) return error.SessionNotActive;
+    const rid = std.mem.trim(u8, request_id, " \t\r\n");
+    if (rid.len == 0) return error.RequestIdRequired;
+    if (!isSessionWritableStatus(loaded.parsed.value.status)) return error.SessionNotActive;
+    if (std.mem.eql(u8, loaded.parsed.value.status, "processing")) {
+        if (loaded.parsed.value.in_flight_request_id) |in_flight| {
+            if (!std.mem.eql(u8, in_flight, rid)) return error.SessionBusy;
+        }
+    }
 
     var cfg = try config.loadConfigFromJson(allocator, target_dir);
     defer config.deinitConfig(allocator, &cfg);
@@ -105,68 +147,241 @@ pub fn sendMessage(allocator: Allocator, target_dir: []const u8, text: []const u
     var msgs: std.ArrayList(Message) = .empty;
     defer msgs.deinit(allocator);
     try msgs.appendSlice(allocator, loaded.parsed.value.messages);
+
+    if (findReplyByRequestId(msgs.items, rid)) |reply| {
+        return .{
+            .status = "completed",
+            .deduplicated = true,
+            .reply = try allocator.dupe(u8, reply),
+            .accepted = false,
+        };
+    }
+    if (isRequestInFlight(loaded.parsed.value, rid)) {
+        return .{
+            .status = "processing",
+            .deduplicated = true,
+            .reply = null,
+            .accepted = false,
+        };
+    }
+
+    var last_message_id = computeLastMessageId(loaded.parsed.value);
+    last_message_id += 1;
+    const now = std.time.timestamp();
     try msgs.append(allocator, .{
+        .id = last_message_id,
         .role = "user",
         .content = text,
-        .ts = std.time.timestamp(),
+        .ts = now,
+        .request_id = rid,
     });
 
-    const assistant = try generateAssistantReply(allocator, cfg.work_dir, loaded.parsed.value.provider, loaded.parsed.value.model, msgs.items);
-    errdefer allocator.free(assistant);
-    try msgs.append(allocator, .{
-        .role = "assistant",
-        .content = assistant,
-        .ts = std.time.timestamp(),
-    });
-
-    const updated = SessionFile{
+    const processing_state = SessionFile{
         .session_id = loaded.parsed.value.session_id,
-        .status = loaded.parsed.value.status,
+        .status = "processing",
         .provider = loaded.parsed.value.provider,
         .model = loaded.parsed.value.model,
+        .provider_session_id = loaded.parsed.value.provider_session_id,
+        .last_message_id = last_message_id,
+        .in_flight_request_id = rid,
+        .last_error = null,
         .created_at = loaded.parsed.value.created_at,
-        .updated_at = std.time.timestamp(),
+        .updated_at = now,
+        .messages = msgs.items,
+    };
+    try saveSession(allocator, target_dir, processing_state);
+
+    return .{
+        .status = "processing",
+        .deduplicated = false,
+        .reply = null,
+        .accepted = true,
+    };
+}
+
+pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, request_id: []const u8) !SendMessageResult {
+    var loaded = try loadSession(allocator, target_dir);
+    defer loaded.deinit();
+
+    const rid = std.mem.trim(u8, request_id, " \t\r\n");
+    if (rid.len == 0) return error.RequestIdRequired;
+
+    if (findReplyByRequestId(loaded.parsed.value.messages, rid)) |reply| {
+        return .{
+            .status = "completed",
+            .deduplicated = true,
+            .reply = try allocator.dupe(u8, reply),
+        };
+    }
+
+    if (!std.mem.eql(u8, loaded.parsed.value.status, "processing")) {
+        return error.SessionNotProcessing;
+    }
+    const in_flight = loaded.parsed.value.in_flight_request_id orelse return error.SessionNotProcessing;
+    if (!std.mem.eql(u8, in_flight, rid)) return error.SessionBusy;
+
+    const user_text = findLatestUserMessageByRequestId(loaded.parsed.value.messages, rid) orelse return error.MessageNotFound;
+
+    var cfg = try config.loadConfigFromJson(allocator, target_dir);
+    defer config.deinitConfig(allocator, &cfg);
+
+    var msgs: std.ArrayList(Message) = .empty;
+    defer msgs.deinit(allocator);
+    try msgs.appendSlice(allocator, loaded.parsed.value.messages);
+
+    var last_message_id = computeLastMessageId(loaded.parsed.value);
+
+    const assistant = generateAssistantReply(
+        allocator,
+        cfg.work_dir,
+        loaded.parsed.value.provider,
+        loaded.parsed.value.model,
+        loaded.parsed.value.provider_session_id,
+        user_text,
+    ) catch |err| {
+        const err_name = @errorName(err);
+        const fail_text = try std.fmt.allocPrint(allocator, "session send failed: {s}", .{err_name});
+        defer allocator.free(fail_text);
+
+        last_message_id += 1;
+        try msgs.append(allocator, .{
+            .id = last_message_id,
+            .role = "system",
+            .content = fail_text,
+            .ts = std.time.timestamp(),
+            .request_id = rid,
+        });
+
+        const failed_state = SessionFile{
+            .session_id = loaded.parsed.value.session_id,
+            .status = "error",
+            .provider = loaded.parsed.value.provider,
+            .model = loaded.parsed.value.model,
+            .provider_session_id = loaded.parsed.value.provider_session_id,
+            .last_message_id = last_message_id,
+            .in_flight_request_id = null,
+            .last_error = err_name,
+            .created_at = loaded.parsed.value.created_at,
+            .updated_at = std.time.timestamp(),
+            .messages = msgs.items,
+        };
+        try saveSession(allocator, target_dir, failed_state);
+        return err;
+    };
+    defer if (assistant.provider_session_id) |sid| allocator.free(sid);
+
+    last_message_id += 1;
+    const done_ts = std.time.timestamp();
+    try msgs.append(allocator, .{
+        .id = last_message_id,
+        .role = "assistant",
+        .content = assistant.reply,
+        .ts = done_ts,
+        .request_id = rid,
+    });
+
+    const next_provider_session_id = assistant.provider_session_id orelse loaded.parsed.value.provider_session_id;
+    const updated = SessionFile{
+        .session_id = loaded.parsed.value.session_id,
+        .status = "active",
+        .provider = loaded.parsed.value.provider,
+        .model = loaded.parsed.value.model,
+        .provider_session_id = next_provider_session_id,
+        .last_message_id = last_message_id,
+        .in_flight_request_id = null,
+        .last_error = null,
+        .created_at = loaded.parsed.value.created_at,
+        .updated_at = done_ts,
         .messages = msgs.items,
     };
     try saveSession(allocator, target_dir, updated);
-    return assistant;
+    return .{
+        .status = "completed",
+        .deduplicated = false,
+        .reply = assistant.reply,
+    };
 }
+
+const AssistantOutput = struct {
+    reply: []u8,
+    provider_session_id: ?[]u8 = null,
+};
 
 fn generateAssistantReply(
     allocator: Allocator,
     work_dir: []const u8,
     provider: []const u8,
     model: []const u8,
-    messages: []const Message,
-) ![]u8 {
+    provider_session_id: ?[]const u8,
+    text: []const u8,
+) !AssistantOutput {
     if (!std.mem.eql(u8, provider, "codex")) {
         return error.ProviderNotSupportedForSession;
     }
     if (!utils.commandExists(allocator, "codex")) return error.MissingCodex;
-
-    const prompt = try buildConversationPrompt(allocator, messages);
-    defer allocator.free(prompt);
 
     const out_path = try std.fmt.allocPrint(allocator, "{s}/.techlead/session-last-message.txt", .{work_dir});
     defer allocator.free(out_path);
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    try argv.appendSlice(allocator, &[_][]const u8{
-        "codex",
-        "exec",
-        "--cd",
-        work_dir,
-        "--sandbox",
-        "danger-full-access",
-        "--output-last-message",
-        out_path,
-    });
-    if (model.len > 0) {
-        try argv.append(allocator, "--model");
-        try argv.append(allocator, model);
+
+    if (provider_session_id) |sid| {
+        if (sid.len > 0) {
+            try argv.appendSlice(allocator, &[_][]const u8{
+                "codex",
+                "exec",
+                "resume",
+                "--json",
+                "--output-last-message",
+                out_path,
+            });
+            if (model.len > 0) {
+                try argv.append(allocator, "--model");
+                try argv.append(allocator, model);
+            }
+            try argv.append(allocator, sid);
+            try argv.append(allocator, text);
+        } else {
+            const prompt = try buildInitialPrompt(allocator, text);
+            defer allocator.free(prompt);
+            try argv.appendSlice(allocator, &[_][]const u8{
+                "codex",
+                "exec",
+                "--json",
+                "--cd",
+                work_dir,
+                "--sandbox",
+                "danger-full-access",
+                "--output-last-message",
+                out_path,
+            });
+            if (model.len > 0) {
+                try argv.append(allocator, "--model");
+                try argv.append(allocator, model);
+            }
+            try argv.append(allocator, prompt);
+        }
+    } else {
+        const prompt = try buildInitialPrompt(allocator, text);
+        defer allocator.free(prompt);
+        try argv.appendSlice(allocator, &[_][]const u8{
+            "codex",
+            "exec",
+            "--json",
+            "--cd",
+            work_dir,
+            "--sandbox",
+            "danger-full-access",
+            "--output-last-message",
+            out_path,
+        });
+        if (model.len > 0) {
+            try argv.append(allocator, "--model");
+            try argv.append(allocator, model);
+        }
+        try argv.append(allocator, prompt);
     }
-    try argv.append(allocator, prompt);
 
     const run_result = try std.process.Child.run(.{
         .allocator = allocator,
@@ -181,31 +396,134 @@ fn generateAssistantReply(
         ui.logWarn("session codex exec exited non-zero", .{});
     }
 
-    const reply = std.fs.cwd().readFileAlloc(allocator, out_path, 4 * 1024 * 1024) catch {
-        const fallback = std.mem.trim(u8, run_result.stdout, " \t\r\n");
-        return allocator.dupe(u8, fallback);
+    const reply = blk: {
+        const reply_raw = std.fs.cwd().readFileAlloc(allocator, out_path, 4 * 1024 * 1024) catch {
+            const fallback = std.mem.trim(u8, run_result.stdout, " \t\r\n");
+            if (fallback.len == 0) return error.EmptyAssistantReply;
+            break :blk try allocator.dupe(u8, fallback);
+        };
+        defer allocator.free(reply_raw);
+
+        const reply_trimmed = std.mem.trim(u8, reply_raw, " \t\r\n");
+        if (reply_trimmed.len == 0) return error.EmptyAssistantReply;
+        break :blk try allocator.dupe(u8, reply_trimmed);
     };
-    defer allocator.free(reply);
-    return allocator.dupe(u8, std.mem.trim(u8, reply, " \t\r\n"));
+    errdefer allocator.free(reply);
+
+    var next_provider_session_id: ?[]u8 = null;
+    if (provider_session_id) |sid| {
+        if (sid.len > 0) next_provider_session_id = try allocator.dupe(u8, sid);
+    }
+    if (next_provider_session_id == null) {
+        if (extractThreadIdFromJsonl(run_result.stdout)) |tid| {
+            next_provider_session_id = try allocator.dupe(u8, tid);
+        }
+    }
+
+    return .{
+        .reply = reply,
+        .provider_session_id = next_provider_session_id,
+    };
 }
 
-fn buildConversationPrompt(allocator: Allocator, messages: []const Message) ![]u8 {
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
-
-    try out.appendSlice(allocator,
+fn buildInitialPrompt(allocator: Allocator, text: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator,
         \\You are a coding agent in an ongoing remote session.
         \\Respond concisely and continue the conversation naturally.
         \\If code changes are requested, explain what you would do and ask for confirmation only when risky.
         \\
-        \\Conversation:
+        \\User message:
+        \\{s}
         \\
-    );
+        \\Reply to the latest user message.
+    , .{text});
+}
 
-    const start_idx = if (messages.len > 20) messages.len - 20 else 0;
-    for (messages[start_idx..]) |m| {
-        try out.writer(allocator).print("[{s}] {s}\n", .{ m.role, m.content });
+fn isSessionWritableStatus(status: []const u8) bool {
+    return std.mem.eql(u8, status, "active") or std.mem.eql(u8, status, "error") or std.mem.eql(u8, status, "processing");
+}
+
+fn isRequestInFlight(session: SessionFile, request_id: []const u8) bool {
+    if (!std.mem.eql(u8, session.status, "processing")) return false;
+    const in_flight = session.in_flight_request_id orelse return false;
+    return std.mem.eql(u8, in_flight, request_id);
+}
+
+fn computeLastMessageId(session: SessionFile) u64 {
+    var max_id = session.last_message_id;
+    for (session.messages) |m| {
+        if (m.id > max_id) max_id = m.id;
     }
-    try out.appendSlice(allocator, "\nReply to the latest user message.\n");
-    return out.toOwnedSlice(allocator);
+    if (max_id == 0 and session.messages.len > 0) {
+        max_id = @intCast(session.messages.len);
+    }
+    return max_id;
+}
+
+fn findReplyByRequestId(messages: []const Message, request_id: []const u8) ?[]const u8 {
+    var seen_user = false;
+    for (messages) |m| {
+        if (m.request_id) |rid| {
+            if (std.mem.eql(u8, rid, request_id) and std.mem.eql(u8, m.role, "assistant")) {
+                return m.content;
+            }
+        }
+        if (!seen_user) {
+            if (std.mem.eql(u8, m.role, "user")) {
+                if (m.request_id) |rid| {
+                    if (std.mem.eql(u8, rid, request_id)) seen_user = true;
+                }
+            }
+            continue;
+        }
+        if (std.mem.eql(u8, m.role, "assistant")) return m.content;
+        if (std.mem.eql(u8, m.role, "user")) break;
+    }
+    return null;
+}
+
+fn findLatestUserMessageByRequestId(messages: []const Message, request_id: []const u8) ?[]const u8 {
+    var i: usize = messages.len;
+    while (i > 0) : (i -= 1) {
+        const m = messages[i - 1];
+        if (!std.mem.eql(u8, m.role, "user")) continue;
+        const rid = m.request_id orelse continue;
+        if (std.mem.eql(u8, rid, request_id)) return m.content;
+    }
+    return null;
+}
+
+fn extractThreadIdFromJsonl(stdout_jsonl: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, stdout_jsonl, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (line.len == 0) continue;
+        if (std.mem.indexOf(u8, line, "\"type\":\"thread.started\"") == null) continue;
+        if (extractJsonStringField(line, "thread_id")) |tid| return tid;
+    }
+    return null;
+}
+
+fn extractJsonStringField(line: []const u8, key: []const u8) ?[]const u8 {
+    var pattern_buf: [128]u8 = undefined;
+    const pattern = std.fmt.bufPrint(&pattern_buf, "\"{s}\":\"", .{key}) catch return null;
+    const start = std.mem.indexOf(u8, line, pattern) orelse return null;
+    const from = start + pattern.len;
+    var escaped = false;
+    var i = from;
+    while (i < line.len) : (i += 1) {
+        const ch = line[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            return line[from..i];
+        }
+    }
+    return null;
 }

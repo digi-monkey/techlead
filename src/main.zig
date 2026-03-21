@@ -5,6 +5,7 @@ const config = @import("config.zig");
 const server = @import("server.zig");
 const runner = @import("runner.zig");
 const observe = @import("observe.zig");
+const session_service = @import("app/session_service.zig");
 const replay = @import("storage/replay.zig");
 comptime {
     _ = @import("providers/provider_contract_test.zig");
@@ -44,6 +45,7 @@ fn showHelp() void {
             "    zig build run -- control <pause|resume|abort|inject_prompt> [--dir 目录] [--prompt 文本]\n" ++
             "    zig build run -- observe start [--dir 目录] [--host 0.0.0.0] [--port 7788]\n" ++
             "    zig build run -- observe rotate-tokens [--dir 目录]\n" ++
+            "    zig build run -- session process-message --dir 目录 --request-id 请求ID\n" ++
             "    zig build run -- trace show [--dir 目录]\n" ++
             "    zig build run -- server start [--daemon]\n" ++
             "    zig build run -- server stop\n\n" ++
@@ -54,6 +56,7 @@ fn showHelp() void {
             "    - control: 向正在运行的任务写入控制命令\n" ++
             "    - observe start: 启动 Web 观察与控制接口\n" ++
             "    - observe rotate-tokens: 轮换 observe/control token\n" ++
+            "    - session process-message: 内部后台任务，处理 in-flight 会话消息\n" ++
             "    - trace show: 输出结构化 tracing 事件\n" ++
             "    - server start: 在前台启动 opencode serve 服务\n" ++
             "    - server start --daemon: 在后台启动 opencode serve 服务\n" ++
@@ -332,6 +335,56 @@ pub fn main() !void {
             return;
         }
         ui.logError("observe 仅支持子命令: start 或 rotate-tokens", .{});
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "session")) {
+        if (args.len < 3) {
+            ui.logError("session 需要子命令: process-message", .{});
+            showHelp();
+            return;
+        }
+        const sub = args[2];
+        if (!std.mem.eql(u8, sub, "process-message")) {
+            ui.logError("session 仅支持子命令: process-message", .{});
+            showHelp();
+            return;
+        }
+
+        var target_dir: []const u8 = ".";
+        var request_id: ?[]const u8 = null;
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--dir")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("session 参数无效，--dir 需要目录参数", .{});
+                    return;
+                }
+                target_dir = args[i + 1];
+                i += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, args[i], "--request-id")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("session 参数无效，--request-id 需要参数", .{});
+                    return;
+                }
+                request_id = args[i + 1];
+                i += 1;
+                continue;
+            }
+            ui.logError("session 参数无效", .{});
+            showHelp();
+            return;
+        }
+        const rid = request_id orelse {
+            ui.logError("session process-message 缺少 --request-id", .{});
+            return;
+        };
+        _ = session_service.processInFlightMessage(allocator, target_dir, rid) catch |err| {
+            ui.logWarn("session process-message failed: {any}", .{err});
+            return;
+        };
         return;
     }
 

@@ -6,6 +6,7 @@ type SessionViewProps = {
   sessionState: JsonValue
   sessionMessages: SessionMessage[]
   sessionInput: string
+  isSessionBusy: boolean
   onSessionInputChange: (value: string) => void
   onStartSession: () => void
   onSendMessage: () => void
@@ -16,6 +17,7 @@ export function SessionView(props: SessionViewProps) {
     sessionState,
     sessionMessages,
     sessionInput,
+    isSessionBusy,
     onSessionInputChange,
     onStartSession,
     onSendMessage,
@@ -35,7 +37,8 @@ export function SessionView(props: SessionViewProps) {
         <button
           type="button"
           onClick={onStartSession}
-          className="rounded-lg border border-sky-300 bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700"
+          disabled={isSessionBusy}
+          className="rounded-lg border border-sky-300 bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
         >
           Start Session
         </button>
@@ -70,18 +73,25 @@ export function SessionView(props: SessionViewProps) {
 
         <div className="mt-2 flex gap-2 border-t border-slate-200 pt-2">
           <input
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-slate-100"
             value={sessionInput}
             onChange={(e) => onSessionInputChange(e.target.value)}
-            placeholder="say something to agent"
+            placeholder={isSessionBusy ? 'agent is processing...' : 'say something to agent'}
+            disabled={isSessionBusy}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void onSendMessage()
             }}
           />
-          <button type="button" onClick={onSendMessage} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm">
+          <button
+            type="button"
+            onClick={onSendMessage}
+            disabled={isSessionBusy}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm disabled:cursor-not-allowed disabled:bg-slate-100"
+          >
             Send
           </button>
         </div>
+        {isSessionBusy ? <div className="mt-2 text-xs text-amber-700">Agent is processing previous message...</div> : null}
       </div>
     </Panel>
   )

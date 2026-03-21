@@ -34,16 +34,44 @@ export function toEventRows(events: unknown[]): EventRow[] {
     .filter((row) => Number.isFinite(row.id))
 }
 
-export async function apiRequest<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
-  if (!token) throw new Error('token missing')
+export class ApiError extends Error {
+  status: number
+  bodyText: string
+  errorCode?: string
 
+  constructor(status: number, bodyText: string, errorCode?: string) {
+    super(`${status} ${bodyText}`)
+    this.name = 'ApiError'
+    this.status = status
+    this.bodyText = bodyText
+    this.errorCode = errorCode
+  }
+}
+
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError
+}
+
+export async function apiRequest<T>(path: string, token?: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {})
-  headers.set('Authorization', `Bearer ${token}`)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
-  const resp = await fetch(path, { ...options, headers })
+  const resp = await fetch(path, { ...options, headers, credentials: 'include' })
   const text = await resp.text()
-  if (!resp.ok) throw new Error(`${resp.status} ${text}`)
+  if (!resp.ok) {
+    let errorCode: string | undefined
+    try {
+      const parsed = JSON.parse(text) as JsonValue
+      const raw = parsed.error
+      if (typeof raw === 'string' && raw.trim().length > 0) {
+        errorCode = raw
+      }
+    } catch {
+      // Keep raw body text in error.
+    }
+    throw new ApiError(resp.status, text, errorCode)
+  }
   if (!text.trim()) return {} as T
   return JSON.parse(text) as T
 }
