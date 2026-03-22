@@ -52,6 +52,7 @@ const ServerContext = struct {
     last_control_ms: i64 = 0,
     request_ids: std.StringHashMap(i64),
     bootstrap_tickets: std.StringHashMap(BootstrapTicket),
+    external_url: ?[]const u8,
 };
 
 const ControlBody = struct {
@@ -82,6 +83,10 @@ const StartSessionBody = struct {
 
 const SessionMessageBody = struct {
     message: ?[]const u8 = null,
+    request_id: ?[]const u8 = null,
+};
+
+const EndSessionBody = struct {
     request_id: ?[]const u8 = null,
 };
 
@@ -122,6 +127,8 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
     defer allocator.free(tokens.observe_token);
     defer allocator.free(tokens.control_token);
 
+    const external_url = std.process.getEnvVarOwned(allocator, "TECHLEAD_EXTERNAL_URL") catch null;
+
     var ctx = ServerContext{
         .allocator = allocator,
         .target_dir = try allocator.dupe(u8, target_dir),
@@ -134,12 +141,14 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
         .control_expires_at = tokens.control_expires_at,
         .request_ids = std.StringHashMap(i64).init(allocator),
         .bootstrap_tickets = std.StringHashMap(BootstrapTicket).init(allocator),
+        .external_url = external_url,
     };
     defer allocator.free(ctx.target_dir);
     defer allocator.free(ctx.log_dir);
     defer allocator.free(ctx.host);
     defer allocator.free(ctx.observe_token);
     defer allocator.free(ctx.control_token);
+    defer if (ctx.external_url) |url| allocator.free(url);
     defer {
         var it = ctx.request_ids.iterator();
         while (it.next()) |entry| allocator.free(entry.key_ptr.*);
@@ -158,7 +167,11 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
     var server = try address.listen(.{ .reuse_address = true });
     defer server.deinit();
 
-    ui.logSuccess("observe 服务已启动: http://{s}:{d}", .{ host, server.listen_address.getPort() });
+    if (ctx.external_url) |ext_url| {
+        ui.logSuccess("observe 服务已启动: http://{s}:{d} (外部地址: {s})", .{ host, server.listen_address.getPort(), ext_url });
+    } else {
+        ui.logSuccess("observe 服务已启动: http://{s}:{d}", .{ host, server.listen_address.getPort() });
+    }
     ui.logInfo("observe token: {s}", .{ctx.observe_token});
     ui.logInfo("control token: {s}", .{ctx.control_token});
     const share_issue = try issueBootstrapTicket(&ctx, SHARE_BOOTSTRAP_TTL_SECONDS);
@@ -167,10 +180,14 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
     defer allocator.free(share_issue.url);
     ui.logInfo("扫码/分享入口: {s}", .{share_issue.url});
     printStartupQr(allocator, share_issue.url);
-    if (std.mem.eql(u8, host, "0.0.0.0")) {
+    if (std.mem.eql(u8, host, "0.0.0.0") and ctx.external_url == null) {
         ui.logWarn("当前 host=0.0.0.0；扫码前请将链接中的主机替换为本机局域网 IP", .{});
     }
-    ui.logInfo("兼容入口: http://{s}:{d}/?token={s}", .{ host, server.listen_address.getPort(), ctx.observe_token });
+    if (ctx.external_url) |ext_url| {
+        ui.logInfo("兼容入口: {s}/?token={s}", .{ ext_url, ctx.observe_token });
+    } else {
+        ui.logInfo("兼容入口: http://{s}:{d}/?token={s}", .{ host, server.listen_address.getPort(), ctx.observe_token });
+    }
 
     while (true) {
         const conn = server.accept() catch |err| {
@@ -391,6 +408,36 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
             const state = session_service.getSessionStateJson(ctx.allocator, ctx.target_dir) catch "{\"error\":\"session_not_found\"}";
             defer if (state.ptr != "{\"error\":\"session_not_found\"}".ptr) ctx.allocator.free(state);
             return respondJson(req, .ok, state);
+        }
+        if (std.mem.eql(u8, target, "/sessions/current/end")) {
+            if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+            if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
+
+            var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
+            defer if (request_id) |rid| ctx.allocator.free(rid);
+            if (try parseEndSessionBody(req, ctx.allocator)) |body| {
+                defer if (body.request_id) |rid| ctx.allocator.free(rid);
+                if (body.request_id) |rid| {
+                    if (request_id) |old| ctx.allocator.free(old);
+                    request_id = try ctx.allocator.dupe(u8, rid);
+                }
+            }
+            if (request_id) |rid| {
+                if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
+            }
+
+            const end_result = session_service.endSession(ctx.allocator, ctx.target_dir) catch |err| {
+                ui.logWarn("session end failed: {any}", .{err});
+                return respondJson(req, .bad_request, "{\"error\":\"session_end_failed\"}");
+            };
+            const body = try std.fmt.allocPrint(
+                ctx.allocator,
+                "{{\"ok\":true,\"status\":{f}}}",
+                .{std.json.fmt(end_result.status, .{})},
+            );
+            defer ctx.allocator.free(body);
+            return respondJson(req, .ok, body);
         }
         if (std.mem.eql(u8, target, "/sessions/current/message")) {
             if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
@@ -1209,11 +1256,18 @@ fn issueBootstrapTicket(ctx: *ServerContext, ttl_seconds: i64) !BootstrapIssue {
         return err;
     };
 
-    const url = try std.fmt.allocPrint(
-        ctx.allocator,
-        "http://{s}:{d}/connect?bootstrap_id={s}&code={s}",
-        .{ ctx.host, ctx.port, bootstrap_id, code },
-    );
+    const url = if (ctx.external_url) |ext_url|
+        try std.fmt.allocPrint(
+            ctx.allocator,
+            "{s}/connect?bootstrap_id={s}&code={s}",
+            .{ ext_url, bootstrap_id, code },
+        )
+    else
+        try std.fmt.allocPrint(
+            ctx.allocator,
+            "http://{s}:{d}/connect?bootstrap_id={s}&code={s}",
+            .{ ctx.host, ctx.port, bootstrap_id, code },
+        );
     errdefer ctx.allocator.free(url);
 
     return .{
@@ -1332,6 +1386,23 @@ fn parseSessionMessageBody(req: *http.Server.Request, allocator: Allocator) !?Se
     defer parsed.deinit();
     return .{
         .message = if (parsed.value.message) |m| try allocator.dupe(u8, m) else null,
+        .request_id = if (parsed.value.request_id) |rid| try allocator.dupe(u8, rid) else null,
+    };
+}
+
+fn parseEndSessionBody(req: *http.Server.Request, allocator: Allocator) !?EndSessionBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(EndSessionBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+    return .{
         .request_id = if (parsed.value.request_id) |rid| try allocator.dupe(u8, rid) else null,
     };
 }
@@ -1544,246 +1615,255 @@ fn decodeUrlComponent(allocator: Allocator, raw: []const u8) ![]u8 {
 }
 
 fn dashboardHtml() []const u8 {
-    return
-        \\<!doctype html>
-        \\<html>
-        \\<head>
-        \\  <meta charset="utf-8" />
-        \\  <meta name="viewport" content="width=device-width, initial-scale=1" />
-        \\  <title>Techlead Observe</title>
-        \\  <style>
-        \\    :root { --bg:#0f172a; --card:#111827; --fg:#e5e7eb; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
-        \\    body { margin:0; font-family: ui-monospace, Menlo, Consolas, monospace; background:linear-gradient(135deg,#0b1220,#111827); color:var(--fg); }
-        \\    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
-        \\    .grid { display:grid; grid-template-columns:1fr; gap:12px; }
-        \\    .card { background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:10px; padding:12px; }
-        \\    h2 { margin:0 0 10px 0; font-size:14px; color:#cbd5e1; letter-spacing:.5px; }
-        \\    button { background:#1f2937; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px 10px; cursor:pointer; margin-right:8px; margin-bottom:8px; }
-        \\    button:hover { border-color:#64748b; }
-        \\    input { width:100%; box-sizing:border-box; background:#0b1220; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px; margin:8px 0; }
-        \\    pre { margin:0; white-space:pre-wrap; word-break:break-word; color:#cbd5e1; max-height:320px; overflow:auto; }
-        \\    .events { max-height:380px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
-        \\    .evt { border:1px solid #334155; border-left:4px solid #475569; border-radius:8px; padding:8px; background:#0b1220; }
-        \\    .evt-head { display:flex; gap:8px; align-items:center; font-size:12px; color:#cbd5e1; margin-bottom:4px; }
-        \\    .evt-id { color:#94a3b8; }
-        \\    .evt-src { color:#60a5fa; }
-        \\    .evt-type { color:#f8fafc; font-weight:600; }
-        \\    .evt-time { color:#94a3b8; margin-left:auto; }
-        \\    .evt-body { font-size:12px; color:#cbd5e1; white-space:pre-wrap; word-break:break-word; }
-        \\    .evt.ok { border-left-color:#22c55e; }
-        \\    .evt.warn { border-left-color:#f59e0b; }
-        \\    .evt.bad { border-left-color:#ef4444; }
-        \\    .muted { color:var(--muted); font-size:12px; }
-        \\    .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
-        \\  </style>
-        \\</head>
-        \\<body>
-        \\  <div class="wrap">
-        \\    <div class="grid">
-        \\      <div class="card">
-        \\        <h2>CONTROL</h2>
-        \\        <div>
-        \\          <button onclick="startRun('optimize')">start optimize</button>
-        \\          <button onclick="startRun('pool')">start pool</button>
-        \\        </div>
-        \\        <div>
-        \\          <button onclick="sendControl('pause')">pause</button>
-        \\          <button onclick="sendControl('resume')">resume</button>
-        \\          <button onclick="sendControl('abort')">abort</button>
-        \\        </div>
-        \\        <input id="prompt" placeholder="inject prompt..." />
-        \\        <button onclick="injectPrompt()">inject_prompt</button>
-        \\        <div id="status" class="muted">ready</div>
-        \\      </div>
-        \\      <div class="card">
-        \\        <h2>TASKS</h2>
-        \\        <pre id="tasks">loading...</pre>
-        \\      </div>
-        \\      <div class="card">
-        \\        <h2>SESSION CHAT</h2>
-        \\        <div>
-        \\          <button onclick="startSession()">start session</button>
-        \\        </div>
-        \\        <div id="session-meta" class="muted">session: (none)</div>
-        \\        <pre id="session-chat">(no session)</pre>
-        \\        <input id="session-input" placeholder="say something to agent..." />
-        \\        <button onclick="sendSessionMessage()">send message</button>
-        \\      </div>
-        \\      <div class="card">
-        \\        <h2>EVENTS (incremental)</h2>
-        \\        <div id="events" class="events"><div class="muted">(loading...)</div></div>
-        \\      </div>
-        \\    </div>
-        \\  </div>
-        \\<script>
-        \\const token = new URLSearchParams(location.search).get('token') || '';
-        \\if (token) { history.replaceState({}, '', location.pathname); }
-        \\let after = 0;
-        \\let sse = null;
-        \\let eventRows = [];
-        \\const H = token ? { 'Authorization': 'Bearer ' + token } : {};
-        \\function newReqId(){ return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
-        \\function setStatus(s, cls='muted'){ const el=document.getElementById('status'); el.className=cls; el.textContent=s; }
-        \\function pretty(v){
-        \\  if (v == null) return '';
-        \\  if (typeof v === 'string') {
-        \\    try { return JSON.stringify(JSON.parse(v)); } catch { return v; }
-        \\  }
-        \\  try { return JSON.stringify(v); } catch { return String(v); }
-        \\}
-        \\function classify(type){
-        \\  const t = String(type || '');
-        \\  if (t.includes('failed') || t.includes('abort') || t.includes('error')) return 'bad';
-        \\  if (t.includes('pause') || t.includes('warn') || t.includes('requeued')) return 'warn';
-        \\  if (t.includes('succeeded') || t.includes('completed') || t.includes('done')) return 'ok';
-        \\  return '';
-        \\}
-        \\function fmtTs(ts){
-        \\  if (!ts) return '-';
-        \\  const n = Number(ts) * 1000;
-        \\  if (!Number.isFinite(n)) return '-';
-        \\  return new Date(n).toLocaleTimeString();
-        \\}
-        \\function toViewRow(e){
-        \\  let inner = {};
-        \\  try { inner = JSON.parse(e.event_jsonl || '{}'); } catch { inner = { raw: e.event_jsonl || '' }; }
-        \\  const body = pretty(inner.payload || inner.raw || '');
-        \\  return {
-        \\    id: e.event_id,
-        \\    cls: classify(inner.event_type),
-        \\    source: inner.source || '-',
-        \\    type: inner.event_type || '-',
-        \\    time: fmtTs(inner.ts),
-        \\    body,
-        \\  };
-        \\}
-        \\function renderEvents(){
-        \\  const el = document.getElementById('events');
-        \\  if (!eventRows.length) {
-        \\    el.innerHTML = '<div class=\"muted\">(no events)</div>';
-        \\    return;
-        \\  }
-        \\  el.innerHTML = eventRows.map(r => `
-        \\    <div class=\"evt ${r.cls}\">
-        \\      <div class=\"evt-head\">
-        \\        <span class=\"evt-id\">#${r.id}</span>
-        \\        <span class=\"evt-src\">${r.source}</span>
-        \\        <span class=\"evt-type\">${r.type}</span>
-        \\        <span class=\"evt-time\">${r.time}</span>
-        \\      </div>
-        \\      <div class=\"evt-body\">${(r.body || '').replaceAll('<','&lt;').replaceAll('>','&gt;')}</div>
-        \\    </div>
-        \\  `).join('');
-        \\  el.scrollTop = el.scrollHeight;
-        \\}
-        \\function ingestEvents(obj){
-        \\  if (obj.last_event_id) after = obj.last_event_id;
-        \\  const rows = (obj.events || []).map(toViewRow);
-        \\  if (!rows.length) return;
-        \\  eventRows = eventRows.concat(rows).slice(-300);
-        \\  renderEvents();
-        \\}
-        \\async function refreshTasks(){
-        \\  const r = await fetch('/tasks', { headers: H });
-        \\  const txt = await r.text();
-        \\  try { document.getElementById('tasks').textContent = JSON.stringify(JSON.parse(txt), null, 2); }
-        \\  catch { document.getElementById('tasks').textContent = txt; }
-        \\}
-        \\async function refreshSession(){
-        \\  if(!token){ return; }
-        \\  const r = await fetch('/sessions/current', { headers: H });
-        \\  const txt = await r.text();
-        \\  try{
-        \\    const s = JSON.parse(txt);
-        \\    if(!s.session_id){ document.getElementById('session-meta').textContent = 'session: (none)'; document.getElementById('session-chat').textContent='(no session)'; return; }
-        \\    document.getElementById('session-meta').textContent = `session: ${s.session_id} | ${s.status} | ${s.provider}`;
-        \\    const lines = (s.messages||[]).slice(-80).map(m => `[${m.role}] ${m.content}`);
-        \\    document.getElementById('session-chat').textContent = lines.join('\\n\\n') || '(empty)';
-        \\  } catch {}
-        \\}
-        \\async function startSession(){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('starting session ...');
-        \\  const r = await fetch('/sessions/start', {
-        \\    method:'POST',
-        \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ provider:'codex', request_id })
-        \\  });
-        \\  const t = await r.text();
-        \\  setStatus(t, r.ok ? 'ok' : 'bad');
-        \\  await refreshSession();
-        \\}
-        \\async function sendSessionMessage(){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const message = document.getElementById('session-input').value || '';
-        \\  if(!message.trim()){ setStatus('message empty','warn'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('sending message ...');
-        \\  const r = await fetch('/sessions/current/message', {
-        \\    method:'POST',
-        \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ message, request_id })
-        \\  });
-        \\  const t = await r.text();
-        \\  setStatus(t, r.ok ? 'ok' : 'bad');
-        \\  if(r.ok){ document.getElementById('session-input').value = ''; await refreshSession(); }
-        \\}
-        \\async function refreshEvents(){
-        \\  const r = await fetch('/runs/current/events?after='+after, { headers: H });
-        \\  const txt = await r.text();
-        \\  try {
-        \\    ingestEvents(JSON.parse(txt));
-        \\  } catch {
-        \\    document.getElementById('events').innerHTML = '<div class=\"bad\">failed to parse events</div>';
-        \\  }
-        \\}
-        \\function startSSE(){
-        \\  // EventSource cannot carry Authorization headers reliably; keep polling mode only.
-        \\  return;
-        \\}
-        \\async function sendControl(action){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('sending '+action+' ...');
-        \\  const r = await fetch('/runs/current/control', {
-        \\    method: 'POST',
-        \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ action, request_id })
-        \\  });
-        \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
-        \\}
-        \\async function startRun(mode){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('starting '+mode+' ...');
-        \\  const r = await fetch('/runs/start', {
-        \\    method: 'POST',
-        \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ mode, request_id })
-        \\  });
-        \\  const t = await r.text();
-        \\  setStatus(t, r.ok ? 'ok' : 'bad');
-        \\}
-        \\async function injectPrompt(){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const p = document.getElementById('prompt').value || '';
-        \\  if(!p){ setStatus('prompt empty','warn'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('injecting ...');
-        \\  const r = await fetch('/runs/current/control', {
-        \\    method: 'POST',
-        \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ action: 'inject_prompt', prompt: p, request_id })
-        \\  });
-        \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
-        \\}
-        \\refreshTasks(); refreshEvents(); refreshSession(); startSSE();
-        \\setInterval(refreshTasks, 3000);
-        \\setInterval(refreshSession, 2500);
-        \\setInterval(() => { if(!sse) refreshEvents(); }, 1500);
-        \\</script>
-        \\</body>
-        \\</html>
+    return 
+    \\<!doctype html>
+    \\<html>
+    \\<head>
+    \\  <meta charset="utf-8" />
+    \\  <meta name="viewport" content="width=device-width, initial-scale=1" />
+    \\  <title>Techlead Observe</title>
+    \\  <style>
+    \\    :root { --bg:#0f172a; --card:#111827; --fg:#e5e7eb; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
+    \\    body { margin:0; font-family: ui-monospace, Menlo, Consolas, monospace; background:linear-gradient(135deg,#0b1220,#111827); color:var(--fg); }
+    \\    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
+    \\    .grid { display:grid; grid-template-columns:1fr; gap:12px; }
+    \\    .card { background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:10px; padding:12px; }
+    \\    h2 { margin:0 0 10px 0; font-size:14px; color:#cbd5e1; letter-spacing:.5px; }
+    \\    button { background:#1f2937; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px 10px; cursor:pointer; margin-right:8px; margin-bottom:8px; }
+    \\    button:hover { border-color:#64748b; }
+    \\    input { width:100%; box-sizing:border-box; background:#0b1220; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px; margin:8px 0; }
+    \\    pre { margin:0; white-space:pre-wrap; word-break:break-word; color:#cbd5e1; max-height:320px; overflow:auto; }
+    \\    .events { max-height:380px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+    \\    .evt { border:1px solid #334155; border-left:4px solid #475569; border-radius:8px; padding:8px; background:#0b1220; }
+    \\    .evt-head { display:flex; gap:8px; align-items:center; font-size:12px; color:#cbd5e1; margin-bottom:4px; }
+    \\    .evt-id { color:#94a3b8; }
+    \\    .evt-src { color:#60a5fa; }
+    \\    .evt-type { color:#f8fafc; font-weight:600; }
+    \\    .evt-time { color:#94a3b8; margin-left:auto; }
+    \\    .evt-body { font-size:12px; color:#cbd5e1; white-space:pre-wrap; word-break:break-word; }
+    \\    .evt.ok { border-left-color:#22c55e; }
+    \\    .evt.warn { border-left-color:#f59e0b; }
+    \\    .evt.bad { border-left-color:#ef4444; }
+    \\    .muted { color:var(--muted); font-size:12px; }
+    \\    .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+    \\  </style>
+    \\</head>
+    \\<body>
+    \\  <div class="wrap">
+    \\    <div class="grid">
+    \\      <div class="card">
+    \\        <h2>CONTROL</h2>
+    \\        <div>
+    \\          <button onclick="startRun('optimize')">start optimize</button>
+    \\          <button onclick="startRun('pool')">start pool</button>
+    \\        </div>
+    \\        <div>
+    \\          <button onclick="sendControl('pause')">pause</button>
+    \\          <button onclick="sendControl('resume')">resume</button>
+    \\          <button onclick="sendControl('abort')">abort</button>
+    \\        </div>
+    \\        <input id="prompt" placeholder="inject prompt..." />
+    \\        <button onclick="injectPrompt()">inject_prompt</button>
+    \\        <div id="status" class="muted">ready</div>
+    \\      </div>
+    \\      <div class="card">
+    \\        <h2>TASKS</h2>
+    \\        <pre id="tasks">loading...</pre>
+    \\      </div>
+    \\      <div class="card">
+    \\        <h2>SESSION CHAT</h2>
+    \\        <div>
+    \\          <button onclick="startSession()">start session</button>
+    \\        </div>
+    \\        <div id="session-meta" class="muted">session: (none)</div>
+    \\        <pre id="session-chat">(no session)</pre>
+    \\        <input id="session-input" placeholder="say something to agent..." />
+    \\        <button onclick="sendSessionMessage()">send message</button>
+    \\      </div>
+    \\      <div class="card">
+    \\        <h2>EVENTS (incremental)</h2>
+    \\        <div id="events" class="events"><div class="muted">(loading...)</div></div>
+    \\      </div>
+    \\    </div>
+    \\  </div>
+    \\<script>
+    \\const token = new URLSearchParams(location.search).get('token') || '';
+    \\if (token) { history.replaceState({}, '', location.pathname); }
+    \\let after = 0;
+    \\let sse = null;
+    \\let eventRows = [];
+    \\const H = token ? { 'Authorization': 'Bearer ' + token } : {};
+    \\function newReqId(){ return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
+    \\function setStatus(s, cls='muted'){ const el=document.getElementById('status'); el.className=cls; el.textContent=s; }
+    \\function pretty(v){
+    \\  if (v == null) return '';
+    \\  if (typeof v === 'string') {
+    \\    try { return JSON.stringify(JSON.parse(v)); } catch { return v; }
+    \\  }
+    \\  try { return JSON.stringify(v); } catch { return String(v); }
+    \\}
+    \\function classify(type){
+    \\  const t = String(type || '');
+    \\  if (t.includes('failed') || t.includes('abort') || t.includes('error')) return 'bad';
+    \\  if (t.includes('pause') || t.includes('warn') || t.includes('requeued')) return 'warn';
+    \\  if (t.includes('succeeded') || t.includes('completed') || t.includes('done')) return 'ok';
+    \\  return '';
+    \\}
+    \\function fmtTs(ts){
+    \\  if (!ts) return '-';
+    \\  const n = Number(ts) * 1000;
+    \\  if (!Number.isFinite(n)) return '-';
+    \\  return new Date(n).toLocaleTimeString();
+    \\}
+    \\function escapeHtml(value){
+    \\  const s = value == null ? '' : String(value);
+    \\  return s
+    \\    .replace(/&/g, '&amp;')
+    \\    .replace(/</g, '&lt;')
+    \\    .replace(/>/g, '&gt;')
+    \\    .replace(/"/g, '&quot;')
+    \\    .replace(/'/g, '&#39;');
+    \\}
+    \\function toViewRow(e){
+    \\  let inner = {};
+    \\  try { inner = JSON.parse(e.event_jsonl || '{}'); } catch { inner = { raw: e.event_jsonl || '' }; }
+    \\  const body = pretty(inner.payload || inner.raw || '');
+    \\  return {
+    \\    id: e.event_id,
+    \\    cls: classify(inner.event_type),
+    \\    source: inner.source || '-',
+    \\    type: inner.event_type || '-',
+    \\    time: fmtTs(inner.ts),
+    \\    body,
+    \\  };
+    \\}
+    \\function renderEvents(){
+    \\  const el = document.getElementById('events');
+    \\  if (!eventRows.length) {
+    \\    el.innerHTML = '<div class=\"muted\">(no events)</div>';
+    \\    return;
+    \\  }
+    \\  el.innerHTML = eventRows.map(r => `
+    \\    <div class=\"evt ${r.cls}\">
+    \\      <div class=\"evt-head\">
+    \\        <span class=\"evt-id\">#${escapeHtml(r.id)}</span>
+    \\        <span class=\"evt-src\">${escapeHtml(r.source)}</span>
+    \\        <span class=\"evt-type\">${escapeHtml(r.type)}</span>
+    \\        <span class=\"evt-time\">${escapeHtml(r.time)}</span>
+    \\      </div>
+    \\      <div class=\"evt-body\">${escapeHtml(r.body)}</div>
+    \\    </div>
+    \\  `).join('');
+    \\  el.scrollTop = el.scrollHeight;
+    \\}
+    \\function ingestEvents(obj){
+    \\  if (obj.last_event_id) after = obj.last_event_id;
+    \\  const rows = (obj.events || []).map(toViewRow);
+    \\  if (!rows.length) return;
+    \\  eventRows = eventRows.concat(rows).slice(-300);
+    \\  renderEvents();
+    \\}
+    \\async function refreshTasks(){
+    \\  const r = await fetch('/tasks', { headers: H });
+    \\  const txt = await r.text();
+    \\  try { document.getElementById('tasks').textContent = JSON.stringify(JSON.parse(txt), null, 2); }
+    \\  catch { document.getElementById('tasks').textContent = txt; }
+    \\}
+    \\async function refreshSession(){
+    \\  if(!token){ return; }
+    \\  const r = await fetch('/sessions/current', { headers: H });
+    \\  const txt = await r.text();
+    \\  try{
+    \\    const s = JSON.parse(txt);
+    \\    if(!s.session_id){ document.getElementById('session-meta').textContent = 'session: (none)'; document.getElementById('session-chat').textContent='(no session)'; return; }
+    \\    document.getElementById('session-meta').textContent = `session: ${s.session_id} | ${s.status} | ${s.provider}`;
+    \\    const lines = (s.messages||[]).slice(-80).map(m => `[${m.role}] ${m.content}`);
+    \\    document.getElementById('session-chat').textContent = lines.join('\\n\\n') || '(empty)';
+    \\  } catch {}
+    \\}
+    \\async function startSession(){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('starting session ...');
+    \\  const r = await fetch('/sessions/start', {
+    \\    method:'POST',
+    \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ provider:'codex', request_id })
+    \\  });
+    \\  const t = await r.text();
+    \\  setStatus(t, r.ok ? 'ok' : 'bad');
+    \\  await refreshSession();
+    \\}
+    \\async function sendSessionMessage(){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const message = document.getElementById('session-input').value || '';
+    \\  if(!message.trim()){ setStatus('message empty','warn'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('sending message ...');
+    \\  const r = await fetch('/sessions/current/message', {
+    \\    method:'POST',
+    \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ message, request_id })
+    \\  });
+    \\  const t = await r.text();
+    \\  setStatus(t, r.ok ? 'ok' : 'bad');
+    \\  if(r.ok){ document.getElementById('session-input').value = ''; await refreshSession(); }
+    \\}
+    \\async function refreshEvents(){
+    \\  const r = await fetch('/runs/current/events?after='+after, { headers: H });
+    \\  const txt = await r.text();
+    \\  try {
+    \\    ingestEvents(JSON.parse(txt));
+    \\  } catch {
+    \\    document.getElementById('events').innerHTML = '<div class=\"bad\">failed to parse events</div>';
+    \\  }
+    \\}
+    \\function startSSE(){
+    \\  // EventSource cannot carry Authorization headers reliably; keep polling mode only.
+    \\  return;
+    \\}
+    \\async function sendControl(action){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('sending '+action+' ...');
+    \\  const r = await fetch('/runs/current/control', {
+    \\    method: 'POST',
+    \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ action, request_id })
+    \\  });
+    \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
+    \\}
+    \\async function startRun(mode){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('starting '+mode+' ...');
+    \\  const r = await fetch('/runs/start', {
+    \\    method: 'POST',
+    \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ mode, request_id })
+    \\  });
+    \\  const t = await r.text();
+    \\  setStatus(t, r.ok ? 'ok' : 'bad');
+    \\}
+    \\async function injectPrompt(){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const p = document.getElementById('prompt').value || '';
+    \\  if(!p){ setStatus('prompt empty','warn'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('injecting ...');
+    \\  const r = await fetch('/runs/current/control', {
+    \\    method: 'POST',
+    \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ action: 'inject_prompt', prompt: p, request_id })
+    \\  });
+    \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
+    \\}
+    \\refreshTasks(); refreshEvents(); refreshSession(); startSSE();
+    \\setInterval(refreshTasks, 3000);
+    \\setInterval(refreshSession, 2500);
+    \\setInterval(() => { if(!sse) refreshEvents(); }, 1500);
+    \\</script>
+    \\</body>
+    \\</html>
     ;
 }

@@ -55,7 +55,8 @@ export function isApiError(err: unknown): err is ApiError {
 export async function apiRequest<T>(path: string, token?: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {})
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json; charset=utf-8')
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json; charset=utf-8')
 
   const resp = await fetch(path, { ...options, headers, credentials: 'include' })
   const text = await resp.text()

@@ -40,6 +40,10 @@ pub const EnqueueMessageResult = struct {
     accepted: bool,
 };
 
+pub const EndSessionResult = struct {
+    status: []const u8,
+};
+
 const LoadedSession = struct {
     allocator: Allocator,
     path: []u8,
@@ -86,7 +90,13 @@ pub fn startSession(
     const cfg = try config.loadConfigFromJson(allocator, target_dir);
     defer config.deinitConfig(allocator, &cfg);
 
-    const provider = provider_override orelse cfg.provider;
+    const provider_raw = std.mem.trim(u8, provider_override orelse cfg.provider, " \t\r\n");
+    const provider = if (std.ascii.eqlIgnoreCase(provider_raw, "codex"))
+        "codex"
+    else if (std.ascii.eqlIgnoreCase(provider_raw, "opencode"))
+        "opencode"
+    else
+        return error.ProviderNotSupportedForSession;
     const model = model_override orelse cfg.model;
     const now = std.time.timestamp();
     const session_id = try std.fmt.allocPrint(allocator, "sess-{d}", .{now});
@@ -114,6 +124,31 @@ pub fn getSessionStateJson(allocator: Allocator, target_dir: []const u8) ![]u8 {
     const path = try getSessionPath(allocator, target_dir);
     defer allocator.free(path);
     return std.fs.cwd().readFileAlloc(allocator, path, 8 * 1024 * 1024);
+}
+
+pub fn endSession(allocator: Allocator, target_dir: []const u8) !EndSessionResult {
+    var loaded = loadSession(allocator, target_dir) catch |err| switch (err) {
+        error.FileNotFound => return .{ .status = "not_found" },
+        else => return err,
+    };
+    defer loaded.deinit();
+
+    const now = std.time.timestamp();
+    const ended = SessionFile{
+        .session_id = loaded.parsed.value.session_id,
+        .status = "ended",
+        .provider = loaded.parsed.value.provider,
+        .model = loaded.parsed.value.model,
+        .provider_session_id = loaded.parsed.value.provider_session_id,
+        .last_message_id = computeLastMessageId(loaded.parsed.value),
+        .in_flight_request_id = null,
+        .last_error = null,
+        .created_at = loaded.parsed.value.created_at,
+        .updated_at = now,
+        .messages = loaded.parsed.value.messages,
+    };
+    try saveSession(allocator, target_dir, ended);
+    return .{ .status = "ended" };
 }
 
 pub fn sendMessage(allocator: Allocator, target_dir: []const u8, text: []const u8, request_id: []const u8) !SendMessageResult {
@@ -234,6 +269,8 @@ pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, requ
     const assistant = generateAssistantReply(
         allocator,
         cfg.work_dir,
+        cfg.opencode_url,
+        cfg.agent,
         loaded.parsed.value.provider,
         loaded.parsed.value.model,
         loaded.parsed.value.provider_session_id,
@@ -310,38 +347,63 @@ const AssistantOutput = struct {
 fn generateAssistantReply(
     allocator: Allocator,
     work_dir: []const u8,
+    opencode_url: []const u8,
+    opencode_agent: []const u8,
     provider: []const u8,
     model: []const u8,
     provider_session_id: ?[]const u8,
     text: []const u8,
 ) !AssistantOutput {
-    if (!std.mem.eql(u8, provider, "codex")) {
-        return error.ProviderNotSupportedForSession;
-    }
-    if (!utils.commandExists(allocator, "codex")) return error.MissingCodex;
+    if (std.mem.eql(u8, provider, "codex")) {
+        if (!utils.commandExists(allocator, "codex")) return error.MissingCodex;
 
-    const out_path = try std.fmt.allocPrint(allocator, "{s}/.techlead/session-last-message.txt", .{work_dir});
-    defer allocator.free(out_path);
+        const out_path = try std.fmt.allocPrint(allocator, "{s}/.techlead/session-last-message.txt", .{work_dir});
+        defer allocator.free(out_path);
+        // Avoid reading stale content if provider fails before writing a new output file.
+        std.fs.cwd().deleteFile(out_path) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
 
-    var argv: std.ArrayList([]const u8) = .empty;
-    defer argv.deinit(allocator);
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(allocator);
 
-    if (provider_session_id) |sid| {
-        if (sid.len > 0) {
-            try argv.appendSlice(allocator, &[_][]const u8{
-                "codex",
-                "exec",
-                "resume",
-                "--json",
-                "--output-last-message",
-                out_path,
-            });
-            if (model.len > 0) {
-                try argv.append(allocator, "--model");
-                try argv.append(allocator, model);
+        if (provider_session_id) |sid| {
+            if (sid.len > 0) {
+                try argv.appendSlice(allocator, &[_][]const u8{
+                    "codex",
+                    "exec",
+                    "resume",
+                    "--json",
+                    "--output-last-message",
+                    out_path,
+                });
+                if (model.len > 0) {
+                    try argv.append(allocator, "--model");
+                    try argv.append(allocator, model);
+                }
+                try argv.append(allocator, sid);
+                try argv.append(allocator, text);
+            } else {
+                const prompt = try buildInitialPrompt(allocator, text);
+                defer allocator.free(prompt);
+                try argv.appendSlice(allocator, &[_][]const u8{
+                    "codex",
+                    "exec",
+                    "--json",
+                    "--cd",
+                    work_dir,
+                    "--sandbox",
+                    "danger-full-access",
+                    "--output-last-message",
+                    out_path,
+                });
+                if (model.len > 0) {
+                    try argv.append(allocator, "--model");
+                    try argv.append(allocator, model);
+                }
+                try argv.append(allocator, prompt);
             }
-            try argv.append(allocator, sid);
-            try argv.append(allocator, text);
         } else {
             const prompt = try buildInitialPrompt(allocator, text);
             defer allocator.free(prompt);
@@ -362,68 +424,125 @@ fn generateAssistantReply(
             }
             try argv.append(allocator, prompt);
         }
-    } else {
-        const prompt = try buildInitialPrompt(allocator, text);
-        defer allocator.free(prompt);
-        try argv.appendSlice(allocator, &[_][]const u8{
-            "codex",
-            "exec",
-            "--json",
-            "--cd",
-            work_dir,
-            "--sandbox",
-            "danger-full-access",
-            "--output-last-message",
-            out_path,
-        });
-        if (model.len > 0) {
-            try argv.append(allocator, "--model");
-            try argv.append(allocator, model);
+
+        const run_result = try runChildWithUtf8Env(allocator, work_dir, argv.items, 32 * 1024 * 1024);
+        defer allocator.free(run_result.stdout);
+        defer allocator.free(run_result.stderr);
+
+        if (!utils.isExitedZero(run_result.term)) {
+            ui.logWarn("session codex exec exited non-zero", .{});
         }
-        try argv.append(allocator, prompt);
-    }
 
-    const run_result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = argv.items,
-        .cwd = work_dir,
-        .max_output_bytes = 32 * 1024 * 1024,
-    });
-    defer allocator.free(run_result.stdout);
-    defer allocator.free(run_result.stderr);
+        const reply = blk: {
+            const reply_raw = std.fs.cwd().readFileAlloc(allocator, out_path, 4 * 1024 * 1024) catch {
+                const fallback = std.mem.trim(u8, run_result.stdout, " \t\r\n");
+                if (fallback.len == 0) return error.EmptyAssistantReply;
+                break :blk try allocator.dupe(u8, fallback);
+            };
+            defer allocator.free(reply_raw);
 
-    if (!utils.isExitedZero(run_result.term)) {
-        ui.logWarn("session codex exec exited non-zero", .{});
-    }
-
-    const reply = blk: {
-        const reply_raw = std.fs.cwd().readFileAlloc(allocator, out_path, 4 * 1024 * 1024) catch {
-            const fallback = std.mem.trim(u8, run_result.stdout, " \t\r\n");
-            if (fallback.len == 0) return error.EmptyAssistantReply;
-            break :blk try allocator.dupe(u8, fallback);
+            const reply_trimmed = std.mem.trim(u8, reply_raw, " \t\r\n");
+            if (reply_trimmed.len == 0) return error.EmptyAssistantReply;
+            break :blk try allocator.dupe(u8, reply_trimmed);
         };
-        defer allocator.free(reply_raw);
+        errdefer allocator.free(reply);
 
-        const reply_trimmed = std.mem.trim(u8, reply_raw, " \t\r\n");
-        if (reply_trimmed.len == 0) return error.EmptyAssistantReply;
-        break :blk try allocator.dupe(u8, reply_trimmed);
-    };
-    errdefer allocator.free(reply);
-
-    var next_provider_session_id: ?[]u8 = null;
-    if (provider_session_id) |sid| {
-        if (sid.len > 0) next_provider_session_id = try allocator.dupe(u8, sid);
-    }
-    if (next_provider_session_id == null) {
-        if (extractThreadIdFromJsonl(run_result.stdout)) |tid| {
-            next_provider_session_id = try allocator.dupe(u8, tid);
+        var next_provider_session_id: ?[]u8 = null;
+        if (provider_session_id) |sid| {
+            if (sid.len > 0) next_provider_session_id = try allocator.dupe(u8, sid);
         }
+        if (next_provider_session_id == null) {
+            if (extractThreadIdFromJsonl(run_result.stdout)) |tid| {
+                next_provider_session_id = try allocator.dupe(u8, tid);
+            }
+        }
+
+        return .{
+            .reply = reply,
+            .provider_session_id = next_provider_session_id,
+        };
     }
 
-    return .{
-        .reply = reply,
-        .provider_session_id = next_provider_session_id,
-    };
+    if (std.mem.eql(u8, provider, "opencode")) {
+        if (!utils.commandExists(allocator, "opencode")) return error.MissingOpencode;
+
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(allocator);
+        try appendOpencodeRunArgs(
+            allocator,
+            &argv,
+            work_dir,
+            opencode_url,
+            model,
+            opencode_agent,
+            provider_session_id,
+            text,
+            true,
+        );
+
+        var run_result = try runChildWithUtf8Env(allocator, work_dir, argv.items, 32 * 1024 * 1024);
+        var need_retry_without_attach = !utils.isExitedZero(run_result.term) and opencode_url.len > 0;
+        if (need_retry_without_attach) {
+            ui.logWarn("session opencode run with --attach exited non-zero, retrying without attach", .{});
+        }
+
+        var parsed_opt: ?AssistantOutput = null;
+        if (!need_retry_without_attach) {
+            parsed_opt = parseOpencodeRunOutput(allocator, run_result.stdout) catch |err| switch (err) {
+                error.EmptyAssistantReply => blk: {
+                    if (opencode_url.len > 0) {
+                        ui.logWarn("session opencode run with --attach returned empty reply, retrying without attach", .{});
+                        need_retry_without_attach = true;
+                        break :blk null;
+                    }
+                    return err;
+                },
+                else => return err,
+            };
+        }
+
+        if (need_retry_without_attach) {
+            allocator.free(run_result.stdout);
+            allocator.free(run_result.stderr);
+
+            var retry_argv: std.ArrayList([]const u8) = .empty;
+            defer retry_argv.deinit(allocator);
+            try appendOpencodeRunArgs(
+                allocator,
+                &retry_argv,
+                work_dir,
+                opencode_url,
+                model,
+                opencode_agent,
+                provider_session_id,
+                text,
+                false,
+            );
+            run_result = try runChildWithUtf8Env(allocator, work_dir, retry_argv.items, 32 * 1024 * 1024);
+            parsed_opt = try parseOpencodeRunOutput(allocator, run_result.stdout);
+        }
+        defer allocator.free(run_result.stdout);
+        defer allocator.free(run_result.stderr);
+
+        if (!utils.isExitedZero(run_result.term)) {
+            ui.logWarn("session opencode run exited non-zero", .{});
+        }
+
+        var parsed = parsed_opt orelse try parseOpencodeRunOutput(allocator, run_result.stdout);
+        errdefer {
+            allocator.free(parsed.reply);
+            if (parsed.provider_session_id) |sid| allocator.free(sid);
+        }
+
+        if (parsed.provider_session_id == null) {
+            if (provider_session_id) |sid| {
+                if (sid.len > 0) parsed.provider_session_id = try allocator.dupe(u8, sid);
+            }
+        }
+        return parsed;
+    }
+
+    return error.ProviderNotSupportedForSession;
 }
 
 fn buildInitialPrompt(allocator: Allocator, text: []const u8) ![]u8 {
@@ -437,6 +556,124 @@ fn buildInitialPrompt(allocator: Allocator, text: []const u8) ![]u8 {
         \\
         \\Reply to the latest user message.
     , .{text});
+}
+
+fn runChildWithUtf8Env(allocator: Allocator, cwd: []const u8, argv: []const []const u8, max_output_bytes: usize) !std.process.Child.RunResult {
+    var env_map = try std.process.getEnvMap(allocator);
+    defer env_map.deinit();
+    try env_map.put("LANG", "C.UTF-8");
+    try env_map.put("LC_ALL", "C.UTF-8");
+    try env_map.put("LC_CTYPE", "C.UTF-8");
+
+    return std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = argv,
+        .cwd = cwd,
+        .env_map = &env_map,
+        .max_output_bytes = max_output_bytes,
+    });
+}
+
+fn appendOpencodeRunArgs(
+    allocator: Allocator,
+    argv: *std.ArrayList([]const u8),
+    work_dir: []const u8,
+    opencode_url: []const u8,
+    model: []const u8,
+    opencode_agent: []const u8,
+    provider_session_id: ?[]const u8,
+    text: []const u8,
+    use_attach: bool,
+) !void {
+    try argv.appendSlice(allocator, &[_][]const u8{
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dir",
+        work_dir,
+    });
+    if (use_attach and opencode_url.len > 0) {
+        try argv.append(allocator, "--attach");
+        try argv.append(allocator, opencode_url);
+    }
+    if (provider_session_id) |sid| {
+        if (sid.len > 0) {
+            try argv.append(allocator, "--session");
+            try argv.append(allocator, sid);
+        }
+    }
+    if (model.len > 0) {
+        try argv.append(allocator, "--model");
+        try argv.append(allocator, model);
+    }
+    if (opencode_agent.len > 0) {
+        try argv.append(allocator, "--agent");
+        try argv.append(allocator, opencode_agent);
+    }
+    try argv.append(allocator, text);
+}
+
+fn parseOpencodeRunOutput(allocator: Allocator, stdout_jsonl: []const u8) !AssistantOutput {
+    var text_buf: std.ArrayList(u8) = .empty;
+    defer text_buf.deinit(allocator);
+
+    var session_id: ?[]u8 = null;
+    errdefer if (session_id) |sid| allocator.free(sid);
+
+    var lines = std.mem.splitScalar(u8, stdout_jsonl, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (line.len == 0 or line[0] != '{') continue;
+
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const root = parsed.value.object;
+
+        if (root.get("sessionID")) |sid_v| {
+            if (jsonValueAsString(sid_v)) |sid| {
+                if (sid.len > 0) {
+                    if (session_id) |old| allocator.free(old);
+                    session_id = try allocator.dupe(u8, sid);
+                }
+            }
+        } else if (root.get("sessionId")) |sid_v| {
+            if (jsonValueAsString(sid_v)) |sid| {
+                if (sid.len > 0) {
+                    if (session_id) |old| allocator.free(old);
+                    session_id = try allocator.dupe(u8, sid);
+                }
+            }
+        }
+
+        const type_v = root.get("type") orelse continue;
+        const event_type = jsonValueAsString(type_v) orelse continue;
+        if (!std.mem.eql(u8, event_type, "text")) continue;
+
+        const part_v = root.get("part") orelse continue;
+        if (part_v != .object) continue;
+        const part = part_v.object;
+
+        const text_v = part.get("text") orelse continue;
+        const piece = jsonValueAsString(text_v) orelse continue;
+        try text_buf.appendSlice(allocator, piece);
+    }
+
+    const reply_trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+    if (reply_trimmed.len == 0) return error.EmptyAssistantReply;
+
+    return .{
+        .reply = try allocator.dupe(u8, reply_trimmed),
+        .provider_session_id = session_id,
+    };
+}
+
+fn jsonValueAsString(v: std.json.Value) ?[]const u8 {
+    return switch (v) {
+        .string => |s| s,
+        else => null,
+    };
 }
 
 fn isSessionWritableStatus(status: []const u8) bool {

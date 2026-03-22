@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { Panel } from './components/Panel'
 import { apiRequest, newRequestId, toneClass } from './lib/api'
 import { extractBootstrapParams, readAuthQuery } from './lib/auth'
-import { useEventsStream } from './hooks/useEventsStream'
 import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
 import { useSessionPolling, type SessionSyncState } from './hooks/useSessionPolling'
-import { ControlView } from './views/ControlView'
 import { SessionView } from './views/SessionView'
 import type { JsonValue, StatusTone } from './types'
 
 type ConsolePhase = 'connecting' | 'ready' | 'degraded' | 'expired'
+type SessionProvider = 'codex' | 'opencode'
+const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 
 function safeNow() {
   return Date.now()
@@ -40,15 +39,21 @@ export default function App() {
   const [statusText, setStatusText] = useState('connecting...')
   const [statusTone, setStatusTone] = useState<StatusTone>('idle')
 
-  const [runMode, setRunMode] = useState<'optimize' | 'pool'>('optimize')
-  const [askPrompt, setAskPrompt] = useState('')
-
   const [showScanner, setShowScanner] = useState(false)
-
   const [sessionInput, setSessionInput] = useState('')
+  const [isEndingSession, setIsEndingSession] = useState(false)
+  const [sessionProvider, setSessionProvider] = useState<SessionProvider>(() => {
+    const raw = window.localStorage.getItem(SESSION_PROVIDER_STORAGE_KEY)
+    return raw === 'opencode' ? 'opencode' : 'codex'
+  })
 
   const observeAuth = observeToken.trim() || undefined
   const controlAuth = controlToken.trim() || undefined
+  const isDebugBuild = import.meta.env.DEV
+
+  useEffect(() => {
+    window.localStorage.setItem(SESSION_PROVIDER_STORAGE_KEY, sessionProvider)
+  }, [sessionProvider])
 
   const {
     outboxRef,
@@ -56,6 +61,7 @@ export default function App() {
     updateOutbox,
     enqueueMessage,
     retryCommandNow,
+    clearOutbox,
     reconcileFromSessionState,
   } = useSessionOutbox()
 
@@ -104,9 +110,6 @@ export default function App() {
     },
   })
 
-  const events = useEventsStream(observeAuth)
-  const isDebugBuild = import.meta.env.DEV
-
   const isSessionBusy = pendingCommands.length > 0 || sessionStatus === 'processing'
   const sessionSyncHint = useMemo(() => syncHintLabel(sessionSync), [sessionSync])
 
@@ -147,47 +150,44 @@ export default function App() {
     applyStatus('ready', 'idle', 'retry queued')
   }
 
-  async function startRun() {
-    try {
-      const requestId = newRequestId()
-      const result = await apiRequest<JsonValue>('/runs/start', controlAuth, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({ mode: runMode, request_id: requestId }),
-      })
-      applyStatus('ready', 'ok', JSON.stringify(result))
-    } catch (err) {
-      normalizeStatus((err as Error).message)
-    }
-  }
-
-  async function controlRun(action: 'pause' | 'resume' | 'abort' | 'ask') {
-    try {
-      const requestId = newRequestId()
-      const payload: JsonValue = { action, request_id: requestId }
-      if (action === 'ask') payload.prompt = askPrompt
-      const result = await apiRequest<JsonValue>('/runs/current/control', controlAuth, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify(payload),
-      })
-      applyStatus('ready', 'ok', JSON.stringify(result))
-    } catch (err) {
-      normalizeStatus((err as Error).message)
-    }
-  }
-
   async function startSession() {
     try {
       const requestId = newRequestId()
       const result = await apiRequest<JsonValue>('/sessions/start', controlAuth, {
         method: 'POST',
         headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({ provider: 'codex', request_id: requestId }),
+        body: JSON.stringify({ provider: sessionProvider, request_id: requestId }),
       })
+      clearOutbox()
+      setSessionInput('')
       applyStatus('ready', 'ok', JSON.stringify(result))
     } catch (err) {
       normalizeStatus((err as Error).message)
+    }
+  }
+
+  async function endSession() {
+    if (isEndingSession) return
+    setIsEndingSession(true)
+    try {
+      const requestId = newRequestId()
+      const result = await apiRequest<JsonValue>('/sessions/current/end', controlAuth, {
+        method: 'POST',
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({ request_id: requestId }),
+      })
+      const status = String(result.status ?? 'ended')
+      clearOutbox()
+      setSessionInput('')
+      if (status === 'not_found') {
+        applyStatus('ready', 'warn', 'no active session')
+      } else {
+        applyStatus('ready', 'ok', 'session ended')
+      }
+    } catch (err) {
+      normalizeStatus((err as Error).message)
+    } finally {
+      setIsEndingSession(false)
     }
   }
 
@@ -250,27 +250,26 @@ export default function App() {
   }, [observeToken, controlToken])
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 p-4 md:p-6">
-      <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Techlead</div>
-            <h1 className="mt-1 text-xl font-semibold text-slate-900">Agent Session Console</h1>
-            <p className="mt-1 text-sm text-slate-600">Reliable session-first remote control for local AI</p>
+    <div className="mx-auto w-full max-w-4xl space-y-3 p-3 sm:space-y-4 sm:p-4">
+      <header className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Techlead</div>
+            <h1 className="mt-1 text-lg font-semibold text-slate-900 sm:text-xl">Session Console</h1>
+            <p className="mt-1 text-xs text-slate-600 sm:text-sm">Simple, mobile-first chat control</p>
           </div>
-          <div className={`rounded-xl border px-3 py-2 text-xs ${toneClass(statusTone)}`}>
-            <span className="font-semibold">Status</span>
+          <div className={`max-w-full rounded-xl border px-3 py-2 text-xs ${toneClass(statusTone)}`}>
+            <div className="font-semibold">Status</div>
             <div className="mt-1 break-all">{statusText}</div>
           </div>
         </div>
 
-        <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 text-xs text-slate-600 md:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-2 border-t border-slate-200 pt-3 text-xs text-slate-600 sm:grid-cols-2">
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">auth: {authModeLabel}</div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">phase: {effectivePhase}</div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">outbox pending: {pendingCommands.length}</div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">session sync: {sessionSyncHint}</div>
         </div>
-
-        <div className="mt-2 text-xs text-slate-500">session sync: {sessionSyncHint}</div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
           <button
@@ -330,7 +329,7 @@ export default function App() {
         ) : null}
 
         {isDebugBuild && showTokenDebug ? (
-          <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 md:grid-cols-2">
+          <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-2">
             <label className="block text-xs font-medium text-slate-600">
               Observe Token
               <input
@@ -353,48 +352,22 @@ export default function App() {
         ) : null}
       </header>
 
-      <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-        <SessionView
-          sessionState={sessionState}
-          sessionMessages={sessionMessages}
-          sessionInput={sessionInput}
-          isSessionBusy={isSessionBusy}
-          pendingCommands={pendingCommands}
-          syncHint={sessionSyncHint}
-          onSessionInputChange={setSessionInput}
-          onStartSession={startSession}
-          onSendMessage={sendSessionMessage}
-          onRetryCommand={handleRetryCommand}
-        />
-
-        <div className="space-y-4">
-          <ControlView
-            runMode={runMode}
-            askPrompt={askPrompt}
-            onRunModeChange={setRunMode}
-            onAskPromptChange={setAskPrompt}
-            onStartRun={startRun}
-            onControlRun={controlRun}
-          />
-
-          <Panel title="Events Stream" right={<span className="text-xs text-slate-500">last {events.length}</span>}>
-            <div className="max-h-[48vh] space-y-2 overflow-auto rounded-xl bg-slate-50 p-2">
-              {events.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">(no events)</div>
-              ) : (
-                events.map((evt) => (
-                  <article key={`${evt.id}-${evt.ts}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <div className="mb-1 text-xs text-slate-500">
-                      #{evt.id} · {evt.source} · {evt.type}
-                    </div>
-                    <pre className="max-h-28 overflow-auto text-xs leading-5 text-slate-800">{evt.payload}</pre>
-                  </article>
-                ))
-              )}
-            </div>
-          </Panel>
-        </div>
-      </div>
+      <SessionView
+        sessionState={sessionState}
+        sessionMessages={sessionMessages}
+        sessionInput={sessionInput}
+        sessionProvider={sessionProvider}
+        isSessionBusy={isSessionBusy}
+        isEndingSession={isEndingSession}
+        pendingCommands={pendingCommands}
+        syncHint={sessionSyncHint}
+        onSessionInputChange={setSessionInput}
+        onSessionProviderChange={setSessionProvider}
+        onStartSession={startSession}
+        onEndSession={endSession}
+        onSendMessage={sendSessionMessage}
+        onRetryCommand={handleRetryCommand}
+      />
     </div>
   )
 }

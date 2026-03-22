@@ -173,6 +173,10 @@ export function useSessionOutbox() {
     [updateOutbox],
   )
 
+  const clearOutbox = useCallback(() => {
+    setOutbox([])
+  }, [])
+
   const reconcileFromSessionState = useCallback((messages: SessionMessage[], inFlightRequestId: string, status: string) => {
     setOutbox((prev) => {
       const now = nowMs()
@@ -230,6 +234,7 @@ export function useSessionOutbox() {
     updateOutbox,
     enqueueMessage,
     retryCommandNow,
+    clearOutbox,
     reconcileFromSessionState,
   }
 }
