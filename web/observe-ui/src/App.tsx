@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { apiRequest, newRequestId } from './lib/api'
 import { extractBootstrapParams, readAuthQuery } from './lib/auth'
@@ -26,6 +26,9 @@ export default function App() {
     const raw = window.localStorage.getItem(SESSION_PROVIDER_STORAGE_KEY)
     return raw === 'opencode' ? 'opencode' : 'codex'
   })
+
+  const sessionInputRef = useRef(sessionInput)
+  sessionInputRef.current = sessionInput
 
   const observeAuth = observeToken.trim() || undefined
   const controlAuth = controlToken.trim() || undefined
@@ -87,11 +90,19 @@ export default function App() {
 
   const { scannerStatus, scannerActive, scannerVideoRef, startScanner, stopScanner } = useQrScanner({ onPayload: applyScannedPayload })
 
-  function handleRetryCommand(requestId: string) {
+  const handleRetryCommand = useCallback((requestId: string) => {
     retryCommandNow(requestId)
-  }
+  }, [retryCommandNow])
 
-  async function startSession() {
+  const handleSessionInputChange = useCallback((value: string) => {
+    setSessionInput(value)
+  }, [])
+
+  const handleSessionProviderChange = useCallback((value: SessionProvider) => {
+    setSessionProvider(value)
+  }, [])
+
+  const startSession = useCallback(async () => {
     try {
       const requestId = newRequestId()
       await apiRequest<JsonValue>('/sessions/start', controlAuth, {
@@ -104,9 +115,9 @@ export default function App() {
     } catch {
       void 0
     }
-  }
+  }, [controlAuth, sessionProvider, clearOutbox])
 
-  async function endSession() {
+  const endSession = useCallback(async () => {
     if (isEndingSession) return
     setIsEndingSession(true)
     try {
@@ -123,13 +134,13 @@ export default function App() {
     } finally {
       setIsEndingSession(false)
     }
-  }
+  }, [controlAuth, clearOutbox, isEndingSession])
 
-  function sendSessionMessage() {
-    const result = enqueueMessage(sessionInput)
+  const sendSessionMessage = useCallback(() => {
+    const result = enqueueMessage(sessionInputRef.current)
     if (!result.ok) return
     setSessionInput('')
-  }
+  }, [enqueueMessage])
 
   useEffect(() => {
     const removeQuerySecrets = () => {
@@ -259,8 +270,8 @@ export default function App() {
           isEndingSession={isEndingSession}
           pendingCommands={pendingCommands}
           syncState={sessionSync}
-          onSessionInputChange={setSessionInput}
-          onSessionProviderChange={setSessionProvider}
+          onSessionInputChange={handleSessionInputChange}
+          onSessionProviderChange={handleSessionProviderChange}
           onStartSession={startSession}
           onEndSession={endSession}
           onSendMessage={sendSessionMessage}

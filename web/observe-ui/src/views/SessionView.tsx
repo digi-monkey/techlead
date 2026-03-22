@@ -91,13 +91,18 @@ export function SessionView(props: SessionViewProps) {
     onRetryCommand(requestId)
   }, [onRetryCommand])
 
+  const onStartSessionRef = useRef(onStartSession)
+  const onEndSessionRef = useRef(onEndSession)
+  onStartSessionRef.current = onStartSession
+  onEndSessionRef.current = onEndSession
+
   const handleSessionToggle = useCallback(() => {
     if (hasSession && sessionStatus !== 'ended') {
-      onEndSession()
+      onEndSessionRef.current()
     } else {
-      onStartSession()
+      onStartSessionRef.current()
     }
-  }, [hasSession, sessionStatus, onEndSession, onStartSession])
+  }, [hasSession, sessionStatus])
 
   const isToggleBusy = isSessionBusy || isEndingSession
   const showEnd = hasSession && sessionStatus !== 'ended'
