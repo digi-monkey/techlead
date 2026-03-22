@@ -146,7 +146,7 @@ export function SessionView(props: SessionViewProps) {
     [isToggleBusy, isEndingSession, showEnd, onSessionProviderChange, sessionProvider, syncState, handleSessionToggle],
   )
 
-  const panelTitle = hasSession ? sessionId.slice(0, 8) : 'Session'
+  const panelTitle = hasSession ? sessionId : 'Session'
 
   return (
     <Panel title={panelTitle} right={headerRight}>
