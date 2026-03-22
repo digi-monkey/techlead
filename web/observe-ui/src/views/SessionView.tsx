@@ -106,7 +106,7 @@ export function SessionView(props: SessionViewProps) {
 
   return (
     <Panel title="Session" right={headerRight}>
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full flex-col">
         <div className="mb-2 px-0.5 text-xs text-slate-500">
           <div className="truncate">{hasSession ? sessionId : '(no session)'} · {provider} · {sessionStatus}</div>
           <div className="mt-0.5">sync: {syncHint}</div>

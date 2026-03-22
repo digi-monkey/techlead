@@ -326,22 +326,24 @@ export default function App() {
         ) : null}
       </header>
 
-      <SessionView
-        sessionState={sessionState}
-        sessionMessages={sessionMessages}
-        sessionInput={sessionInput}
-        sessionProvider={sessionProvider}
-        isSessionBusy={isSessionBusy}
-        isEndingSession={isEndingSession}
-        pendingCommands={pendingCommands}
-        syncHint={sessionSyncHint}
-        onSessionInputChange={setSessionInput}
-        onSessionProviderChange={setSessionProvider}
-        onStartSession={startSession}
-        onEndSession={endSession}
-        onSendMessage={sendSessionMessage}
-        onRetryCommand={handleRetryCommand}
-      />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <SessionView
+          sessionState={sessionState}
+          sessionMessages={sessionMessages}
+          sessionInput={sessionInput}
+          sessionProvider={sessionProvider}
+          isSessionBusy={isSessionBusy}
+          isEndingSession={isEndingSession}
+          pendingCommands={pendingCommands}
+          syncHint={sessionSyncHint}
+          onSessionInputChange={setSessionInput}
+          onSessionProviderChange={setSessionProvider}
+          onStartSession={startSession}
+          onEndSession={endSession}
+          onSendMessage={sendSessionMessage}
+          onRetryCommand={handleRetryCommand}
+        />
+      </div>
     </div>
   )
 }
