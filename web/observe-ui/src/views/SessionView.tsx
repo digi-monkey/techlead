@@ -189,7 +189,7 @@ export function SessionView(props: SessionViewProps) {
         <div className="mt-3 pt-2">
           <div className="relative">
             <textarea
-              className="min-h-[100px] w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 pr-14 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-70"
+              className="min-h-[100px] w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 pr-14 text-base text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-70 sm:text-sm"
               value={sessionInput}
               onChange={(e) => onSessionInputChange(e.target.value)}
               placeholder={!hasSession ? 'Create a new session first...' : sessionStatus === 'ended' ? 'Session ended. Start a new one.' : isSessionBusy ? 'Agent is thinking...' : 'Type your message...'}
