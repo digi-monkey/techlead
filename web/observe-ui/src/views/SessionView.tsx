@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Panel } from '../components/Panel'
 import type { PendingOutboxCommand } from '../hooks/useSessionOutbox'
+import type { SessionSyncState } from '../hooks/useSessionPolling'
 import type { JsonValue, SessionMessage } from '../types'
 
 export type PendingCommand = PendingOutboxCommand
@@ -14,13 +15,19 @@ type SessionViewProps = {
   isSessionBusy: boolean
   isEndingSession: boolean
   pendingCommands: PendingCommand[]
-  syncHint: string
+  syncState: SessionSyncState
   onSessionInputChange: (value: string) => void
   onSessionProviderChange: (value: SessionProvider) => void
   onStartSession: () => void
   onEndSession: () => void
   onSendMessage: () => void
   onRetryCommand: (requestId: string) => void
+}
+
+function syncStatusDot(sync: SessionSyncState): string {
+  if (sync.consecutiveErrors === 0) return 'bg-emerald-500'
+  if (sync.consecutiveErrors < 3) return 'bg-amber-500'
+  return 'bg-rose-500'
 }
 
 function pendingTone(state: PendingCommand['state']): string {
@@ -48,7 +55,7 @@ export function SessionView(props: SessionViewProps) {
     isSessionBusy,
     isEndingSession,
     pendingCommands,
-    syncHint,
+    syncState,
     onSessionInputChange,
     onSessionProviderChange,
     onStartSession,
@@ -60,7 +67,6 @@ export function SessionView(props: SessionViewProps) {
   const listRef = useRef<HTMLDivElement | null>(null)
   const sessionStatus = String(sessionState.status ?? '-')
   const sessionId = String(sessionState.session_id ?? '')
-  const provider = String(sessionState.provider ?? '-')
   const hasSession = sessionId.trim().length > 0
   const canSend = hasSession && sessionStatus !== 'ended' && !isSessionBusy && !isEndingSession
   const showTyping = hasSession && sessionStatus === 'processing'
@@ -73,7 +79,11 @@ export function SessionView(props: SessionViewProps) {
 
   const headerRight = useMemo(
     () => (
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-2">
+        <div
+          className={`h-2 w-2 rounded-full ${syncStatusDot(syncState)}`}
+          title={syncState.consecutiveErrors === 0 ? 'healthy' : `errors: ${syncState.consecutiveErrors}`}
+        />
         <select
           value={sessionProvider}
           onChange={(e) => onSessionProviderChange(e.target.value as SessionProvider)}
@@ -111,16 +121,14 @@ export function SessionView(props: SessionViewProps) {
         </div>
       </div>
     ),
-    [hasSession, isEndingSession, isSessionBusy, onEndSession, onSessionProviderChange, onStartSession, sessionProvider],
+    [hasSession, isEndingSession, isSessionBusy, onEndSession, onSessionProviderChange, onStartSession, sessionProvider, syncState],
   )
 
+  const panelTitle = hasSession ? sessionId.slice(0, 8) : 'Session'
+
   return (
-    <Panel title="Session" right={headerRight}>
+    <Panel title={panelTitle} right={headerRight}>
       <div className="flex h-full flex-col">
-        <div className="mb-2 px-0.5 text-xs text-slate-500">
-          <div className="truncate">{hasSession ? sessionId : '(no session)'} · {provider} · {sessionStatus}</div>
-          <div className="mt-0.5">sync: {syncHint}</div>
-        </div>
 
         {pendingCommands.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">

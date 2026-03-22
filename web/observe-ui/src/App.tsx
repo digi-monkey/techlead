@@ -5,28 +5,13 @@ import { extractBootstrapParams, readAuthQuery } from './lib/auth'
 import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
-import { useSessionPolling, type SessionSyncState } from './hooks/useSessionPolling'
+import { useSessionPolling } from './hooks/useSessionPolling'
 import { SessionView } from './views/SessionView'
 import type { JsonValue, StatusTone } from './types'
 
 type ConsolePhase = 'connecting' | 'ready' | 'degraded' | 'expired'
 type SessionProvider = 'codex' | 'opencode'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
-
-function safeNow() {
-  return Date.now()
-}
-
-function syncHintLabel(sync: SessionSyncState): string {
-  if (sync.lastOkAt == null) {
-    if (sync.consecutiveErrors === 0) return 'initializing'
-    return `reconnecting (${sync.consecutiveErrors})`
-  }
-  const sec = Math.max(0, Math.floor((safeNow() - sync.lastOkAt) / 1000))
-  if (sync.consecutiveErrors === 0) return `healthy · ${sec}s ago`
-  if (sync.consecutiveErrors < 3) return `unstable · ${sec}s ago`
-  return `degraded · ${sec}s ago`
-}
 
 export default function App() {
   const query = useMemo(() => readAuthQuery(window.location.search), [])
@@ -110,7 +95,6 @@ export default function App() {
   })
 
   const isSessionBusy = pendingCommands.length > 0 || sessionStatus === 'processing'
-  const sessionSyncHint = useMemo(() => syncHintLabel(sessionSync), [sessionSync])
 
   const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
     applyStatus('connecting', 'idle', 'exchanging QR ticket...')
@@ -335,7 +319,7 @@ export default function App() {
           isSessionBusy={isSessionBusy}
           isEndingSession={isEndingSession}
           pendingCommands={pendingCommands}
-          syncHint={sessionSyncHint}
+          syncState={sessionSync}
           onSessionInputChange={setSessionInput}
           onSessionProviderChange={setSessionProvider}
           onStartSession={startSession}
