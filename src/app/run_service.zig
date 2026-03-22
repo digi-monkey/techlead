@@ -6,6 +6,7 @@ const utils = @import("../utils.zig");
 const control_service = @import("control_service.zig");
 const event_store = @import("../storage/store.zig");
 const sqlite_task_store = @import("../storage/sqlite_task_store.zig");
+const sqlite_runtime_store = @import("../storage/sqlite_runtime_store.zig");
 const opencode_provider = @import("../providers/opencode_provider.zig");
 const codex_cli_provider = @import("../providers/codex_cli_provider.zig");
 const claude_cli_provider = @import("../providers/claude_cli_provider.zig");
@@ -362,17 +363,13 @@ fn appendRunEvent(
 }
 
 fn writeRunState(allocator: std.mem.Allocator, cfg: config.Config, run_id: []const u8, mode: ExecutionMode, status: []const u8) void {
-    const state_path = std.fs.path.join(allocator, &[_][]const u8{ cfg.work_dir, ".techlead/run_state.json" }) catch return;
-    defer allocator.free(state_path);
+    var store = sqlite_runtime_store.SqliteRuntimeStore.init(allocator, cfg.work_dir) catch |err| {
+        ui.logWarn("打开 runtime store 失败: {any}", .{err});
+        return;
+    };
+    defer store.deinit();
 
-    const body = std.fmt.allocPrint(
-        allocator,
-        "{{\"run_id\":{f},\"mode\":{f},\"status\":{f},\"updated_at\":{d}}}\n",
-        .{ std.json.fmt(run_id, .{}), std.json.fmt(@tagName(mode), .{}), std.json.fmt(status, .{}), std.time.timestamp() },
-    ) catch return;
-    defer allocator.free(body);
-
-    std.fs.cwd().writeFile(.{ .sub_path = state_path, .data = body }) catch |err| {
+    store.upsertRunState(run_id, @tagName(mode), status, std.time.timestamp()) catch |err| {
         ui.logWarn("写入 run_state 失败: {any}", .{err});
     };
 }

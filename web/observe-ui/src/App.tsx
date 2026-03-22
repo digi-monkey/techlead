@@ -60,7 +60,8 @@ export default function App() {
     reconcileFromSessionState,
   })
 
-  const isSessionBusy = pendingCommands.length > 0 || sessionStatus === 'processing'
+  const hasSession = typeof sessionState.session_id === 'string' && sessionState.session_id.trim().length > 0
+  const isSessionBusy = sessionStatus === 'processing' || (hasSession && pendingCommands.length > 0)
 
   const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
     try {
@@ -103,6 +104,8 @@ export default function App() {
   }, [])
 
   const startSession = useCallback(async () => {
+    // Starting a new session should not replay stale local outbox items from old bugs/reloads.
+    clearOutbox()
     try {
       const requestId = newRequestId()
       await apiRequest<JsonValue>('/sessions/start', controlAuth, {
@@ -143,6 +146,12 @@ export default function App() {
   }, [enqueueMessage])
 
   useEffect(() => {
+    if (sessionState.error === 'session_not_found') {
+      clearOutbox()
+    }
+  }, [clearOutbox, sessionState.error])
+
+  useEffect(() => {
     const removeQuerySecrets = () => {
       if (query.hasSensitive) {
         history.replaceState({}, '', location.pathname)
@@ -165,6 +174,7 @@ export default function App() {
 
   useOutboxDispatcher({
     controlAuth,
+    hasSession,
     outboxRef,
     sessionStatus,
     sessionInFlightRequestId,

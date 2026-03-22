@@ -1,6 +1,7 @@
 const std = @import("std");
 const config = @import("../config.zig");
 const ui = @import("../ui.zig");
+const sqlite_runtime_store = @import("../storage/sqlite_runtime_store.zig");
 
 pub const Action = enum {
     none,
@@ -26,52 +27,32 @@ pub const Command = struct {
     }
 };
 
-fn getControlPath(allocator: std.mem.Allocator, work_dir: []const u8) ![]u8 {
-    return std.fs.path.join(allocator, &[_][]const u8{ work_dir, ".techlead/control.json" });
-}
-
 pub fn consumeControlCommand(allocator: std.mem.Allocator, cfg: config.Config) !Command {
-    const control_path = try getControlPath(allocator, cfg.work_dir);
-    defer allocator.free(control_path);
+    var store = try sqlite_runtime_store.SqliteRuntimeStore.init(allocator, cfg.work_dir);
+    defer store.deinit();
 
-    const content = std.fs.cwd().readFileAlloc(allocator, control_path, 1024 * 1024) catch |err| switch (err) {
-        error.FileNotFound => return .{},
-        else => return err,
-    };
-    defer allocator.free(content);
+    const rec = try store.consumeControl();
+    if (rec == null) return .{};
+    var row = rec.?;
+    defer row.deinit(store.allocator);
 
-    if (std.mem.trim(u8, content, " \t\r\n").len == 0) return .{};
-
-    const FileControl = struct {
-        action: []const u8 = "none",
-        prompt: ?[]const u8 = null,
-        operator: ?[]const u8 = null,
-        request_id: ?[]const u8 = null,
-        source: ?[]const u8 = null,
-    };
-    const parsed = std.json.parseFromSlice(FileControl, allocator, content, .{}) catch return .{};
-    defer parsed.deinit();
-
-    const action = if (std.mem.eql(u8, parsed.value.action, "pause"))
+    const action = if (std.mem.eql(u8, row.action, "pause"))
         Action.pause
-    else if (std.mem.eql(u8, parsed.value.action, "resume"))
+    else if (std.mem.eql(u8, row.action, "resume"))
         Action.resume_run
-    else if (std.mem.eql(u8, parsed.value.action, "abort"))
+    else if (std.mem.eql(u8, row.action, "abort"))
         Action.abort
-    else if (std.mem.eql(u8, parsed.value.action, "inject_prompt"))
+    else if (std.mem.eql(u8, row.action, "inject_prompt"))
         Action.inject_prompt
     else
         Action.none;
 
-    // one-shot consume
-    try std.fs.cwd().writeFile(.{ .sub_path = control_path, .data = "{}\n" });
-
     return .{
         .action = action,
-        .prompt = if (parsed.value.prompt) |p| try allocator.dupe(u8, p) else null,
-        .operator = if (parsed.value.operator) |p| try allocator.dupe(u8, p) else null,
-        .request_id = if (parsed.value.request_id) |p| try allocator.dupe(u8, p) else null,
-        .source = if (parsed.value.source) |p| try allocator.dupe(u8, p) else null,
+        .prompt = if (row.prompt) |p| try allocator.dupe(u8, p) else null,
+        .operator = if (row.operator) |p| try allocator.dupe(u8, p) else null,
+        .request_id = if (row.request_id) |p| try allocator.dupe(u8, p) else null,
+        .source = if (row.source) |p| try allocator.dupe(u8, p) else null,
     };
 }
 
@@ -84,28 +65,9 @@ pub fn writeControlCommand(
     source: []const u8,
     request_id: []const u8,
 ) !void {
-    const control_path = try getControlPath(allocator, cfg.work_dir);
-    defer allocator.free(control_path);
-
-    const dir_path = try std.fs.path.join(allocator, &[_][]const u8{ cfg.work_dir, ".techlead" });
-    defer allocator.free(dir_path);
-    try std.fs.cwd().makePath(dir_path);
-
-    const body = if (prompt) |p|
-        try std.fmt.allocPrint(
-            allocator,
-            "{{\"action\":\"{s}\",\"prompt\":{f},\"operator\":{f},\"source\":{f},\"request_id\":{f}}}\n",
-            .{ action, std.json.fmt(p, .{}), std.json.fmt(operator, .{}), std.json.fmt(source, .{}), std.json.fmt(request_id, .{}) },
-        )
-    else
-        try std.fmt.allocPrint(
-            allocator,
-            "{{\"action\":\"{s}\",\"operator\":{f},\"source\":{f},\"request_id\":{f}}}\n",
-            .{ action, std.json.fmt(operator, .{}), std.json.fmt(source, .{}), std.json.fmt(request_id, .{}) },
-        );
-    defer allocator.free(body);
-
-    try std.fs.cwd().writeFile(.{ .sub_path = control_path, .data = body });
+    var store = try sqlite_runtime_store.SqliteRuntimeStore.init(allocator, cfg.work_dir);
+    defer store.deinit();
+    try store.enqueueControl(action, prompt, operator, source, request_id);
 }
 
 pub fn sendControl(allocator: std.mem.Allocator, target_dir: []const u8, action: []const u8, prompt: ?[]const u8) !void {

@@ -211,7 +211,7 @@ setup_scenario_env() {
   "work_dir": "replace-me",
   "log_dir": ".techlead/iteration-logs",
   "model": "",
-  "agent": "Prometheus",
+  "agent": "Sisyphus",
   "main_branch": "master",
   "max_branches": 10
 }

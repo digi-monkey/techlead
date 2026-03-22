@@ -46,7 +46,7 @@ test "init: techlead.json has expected structure" {
     // - work_dir: absolute path to target directory
     // - log_dir: ".techlead/iteration-logs"
     // - model: "" (empty string)
-    // - agent: "Prometheus"
+    // - agent: "Sisyphus"
     // - main_branch: "master"
     // - max_branches: 10
     // Format: JSON with 2-space indentation, trailing newline
@@ -174,7 +174,7 @@ test "init: helper - verify JSON structure" {
         \\  "work_dir": "/absolute/path",
         \\  "log_dir": ".techlead/iteration-logs",
         \\  "model": "",
-        \\  "agent": "Prometheus",
+        \\  "agent": "Sisyphus",
         \\  "main_branch": "master",
         \\  "max_branches": 10
         \\}

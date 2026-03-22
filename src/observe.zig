@@ -8,6 +8,7 @@ const runner = @import("runner.zig");
 const replay = @import("storage/replay.zig");
 const task_store = @import("storage/task_store.zig");
 const sqlite_task_store = @import("storage/sqlite_task_store.zig");
+const sqlite_runtime_store = @import("storage/sqlite_runtime_store.zig");
 const session_service = @import("app/session_service.zig");
 
 const Allocator = std.mem.Allocator;
@@ -944,7 +945,6 @@ fn isDuplicateRequestId(ctx: *ServerContext, request_id: []const u8) bool {
 
 fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []const u8) !void {
     var store = sqlite_task_store.SqliteTaskStore.init(ctx.allocator, ctx.target_dir) catch |err| switch (err) {
-        error.LegacyTasksFileDetected => return respondJson(req, .conflict, "{\"error\":\"legacy_tasks_json_detected\",\"hint\":\"run scripts/migrate-tasks-to-sqlite.sh\"}"),
         error.StoreNotAvailable => return respondJson(req, .service_unavailable, "{\"error\":\"sqlite_unavailable\"}"),
         else => return respondJson(req, .bad_request, "{\"error\":\"task_store_init_failed\"}"),
     };
@@ -1186,18 +1186,19 @@ fn requestedRunId(target: []const u8) ?[]const u8 {
 }
 
 fn readRunState(allocator: Allocator, target_dir: []const u8) !RunState {
-    const path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, ".techlead/run_state.json" });
-    defer allocator.free(path);
+    var store = try sqlite_runtime_store.SqliteRuntimeStore.init(allocator, target_dir);
+    defer store.deinit();
 
-    const raw = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
-    defer allocator.free(raw);
-    const parsed = try std.json.parseFromSlice(RunState, allocator, raw, .{});
-    defer parsed.deinit();
+    const state = try store.getRunState();
+    if (state == null) return error.FileNotFound;
+    var row = state.?;
+    defer row.deinit(store.allocator);
+
     return .{
-        .run_id = try allocator.dupe(u8, parsed.value.run_id),
-        .mode = try allocator.dupe(u8, parsed.value.mode),
-        .status = try allocator.dupe(u8, parsed.value.status),
-        .updated_at = parsed.value.updated_at,
+        .run_id = try allocator.dupe(u8, row.run_id),
+        .mode = try allocator.dupe(u8, row.mode),
+        .status = try allocator.dupe(u8, row.status),
+        .updated_at = row.updated_at,
     };
 }
 
@@ -1495,47 +1496,20 @@ fn ensureTokens(allocator: Allocator, target_dir: []const u8) !TokenFile {
 }
 
 fn ensureTokensInternal(allocator: Allocator, target_dir: []const u8, force_rotate: bool) !TokenFile {
-    const techlead_dir = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, ".techlead" });
-    defer allocator.free(techlead_dir);
-    try std.fs.cwd().makePath(techlead_dir);
+    var store = try sqlite_runtime_store.SqliteRuntimeStore.init(allocator, target_dir);
+    defer store.deinit();
 
-    const token_path = try std.fs.path.join(allocator, &[_][]const u8{ target_dir, ".techlead/observe_tokens.json" });
-    defer allocator.free(token_path);
-
-    const existing = std.fs.cwd().readFileAlloc(allocator, token_path, 4096) catch |err| switch (err) {
-        error.FileNotFound => null,
-        else => return err,
-    };
-    if (existing) |raw| {
-        defer allocator.free(raw);
-        if (!force_rotate) {
-            const parsed = std.json.parseFromSlice(TokenFile, allocator, raw, .{}) catch null;
-            if (parsed) |p| {
-                defer p.deinit();
-                if (p.value.observe_expires_at > std.time.timestamp() and p.value.control_expires_at > std.time.timestamp()) {
-                    return .{
-                        .observe_token = try allocator.dupe(u8, p.value.observe_token),
-                        .control_token = try allocator.dupe(u8, p.value.control_token),
-                        .observe_expires_at = p.value.observe_expires_at,
-                        .control_expires_at = p.value.control_expires_at,
-                    };
-                }
-            } else {
-                const LegacyTokenFile = struct {
-                    observe_token: []const u8,
-                    control_token: []const u8,
+    if (!force_rotate) {
+        if (try store.getTokens()) |existing| {
+            var row = existing;
+            defer row.deinit(store.allocator);
+            if (row.observe_expires_at > std.time.timestamp() and row.control_expires_at > std.time.timestamp()) {
+                return .{
+                    .observe_token = try allocator.dupe(u8, row.observe_token),
+                    .control_token = try allocator.dupe(u8, row.control_token),
+                    .observe_expires_at = row.observe_expires_at,
+                    .control_expires_at = row.control_expires_at,
                 };
-                const legacy = std.json.parseFromSlice(LegacyTokenFile, allocator, raw, .{}) catch null;
-                if (legacy) |p| {
-                    defer p.deinit();
-                    const now = std.time.timestamp();
-                    return .{
-                        .observe_token = try allocator.dupe(u8, p.value.observe_token),
-                        .control_token = try allocator.dupe(u8, p.value.control_token),
-                        .observe_expires_at = now + TOKEN_TTL_SECONDS,
-                        .control_expires_at = now + TOKEN_TTL_SECONDS,
-                    };
-                }
             }
         }
     }
@@ -1549,13 +1523,7 @@ fn ensureTokensInternal(allocator: Allocator, target_dir: []const u8, force_rota
     const observe_expires_at = now + TOKEN_TTL_SECONDS;
     const control_expires_at = now + TOKEN_TTL_SECONDS;
 
-    const body = try std.fmt.allocPrint(
-        allocator,
-        "{{\"observe_token\":{f},\"control_token\":{f},\"observe_expires_at\":{d},\"control_expires_at\":{d}}}\n",
-        .{ std.json.fmt(observe, .{}), std.json.fmt(control, .{}), observe_expires_at, control_expires_at },
-    );
-    defer allocator.free(body);
-    try std.fs.cwd().writeFile(.{ .sub_path = token_path, .data = body });
+    try store.upsertTokens(observe, control, observe_expires_at, control_expires_at);
 
     return .{
         .observe_token = try allocator.dupe(u8, observe),

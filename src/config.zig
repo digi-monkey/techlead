@@ -173,7 +173,7 @@ pub fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const
         .work_dir = abs_work_dir,
         .log_dir = DEFAULT_LOG_DIR,
         .model = "",
-        .agent = "Prometheus",
+        .agent = "Sisyphus",
         .provider = "opencode",
         .main_branch = "master",
         .max_branches = 10,

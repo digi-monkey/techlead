@@ -1,9 +1,7 @@
 const std = @import("std");
 
-const ui = @import("ui.zig");
 const config = @import("config.zig");
 const event_store = @import("storage/store.zig");
-const jsonl_store = @import("storage/jsonl_store.zig");
 const sqlite_store = @import("storage/sqlite_store.zig");
 const control_service = @import("app/control_service.zig");
 const run_service = @import("app/run_service.zig");
@@ -16,7 +14,6 @@ pub const RunMode = enum {
     optimize,
     pool,
 };
-
 
 /// Validates the runtime environment for the run command.
 pub fn validateRunEnvironment(cfg: config.Config, allocator: Allocator) !void {
@@ -37,18 +34,10 @@ pub fn runCommand(cfg: config.Config, allocator: Allocator) !void {
 pub fn runCommandWithMode(cfg: config.Config, allocator: Allocator, mode: RunMode) !void {
     try validateRunEnvironment(cfg, allocator);
 
-    var jsonl = try jsonl_store.JsonlEventStore.init(allocator, cfg.work_dir, cfg.log_dir);
-    defer jsonl.deinit();
-    const primary_es = jsonl.asEventStore();
-
-    var sqlite: ?sqlite_store.SqliteEventStore = null;
-    if (sqlite_store.SqliteEventStore.init(allocator, cfg.work_dir, cfg.log_dir)) |s| {
-        sqlite = s;
-    } else |err| {
-        ui.logWarn("SQLite 事件存储不可用，继续使用 JSONL: {any}", .{err});
-    }
-    const mirror_es: ?event_store.EventStore = if (sqlite) |*s| s.asEventStore() else null;
-    defer if (sqlite) |*s| s.deinit();
+    var sqlite = try sqlite_store.SqliteEventStore.init(allocator, cfg.work_dir, cfg.log_dir);
+    defer sqlite.deinit();
+    const primary_es: event_store.EventStore = sqlite.asEventStore();
+    const mirror_es: ?event_store.EventStore = null;
 
     const run_id = try std.fmt.allocPrint(allocator, "run-{d}", .{std.time.timestamp()});
     defer allocator.free(run_id);

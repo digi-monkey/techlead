@@ -13,12 +13,16 @@ type SessionSendResp = {
 
 type UseOutboxDispatcherOptions = {
   controlAuth?: string
+  hasSession: boolean
   outboxRef: MutableRefObject<OutboxItem[]>
   sessionStatus: string
   sessionInFlightRequestId: string
   updateOutbox: UpdateOutboxFn
   onStatusUpdate?: (tone: StatusTone, message: string) => void
 }
+
+const STALE_SENDING_RETRY_MS = 10_000
+const STALE_PROCESSING_RETRY_MS = 15_000
 
 function nowMs() {
   return Date.now()
@@ -35,6 +39,7 @@ function summarizeApiError(err: unknown): string {
 export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
   const {
     controlAuth,
+    hasSession,
     outboxRef,
     sessionStatus,
     sessionInFlightRequestId,
@@ -49,6 +54,11 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
     const loop = async () => {
       if (cancelled) return
 
+      if (!hasSession) {
+        timer = window.setTimeout(() => void loop(), 1200)
+        return
+      }
+
       const items = outboxRef.current.filter((item) => item.state !== 'completed')
       if (items.length === 0) {
         timer = window.setTimeout(() => void loop(), 1200)
@@ -60,6 +70,11 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
         if (item.state === 'queued') return true
         if (item.state === 'failed') return true
         if (item.state === 'retry_wait') return !item.nextRetryAt || item.nextRetryAt <= now
+        if (item.state === 'sending') return now - item.updatedAt >= STALE_SENDING_RETRY_MS
+        if (item.state === 'processing') {
+          const stillInFlight = sessionStatus === 'processing' && sessionInFlightRequestId === item.requestId
+          return !stillInFlight && now - item.updatedAt >= STALE_PROCESSING_RETRY_MS
+        }
         return false
       })
 
@@ -150,5 +165,5 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [controlAuth, onStatusUpdate, outboxRef, sessionInFlightRequestId, sessionStatus, updateOutbox])
+  }, [controlAuth, hasSession, onStatusUpdate, outboxRef, sessionInFlightRequestId, sessionStatus, updateOutbox])
 }

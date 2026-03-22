@@ -44,6 +44,13 @@ function nowMs() {
   return Date.now()
 }
 
+function recoverStaleState(state: OutboxState): OutboxState {
+  // Local storage may retain transient states from old crashes/bugs.
+  // Recover them into retryable states so dispatcher can continue.
+  if (state === 'sending' || state === 'processing') return 'retry_wait'
+  return state
+}
+
 function sanitizeOutbox(raw: unknown): OutboxItem[] {
   if (!Array.isArray(raw)) return []
   const items: OutboxItem[] = []
@@ -59,15 +66,28 @@ function sanitizeOutbox(raw: unknown): OutboxItem[] {
     if (!requestId || !text) continue
     if (!['queued', 'sending', 'processing', 'retry_wait', 'failed', 'completed'].includes(state)) continue
 
+    const normalizedState = recoverStaleState(state as OutboxState)
     items.push({
       requestId,
       text,
-      state: state as OutboxState,
+      state: normalizedState,
       attempts,
       createdAt,
       updatedAt,
-      nextRetryAt: typeof rec.nextRetryAt === 'number' ? rec.nextRetryAt : undefined,
-      lastError: typeof rec.lastError === 'string' ? rec.lastError : undefined,
+      nextRetryAt:
+        normalizedState === 'retry_wait'
+          ? typeof rec.nextRetryAt === 'number'
+            ? rec.nextRetryAt
+            : nowMs()
+          : typeof rec.nextRetryAt === 'number'
+            ? rec.nextRetryAt
+            : undefined,
+      lastError:
+        normalizedState === 'retry_wait' && (state === 'sending' || state === 'processing')
+          ? 'recovered from stale local state, retrying'
+          : typeof rec.lastError === 'string'
+            ? rec.lastError
+            : undefined,
     })
   }
   return items.slice(-MAX_OUTBOX_ITEMS)

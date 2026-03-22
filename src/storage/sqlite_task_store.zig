@@ -38,16 +38,6 @@ pub const SqliteTaskStore = struct {
     closed: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, work_dir: []const u8) !SqliteTaskStore {
-        const legacy_path = try std.fs.path.join(allocator, &[_][]const u8{ work_dir, ".techlead/tasks.json" });
-        defer allocator.free(legacy_path);
-        std.fs.cwd().access(legacy_path, .{}) catch |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        };
-        if (std.fs.cwd().access(legacy_path, .{})) |_| {
-            return error.LegacyTasksFileDetected;
-        } else |_| {}
-
         var dylib = openSqliteDynLib() catch return error.StoreNotAvailable;
         errdefer dylib.close();
 

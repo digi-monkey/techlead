@@ -47,7 +47,7 @@ fn buildDummyConfig(allocator: std.mem.Allocator) !config.Config {
         .work_dir = try allocator.dupe(u8, "."),
         .log_dir = try allocator.dupe(u8, ".techlead/iteration-logs"),
         .model = try allocator.dupe(u8, ""),
-        .agent = try allocator.dupe(u8, "Prometheus"),
+        .agent = try allocator.dupe(u8, "Sisyphus"),
         .provider = try allocator.dupe(u8, "opencode"),
         .main_branch = try allocator.dupe(u8, "master"),
         .max_branches = 10,

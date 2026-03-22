@@ -2,30 +2,9 @@ const std = @import("std");
 const config = @import("../config.zig");
 const ui = @import("../ui.zig");
 const utils = @import("../utils.zig");
+const sqlite_session_store = @import("../storage/sqlite_session_store.zig");
 
 const Allocator = std.mem.Allocator;
-
-pub const Message = struct {
-    id: u64 = 0,
-    role: []const u8,
-    content: []const u8,
-    ts: i64,
-    request_id: ?[]const u8 = null,
-};
-
-pub const SessionFile = struct {
-    session_id: []const u8,
-    status: []const u8,
-    provider: []const u8,
-    model: []const u8,
-    provider_session_id: ?[]const u8 = null,
-    last_message_id: u64 = 0,
-    in_flight_request_id: ?[]const u8 = null,
-    last_error: ?[]const u8 = null,
-    created_at: i64,
-    updated_at: i64,
-    messages: []Message,
-};
 
 pub const SendMessageResult = struct {
     status: []const u8,
@@ -44,41 +23,29 @@ pub const EndSessionResult = struct {
     status: []const u8,
 };
 
-const LoadedSession = struct {
-    allocator: Allocator,
-    path: []u8,
-    raw: []u8,
-    parsed: std.json.Parsed(SessionFile),
+// Global SQLite store instance (lazy initialization)
+var g_store: ?sqlite_session_store.SqliteSessionStore = null;
+var g_store_mutex: std.Thread.Mutex = .{};
+var g_session_ops_mutex: std.Thread.Mutex = .{};
 
-    fn deinit(self: *LoadedSession) void {
-        self.parsed.deinit();
-        self.allocator.free(self.raw);
-        self.allocator.free(self.path);
+fn getStore(allocator: Allocator, target_dir: []const u8) !*sqlite_session_store.SqliteSessionStore {
+    g_store_mutex.lock();
+    defer g_store_mutex.unlock();
+
+    if (g_store == null) {
+        g_store = try sqlite_session_store.SqliteSessionStore.init(allocator, target_dir);
     }
-};
-
-fn getSessionPath(allocator: Allocator, target_dir: []const u8) ![]u8 {
-    return std.fs.path.join(allocator, &[_][]const u8{ target_dir, ".techlead/session_state.json" });
+    return &g_store.?;
 }
 
-fn loadSession(allocator: Allocator, target_dir: []const u8) !LoadedSession {
-    const path = try getSessionPath(allocator, target_dir);
-    const raw = try std.fs.cwd().readFileAlloc(allocator, path, 8 * 1024 * 1024);
-    const parsed = try std.json.parseFromSlice(SessionFile, allocator, raw, .{});
-    return .{
-        .allocator = allocator,
-        .path = path,
-        .raw = raw,
-        .parsed = parsed,
-    };
-}
+pub fn deinitStore() void {
+    g_store_mutex.lock();
+    defer g_store_mutex.unlock();
 
-fn saveSession(allocator: Allocator, target_dir: []const u8, value: SessionFile) !void {
-    const path = try getSessionPath(allocator, target_dir);
-    defer allocator.free(path);
-    const body = try std.fmt.allocPrint(allocator, "{f}\n", .{std.json.fmt(value, .{ .whitespace = .indent_2 })});
-    defer allocator.free(body);
-    try std.fs.cwd().writeFile(.{ .sub_path = path, .data = body });
+    if (g_store) |*store| {
+        store.deinit();
+        g_store = null;
+    }
 }
 
 pub fn startSession(
@@ -98,56 +65,38 @@ pub fn startSession(
     else
         return error.ProviderNotSupportedForSession;
     const model = model_override orelse cfg.model;
-    const now = std.time.timestamp();
-    const session_id = try std.fmt.allocPrint(allocator, "sess-{d}", .{now});
-    errdefer allocator.free(session_id);
 
-    const empty_messages = &[_]Message{};
-    const session = SessionFile{
-        .session_id = session_id,
-        .status = "active",
-        .provider = provider,
-        .model = model,
-        .provider_session_id = null,
-        .last_message_id = 0,
-        .in_flight_request_id = null,
-        .last_error = null,
-        .created_at = now,
-        .updated_at = now,
-        .messages = empty_messages,
-    };
-    try saveSession(allocator, target_dir, session);
-    return session_id;
+    g_session_ops_mutex.lock();
+    defer g_session_ops_mutex.unlock();
+
+    var store = try getStore(allocator, target_dir);
+    return store.createSession(provider, model);
 }
 
 pub fn getSessionStateJson(allocator: Allocator, target_dir: []const u8) ![]u8 {
-    const path = try getSessionPath(allocator, target_dir);
-    defer allocator.free(path);
-    return std.fs.cwd().readFileAlloc(allocator, path, 8 * 1024 * 1024);
+    var store = try getStore(allocator, target_dir);
+    const maybe_session = try store.getCurrentSession();
+    if (maybe_session == null) return error.FileNotFound;
+
+    var session = maybe_session.?;
+    defer session.deinit(store.allocator);
+
+    return store.getSessionStateJson(allocator, session.session_id);
 }
 
 pub fn endSession(allocator: Allocator, target_dir: []const u8) !EndSessionResult {
-    var loaded = loadSession(allocator, target_dir) catch |err| switch (err) {
-        error.FileNotFound => return .{ .status = "not_found" },
-        else => return err,
-    };
-    defer loaded.deinit();
+    g_session_ops_mutex.lock();
+    defer g_session_ops_mutex.unlock();
 
-    const now = std.time.timestamp();
-    const ended = SessionFile{
-        .session_id = loaded.parsed.value.session_id,
-        .status = "ended",
-        .provider = loaded.parsed.value.provider,
-        .model = loaded.parsed.value.model,
-        .provider_session_id = loaded.parsed.value.provider_session_id,
-        .last_message_id = computeLastMessageId(loaded.parsed.value),
-        .in_flight_request_id = null,
-        .last_error = null,
-        .created_at = loaded.parsed.value.created_at,
-        .updated_at = now,
-        .messages = loaded.parsed.value.messages,
-    };
-    try saveSession(allocator, target_dir, ended);
+    var store = try getStore(allocator, target_dir);
+    const maybe_session = try store.getCurrentSession();
+    if (maybe_session == null) return .{ .status = "not_found" };
+
+    var session = maybe_session.?;
+    defer session.deinit(store.allocator);
+
+    try store.endSession(session.session_id);
+    try store.setLastError(session.session_id, null);
     return .{ .status = "ended" };
 }
 
@@ -164,26 +113,26 @@ pub fn sendMessage(allocator: Allocator, target_dir: []const u8, text: []const u
 }
 
 pub fn enqueueMessage(allocator: Allocator, target_dir: []const u8, text: []const u8, request_id: []const u8) !EnqueueMessageResult {
-    var loaded = try loadSession(allocator, target_dir);
-    defer loaded.deinit();
+    g_session_ops_mutex.lock();
+    defer g_session_ops_mutex.unlock();
+
+    var store = try getStore(allocator, target_dir);
+    const maybe_session = try store.getCurrentSession();
+    if (maybe_session == null) return error.SessionNotFound;
+    var session = maybe_session.?;
+    defer session.deinit(store.allocator);
 
     const rid = std.mem.trim(u8, request_id, " \t\r\n");
     if (rid.len == 0) return error.RequestIdRequired;
-    if (!isSessionWritableStatus(loaded.parsed.value.status)) return error.SessionNotActive;
-    if (std.mem.eql(u8, loaded.parsed.value.status, "processing")) {
-        if (loaded.parsed.value.in_flight_request_id) |in_flight| {
+    if (!isSessionWritableStatus(session.status)) return error.SessionNotActive;
+    if (std.mem.eql(u8, session.status, "processing")) {
+        if (session.in_flight_request_id) |in_flight| {
             if (!std.mem.eql(u8, in_flight, rid)) return error.SessionBusy;
         }
     }
 
-    var cfg = try config.loadConfigFromJson(allocator, target_dir);
-    defer config.deinitConfig(allocator, &cfg);
-
-    var msgs: std.ArrayList(Message) = .empty;
-    defer msgs.deinit(allocator);
-    try msgs.appendSlice(allocator, loaded.parsed.value.messages);
-
-    if (findReplyByRequestId(msgs.items, rid)) |reply| {
+    if (try store.findReplyByRequestId(session.session_id, rid)) |reply| {
+        defer store.allocator.free(reply);
         return .{
             .status = "completed",
             .deduplicated = true,
@@ -191,7 +140,7 @@ pub fn enqueueMessage(allocator: Allocator, target_dir: []const u8, text: []cons
             .accepted = false,
         };
     }
-    if (isRequestInFlight(loaded.parsed.value, rid)) {
+    if (std.mem.eql(u8, session.status, "processing") and session.in_flight_request_id != null and std.mem.eql(u8, session.in_flight_request_id.?, rid)) {
         return .{
             .status = "processing",
             .deduplicated = true,
@@ -200,31 +149,10 @@ pub fn enqueueMessage(allocator: Allocator, target_dir: []const u8, text: []cons
         };
     }
 
-    var last_message_id = computeLastMessageId(loaded.parsed.value);
-    last_message_id += 1;
-    const now = std.time.timestamp();
-    try msgs.append(allocator, .{
-        .id = last_message_id,
-        .role = "user",
-        .content = text,
-        .ts = now,
-        .request_id = rid,
-    });
-
-    const processing_state = SessionFile{
-        .session_id = loaded.parsed.value.session_id,
-        .status = "processing",
-        .provider = loaded.parsed.value.provider,
-        .model = loaded.parsed.value.model,
-        .provider_session_id = loaded.parsed.value.provider_session_id,
-        .last_message_id = last_message_id,
-        .in_flight_request_id = rid,
-        .last_error = null,
-        .created_at = loaded.parsed.value.created_at,
-        .updated_at = now,
-        .messages = msgs.items,
-    };
-    try saveSession(allocator, target_dir, processing_state);
+    _ = try store.addMessage(session.session_id, "user", text, rid);
+    try store.updateSessionStatus(session.session_id, "processing");
+    try store.setInFlightRequestId(session.session_id, rid);
+    try store.setLastError(session.session_id, null);
 
     return .{
         .status = "processing",
@@ -235,13 +163,20 @@ pub fn enqueueMessage(allocator: Allocator, target_dir: []const u8, text: []cons
 }
 
 pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, request_id: []const u8) !SendMessageResult {
-    var loaded = try loadSession(allocator, target_dir);
-    defer loaded.deinit();
+    g_session_ops_mutex.lock();
+    defer g_session_ops_mutex.unlock();
+
+    var store = try getStore(allocator, target_dir);
+    const maybe_session = try store.getCurrentSession();
+    if (maybe_session == null) return error.SessionNotFound;
+    var session = maybe_session.?;
+    defer session.deinit(store.allocator);
 
     const rid = std.mem.trim(u8, request_id, " \t\r\n");
     if (rid.len == 0) return error.RequestIdRequired;
 
-    if (findReplyByRequestId(loaded.parsed.value.messages, rid)) |reply| {
+    if (try store.findReplyByRequestId(session.session_id, rid)) |reply| {
+        defer store.allocator.free(reply);
         return .{
             .status = "completed",
             .deduplicated = true,
@@ -249,89 +184,49 @@ pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, requ
         };
     }
 
-    if (!std.mem.eql(u8, loaded.parsed.value.status, "processing")) {
+    if (!std.mem.eql(u8, session.status, "processing")) {
         return error.SessionNotProcessing;
     }
-    const in_flight = loaded.parsed.value.in_flight_request_id orelse return error.SessionNotProcessing;
+    const in_flight = session.in_flight_request_id orelse return error.SessionNotProcessing;
     if (!std.mem.eql(u8, in_flight, rid)) return error.SessionBusy;
 
-    const user_text = findLatestUserMessageByRequestId(loaded.parsed.value.messages, rid) orelse return error.MessageNotFound;
+    const user_text = (try store.getLatestUserMessageByRequestId(session.session_id, rid)) orelse return error.MessageNotFound;
+    defer store.allocator.free(user_text);
 
     var cfg = try config.loadConfigFromJson(allocator, target_dir);
     defer config.deinitConfig(allocator, &cfg);
-
-    var msgs: std.ArrayList(Message) = .empty;
-    defer msgs.deinit(allocator);
-    try msgs.appendSlice(allocator, loaded.parsed.value.messages);
-
-    var last_message_id = computeLastMessageId(loaded.parsed.value);
 
     const assistant = generateAssistantReply(
         allocator,
         cfg.work_dir,
         cfg.opencode_url,
         cfg.agent,
-        loaded.parsed.value.provider,
-        loaded.parsed.value.model,
-        loaded.parsed.value.provider_session_id,
+        session.provider,
+        session.model,
+        session.provider_session_id,
         user_text,
     ) catch |err| {
         const err_name = @errorName(err);
         const fail_text = try std.fmt.allocPrint(allocator, "session send failed: {s}", .{err_name});
         defer allocator.free(fail_text);
 
-        last_message_id += 1;
-        try msgs.append(allocator, .{
-            .id = last_message_id,
-            .role = "system",
-            .content = fail_text,
-            .ts = std.time.timestamp(),
-            .request_id = rid,
-        });
-
-        const failed_state = SessionFile{
-            .session_id = loaded.parsed.value.session_id,
-            .status = "error",
-            .provider = loaded.parsed.value.provider,
-            .model = loaded.parsed.value.model,
-            .provider_session_id = loaded.parsed.value.provider_session_id,
-            .last_message_id = last_message_id,
-            .in_flight_request_id = null,
-            .last_error = err_name,
-            .created_at = loaded.parsed.value.created_at,
-            .updated_at = std.time.timestamp(),
-            .messages = msgs.items,
-        };
-        try saveSession(allocator, target_dir, failed_state);
+        _ = try store.addMessage(session.session_id, "system", fail_text, rid);
+        try store.updateSessionStatus(session.session_id, "error");
+        try store.setInFlightRequestId(session.session_id, null);
+        try store.setLastError(session.session_id, err_name);
         return err;
     };
+    errdefer allocator.free(assistant.reply);
     defer if (assistant.provider_session_id) |sid| allocator.free(sid);
 
-    last_message_id += 1;
-    const done_ts = std.time.timestamp();
-    try msgs.append(allocator, .{
-        .id = last_message_id,
-        .role = "assistant",
-        .content = assistant.reply,
-        .ts = done_ts,
-        .request_id = rid,
-    });
+    _ = try store.addMessage(session.session_id, "assistant", assistant.reply, rid);
+    if (assistant.provider_session_id) |sid| {
+        try store.setProviderSessionId(session.session_id, sid);
+    }
+    try store.updateSessionStatus(session.session_id, "active");
+    try store.setInFlightRequestId(session.session_id, null);
+    try store.setLastError(session.session_id, null);
 
-    const next_provider_session_id = assistant.provider_session_id orelse loaded.parsed.value.provider_session_id;
-    const updated = SessionFile{
-        .session_id = loaded.parsed.value.session_id,
-        .status = "active",
-        .provider = loaded.parsed.value.provider,
-        .model = loaded.parsed.value.model,
-        .provider_session_id = next_provider_session_id,
-        .last_message_id = last_message_id,
-        .in_flight_request_id = null,
-        .last_error = null,
-        .created_at = loaded.parsed.value.created_at,
-        .updated_at = done_ts,
-        .messages = msgs.items,
-    };
-    try saveSession(allocator, target_dir, updated);
     return .{
         .status = "completed",
         .deduplicated = false,
@@ -678,56 +573,6 @@ fn jsonValueAsString(v: std.json.Value) ?[]const u8 {
 
 fn isSessionWritableStatus(status: []const u8) bool {
     return std.mem.eql(u8, status, "active") or std.mem.eql(u8, status, "error") or std.mem.eql(u8, status, "processing");
-}
-
-fn isRequestInFlight(session: SessionFile, request_id: []const u8) bool {
-    if (!std.mem.eql(u8, session.status, "processing")) return false;
-    const in_flight = session.in_flight_request_id orelse return false;
-    return std.mem.eql(u8, in_flight, request_id);
-}
-
-fn computeLastMessageId(session: SessionFile) u64 {
-    var max_id = session.last_message_id;
-    for (session.messages) |m| {
-        if (m.id > max_id) max_id = m.id;
-    }
-    if (max_id == 0 and session.messages.len > 0) {
-        max_id = @intCast(session.messages.len);
-    }
-    return max_id;
-}
-
-fn findReplyByRequestId(messages: []const Message, request_id: []const u8) ?[]const u8 {
-    var seen_user = false;
-    for (messages) |m| {
-        if (m.request_id) |rid| {
-            if (std.mem.eql(u8, rid, request_id) and std.mem.eql(u8, m.role, "assistant")) {
-                return m.content;
-            }
-        }
-        if (!seen_user) {
-            if (std.mem.eql(u8, m.role, "user")) {
-                if (m.request_id) |rid| {
-                    if (std.mem.eql(u8, rid, request_id)) seen_user = true;
-                }
-            }
-            continue;
-        }
-        if (std.mem.eql(u8, m.role, "assistant")) return m.content;
-        if (std.mem.eql(u8, m.role, "user")) break;
-    }
-    return null;
-}
-
-fn findLatestUserMessageByRequestId(messages: []const Message, request_id: []const u8) ?[]const u8 {
-    var i: usize = messages.len;
-    while (i > 0) : (i -= 1) {
-        const m = messages[i - 1];
-        if (!std.mem.eql(u8, m.role, "user")) continue;
-        const rid = m.request_id orelse continue;
-        if (std.mem.eql(u8, rid, request_id)) return m.content;
-    }
-    return null;
 }
 
 fn extractThreadIdFromJsonl(stdout_jsonl: []const u8) ?[]const u8 {
