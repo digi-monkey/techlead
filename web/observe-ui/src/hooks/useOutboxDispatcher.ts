@@ -17,7 +17,7 @@ type UseOutboxDispatcherOptions = {
   sessionStatus: string
   sessionInFlightRequestId: string
   updateOutbox: UpdateOutboxFn
-  onStatusUpdate: (tone: StatusTone, message: string) => void
+  onStatusUpdate?: (tone: StatusTone, message: string) => void
 }
 
 function nowMs() {
@@ -101,7 +101,7 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
             nextRetryAt: undefined,
             lastError: undefined,
           }))
-          onStatusUpdate('ok', result.deduplicated ? 'message already completed (deduplicated)' : 'message completed')
+          onStatusUpdate?.('ok', result.deduplicated ? 'message already completed (deduplicated)' : 'message completed')
         } else if (status === 'processing') {
           updateOutbox(ready.requestId, (item) => ({
             ...item,
@@ -109,7 +109,7 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
             nextRetryAt: undefined,
             lastError: undefined,
           }))
-          onStatusUpdate('idle', result.deduplicated ? 'message already processing (deduplicated)' : 'message accepted, processing')
+          onStatusUpdate?.('idle', result.deduplicated ? 'message already processing (deduplicated)' : 'message accepted, processing')
         } else {
           const delay = nextRetryDelayMs(ready.attempts + 1)
           updateOutbox(ready.requestId, (item) => ({
@@ -129,7 +129,7 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
             nextRetryAt: nowMs() + 1200,
             lastError: 'session busy',
           }))
-          onStatusUpdate('warn', 'session busy, retry queued')
+          onStatusUpdate?.('warn', 'session busy, retry queued')
         } else {
           const delay = nextRetryDelayMs(ready.attempts + 1)
           updateOutbox(ready.requestId, (item) => ({
@@ -138,7 +138,7 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
             nextRetryAt: nowMs() + delay,
             lastError: summarizeApiError(err),
           }))
-          onStatusUpdate('warn', 'network unstable, retrying queued message')
+          onStatusUpdate?.('warn', 'network unstable, retrying queued message')
         }
       }
 

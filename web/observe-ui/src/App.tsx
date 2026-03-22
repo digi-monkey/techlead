@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { apiRequest, newRequestId, toneClass } from './lib/api'
+import { apiRequest, newRequestId } from './lib/api'
 import { extractBootstrapParams, readAuthQuery } from './lib/auth'
 import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
 import { useSessionPolling } from './hooks/useSessionPolling'
 import { SessionView } from './views/SessionView'
-import type { JsonValue, StatusTone } from './types'
+import type { JsonValue } from './types'
 
-type ConsolePhase = 'connecting' | 'ready' | 'degraded' | 'expired'
 type SessionProvider = 'codex' | 'opencode'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 
@@ -19,10 +18,6 @@ export default function App() {
   const [observeToken, setObserveToken] = useState(query.observe)
   const [controlToken, setControlToken] = useState(query.control)
   const [showTokenDebug, setShowTokenDebug] = useState(false)
-
-
-  const [statusText, setStatusText] = useState('connecting...')
-  const [statusTone, setStatusTone] = useState<StatusTone>('idle')
 
   const [showScanner, setShowScanner] = useState(false)
   const [sessionInput, setSessionInput] = useState('')
@@ -50,28 +45,6 @@ export default function App() {
     reconcileFromSessionState,
   } = useSessionOutbox()
 
-  const applyStatus = useCallback((_phase: ConsolePhase, tone: StatusTone, text: string) => {
-    setStatusTone(tone)
-    setStatusText(text)
-  }, [])
-
-  const onSessionStatusUpdate = useCallback((tone: StatusTone, message: string) => {
-    const phase: ConsolePhase = tone === 'warn' || tone === 'bad' ? 'degraded' : 'ready'
-    applyStatus(phase, tone, message)
-  }, [applyStatus])
-
-  const normalizeStatus = useCallback((message: string) => {
-    if (message.includes('401')) {
-      applyStatus('expired', 'warn', 'waiting for authorization, please scan again')
-      return
-    }
-    if (message.includes('429')) {
-      applyStatus('degraded', 'warn', 'rate limited, retry shortly')
-      return
-    }
-    applyStatus('degraded', 'bad', message)
-  }, [applyStatus])
-
   const {
     sessionState,
     sessionSync,
@@ -82,22 +55,11 @@ export default function App() {
     observeAuth,
     outboxRef,
     reconcileFromSessionState,
-    onRequireAuthorization: () => {
-      if (observeAuth || controlAuth) {
-        applyStatus('expired', 'warn', 'waiting for scan authorization')
-      } else {
-        applyStatus('connecting', 'idle', 'waiting for scan authorization')
-      }
-    },
-    onRefreshError: (message) => {
-      normalizeStatus(message)
-    },
   })
 
   const isSessionBusy = pendingCommands.length > 0 || sessionStatus === 'processing'
 
   const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
-    applyStatus('connecting', 'idle', 'exchanging QR ticket...')
     try {
       await apiRequest<JsonValue>('/auth/token/exchange', undefined, {
         method: 'POST',
@@ -105,18 +67,15 @@ export default function App() {
       })
       setObserveToken('')
       setControlToken('')
-      applyStatus('ready', 'ok', 'connected via QR')
       return true
     } catch (err) {
-      normalizeStatus(`exchange failed: ${(err as Error).message}`)
       return false
     }
-  }, [applyStatus, normalizeStatus])
+  }, [])
 
   const applyScannedPayload = useCallback(async (rawPayload: string, setScannerHint: (status: string) => void) => {
     const parsed = extractBootstrapParams(rawPayload)
     if (!parsed) {
-      applyStatus('degraded', 'warn', 'invalid QR payload')
       setScannerHint('invalid payload: missing bootstrap_id/code')
       return
     }
@@ -124,28 +83,26 @@ export default function App() {
     setScannerHint('ticket parsed, authorizing...')
     const ok = await exchangeBootstrapTicket(parsed.bootstrapId, parsed.code)
     setScannerHint(ok ? 'connected via scan' : 'authorization failed')
-  }, [applyStatus, exchangeBootstrapTicket])
+  }, [exchangeBootstrapTicket])
 
   const { scannerStatus, scannerActive, scannerVideoRef, startScanner, stopScanner } = useQrScanner({ onPayload: applyScannedPayload })
 
   function handleRetryCommand(requestId: string) {
     retryCommandNow(requestId)
-    applyStatus('ready', 'idle', 'retry queued')
   }
 
   async function startSession() {
     try {
       const requestId = newRequestId()
-      const result = await apiRequest<JsonValue>('/sessions/start', controlAuth, {
+      await apiRequest<JsonValue>('/sessions/start', controlAuth, {
         method: 'POST',
         headers: { 'X-Request-Id': requestId },
         body: JSON.stringify({ provider: sessionProvider, request_id: requestId }),
       })
       clearOutbox()
       setSessionInput('')
-      applyStatus('ready', 'ok', JSON.stringify(result))
-    } catch (err) {
-      normalizeStatus((err as Error).message)
+    } catch {
+      void 0
     }
   }
 
@@ -154,21 +111,15 @@ export default function App() {
     setIsEndingSession(true)
     try {
       const requestId = newRequestId()
-      const result = await apiRequest<JsonValue>('/sessions/current/end', controlAuth, {
+      await apiRequest<JsonValue>('/sessions/current/end', controlAuth, {
         method: 'POST',
         headers: { 'X-Request-Id': requestId },
         body: JSON.stringify({ request_id: requestId }),
       })
-      const status = String(result.status ?? 'ended')
       clearOutbox()
       setSessionInput('')
-      if (status === 'not_found') {
-        applyStatus('ready', 'warn', 'no active session')
-      } else {
-        applyStatus('ready', 'ok', 'session ended')
-      }
-    } catch (err) {
-      normalizeStatus((err as Error).message)
+    } catch {
+      void 0
     } finally {
       setIsEndingSession(false)
     }
@@ -176,12 +127,8 @@ export default function App() {
 
   function sendSessionMessage() {
     const result = enqueueMessage(sessionInput)
-    if (!result.ok) {
-      applyStatus('degraded', 'warn', result.reason)
-      return
-    }
+    if (!result.ok) return
     setSessionInput('')
-    applyStatus('ready', 'idle', 'message queued')
   }
 
   useEffect(() => {
@@ -194,11 +141,6 @@ export default function App() {
     const exchange = async () => {
       if (!query.bootstrapId || !query.code) {
         removeQuerySecrets()
-        if (query.observe || query.control) {
-          applyStatus('ready', 'warn', 'legacy token mode enabled')
-        } else {
-          applyStatus('connecting', 'idle', 'ready, waiting for scan authorization')
-        }
         return
       }
 
@@ -208,7 +150,7 @@ export default function App() {
 
     void exchange()
     return undefined
-  }, [applyStatus, exchangeBootstrapTicket, query.bootstrapId, query.code, query.hasSensitive, query.observe, query.control])
+  }, [exchangeBootstrapTicket, query.bootstrapId, query.code, query.hasSensitive])
 
   useOutboxDispatcher({
     controlAuth,
@@ -216,16 +158,14 @@ export default function App() {
     sessionStatus,
     sessionInFlightRequestId,
     updateOutbox,
-    onStatusUpdate: onSessionStatusUpdate,
   })
 
   return (
     <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col px-3 py-3 sm:px-4 sm:py-4">
-      <header className="py-1">
+      <header className="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-semibold text-slate-900 sm:text-lg">Session</h1>
-            <span className={`hidden rounded-full px-2 py-1 text-xs sm:inline-block ${toneClass(statusTone)}`}>{statusText}</span>
+            <h1 className="text-base font-semibold text-slate-900 sm:text-lg">techlead</h1>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
             <button
@@ -252,7 +192,6 @@ export default function App() {
             ) : null}
           </div>
         </div>
-        <div className={`mt-2 rounded-full px-2 py-1 text-xs sm:hidden ${toneClass(statusTone)}`}>{statusText}</div>
 
         {showScanner ? (
           <div className="mt-2 bg-slate-50 p-2 text-xs text-slate-700 sm:mt-3 sm:p-3">

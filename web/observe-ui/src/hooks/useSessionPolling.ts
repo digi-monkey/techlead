@@ -13,8 +13,8 @@ type UseSessionPollingOptions = {
   observeAuth?: string
   outboxRef: MutableRefObject<OutboxItem[]>
   reconcileFromSessionState: (messages: SessionMessage[], inFlightRequestId: string, status: string) => void
-  onRequireAuthorization: () => void
-  onRefreshError: (message: string) => void
+  onRequireAuthorization?: () => void
+  onRefreshError?: (message: string) => void
 }
 
 function nowMs() {
@@ -89,9 +89,9 @@ export function useSessionPolling(options: UseSessionPollingOptions) {
         })
 
         if (!observeAuth) {
-          onRequireAuthorization()
+          onRequireAuthorization?.()
         } else {
-          onRefreshError(`refresh session failed: ${(err as Error).message}`)
+          onRefreshError?.(`refresh session failed: ${(err as Error).message}`)
         }
       }
 
