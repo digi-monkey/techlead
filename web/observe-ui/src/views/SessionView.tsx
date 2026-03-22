@@ -91,6 +91,17 @@ export function SessionView(props: SessionViewProps) {
     onRetryCommand(requestId)
   }, [onRetryCommand])
 
+  const handleSessionToggle = useCallback(() => {
+    if (hasSession && sessionStatus !== 'ended') {
+      onEndSession()
+    } else {
+      onStartSession()
+    }
+  }, [hasSession, sessionStatus, onEndSession, onStartSession])
+
+  const isToggleBusy = isSessionBusy || isEndingSession
+  const showEnd = hasSession && sessionStatus !== 'ended'
+
   const headerRight = useMemo(
     () => (
       <div className="flex items-center gap-2">
@@ -107,35 +118,32 @@ export function SessionView(props: SessionViewProps) {
           <option value="codex">codex</option>
           <option value="opencode">opencode</option>
         </select>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={onStartSession}
-            disabled={isSessionBusy || isEndingSession}
-            className="flex h-7 items-center gap-1 rounded-lg bg-slate-900 px-2.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            title="New session"
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            <span>New</span>
-          </button>
-          <button
-            type="button"
-            onClick={onEndSession}
-            disabled={!hasSession || isEndingSession}
-            className="flex h-7 items-center gap-1 rounded-lg bg-rose-50 px-2.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-            title="End session"
-          >
+        <button
+          type="button"
+          onClick={handleSessionToggle}
+          disabled={isToggleBusy}
+          className={`flex h-7 w-7 items-center justify-center rounded-lg text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            showEnd
+              ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
+              : 'bg-slate-900 text-white hover:bg-slate-800'
+          }`}
+          title={showEnd ? 'End session' : 'New session'}
+        >
+          {isEndingSession ? (
+            <span className="text-[10px]">...</span>
+          ) : showEnd ? (
             <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M4 4l12 12M16 4L4 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-            <span>{isEndingSession ? '...' : 'End'}</span>
-          </button>
-        </div>
+          ) : (
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          )}
+        </button>
       </div>
     ),
-    [hasSession, isEndingSession, isSessionBusy, onEndSession, onSessionProviderChange, onStartSession, sessionProvider, syncState],
+    [isToggleBusy, isEndingSession, showEnd, onSessionProviderChange, sessionProvider, syncState, handleSessionToggle],
   )
 
   const panelTitle = hasSession ? sessionId.slice(0, 8) : 'Session'
