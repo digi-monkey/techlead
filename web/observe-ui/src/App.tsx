@@ -161,11 +161,11 @@ export default function App() {
   })
 
   return (
-    <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col px-3 py-3 sm:px-4 sm:py-4">
-      <header className="bg-slate-50 p-3 sm:p-4">
-        <div className="flex items-center justify-between gap-2">
+    <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col">
+      <header className="bg-slate-900 py-3 text-white">
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-semibold text-slate-900 sm:text-lg">techlead</h1>
+            <h1 className="text-base font-semibold sm:text-lg">techlead</h1>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
             <button
@@ -177,7 +177,7 @@ export default function App() {
                   return next
                 })
               }}
-              className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-200 sm:px-3"
+              className="rounded-xl bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 sm:px-3"
             >
               {showScanner ? 'Hide QR' : 'Scan QR'}
             </button>
@@ -185,7 +185,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowTokenDebug((v) => !v)}
-                className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-200 sm:px-3"
+                className="rounded-xl bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 sm:px-3"
               >
                 {showTokenDebug ? 'Hide' : 'Debug'}
               </button>
@@ -249,7 +249,7 @@ export default function App() {
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
         <SessionView
           sessionState={sessionState}
           sessionMessages={sessionMessages}
