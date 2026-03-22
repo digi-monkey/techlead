@@ -7,6 +7,10 @@ import type { JsonValue, SessionMessage } from '../types'
 export type PendingCommand = PendingOutboxCommand
 type SessionProvider = 'codex' | 'opencode'
 
+type ChatItem =
+  | { type: 'message'; data: SessionMessage; key: string }
+  | { type: 'pending'; data: PendingCommand; key: string }
+
 type SessionViewProps = {
   sessionState: JsonValue
   sessionMessages: SessionMessage[]
@@ -28,22 +32,6 @@ function syncStatusDot(sync: SessionSyncState): string {
   if (sync.consecutiveErrors === 0) return 'bg-emerald-500'
   if (sync.consecutiveErrors < 3) return 'bg-amber-500'
   return 'bg-rose-500'
-}
-
-function pendingTone(state: PendingCommand['state']): string {
-  if (state === 'processing') return 'bg-sky-100 text-sky-700'
-  if (state === 'sending') return 'bg-indigo-100 text-indigo-700'
-  if (state === 'retry_wait') return 'bg-amber-100 text-amber-800'
-  if (state === 'failed') return 'bg-rose-100 text-rose-700'
-  return 'bg-slate-100 text-slate-600'
-}
-
-function pendingLabel(state: PendingCommand['state']): string {
-  if (state === 'processing') return 'processing'
-  if (state === 'sending') return 'sending'
-  if (state === 'retry_wait') return 'retrying'
-  if (state === 'failed') return 'failed'
-  return 'queued'
 }
 
 export function SessionView(props: SessionViewProps) {
@@ -71,11 +59,32 @@ export function SessionView(props: SessionViewProps) {
   const canSend = hasSession && sessionStatus !== 'ended' && !isSessionBusy && !isEndingSession
   const showTyping = hasSession && sessionStatus === 'processing'
 
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const items: ChatItem[] = []
+    const seenRequestIds = new Set<string>()
+
+    for (const m of sessionMessages.slice(-120)) {
+      const key = String(m.id ?? `${m.ts}-${m.role}`)
+      items.push({ type: 'message', data: m, key })
+      if (typeof m.request_id === 'string') {
+        seenRequestIds.add(m.request_id)
+      }
+    }
+
+    for (const cmd of pendingCommands) {
+      if (!seenRequestIds.has(cmd.requestId)) {
+        items.push({ type: 'pending', data: cmd, key: `pending-${cmd.requestId}` })
+      }
+    }
+
+    return items
+  }, [sessionMessages, pendingCommands])
+
   useEffect(() => {
     const el = listRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [sessionMessages.length, pendingCommands.length, showTyping])
+  }, [chatItems.length, showTyping])
 
   const headerRight = useMemo(
     () => (
@@ -130,41 +139,45 @@ export function SessionView(props: SessionViewProps) {
     <Panel title={panelTitle} right={headerRight}>
       <div className="flex h-full flex-col">
 
-        {pendingCommands.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {pendingCommands.slice(0, 8).map((cmd) => (
-              <div key={cmd.requestId} className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] ${pendingTone(cmd.state)}`}>
-                <span>{pendingLabel(cmd.state)}</span>
-                <span className="font-mono opacity-75">{cmd.requestId.slice(0, 6)}</span>
-                {cmd.state === 'failed' ? (
-                  <button
-                    type="button"
-                    onClick={() => onRetryCommand(cmd.requestId)}
-                    className="rounded bg-white/80 px-1.5 py-0 text-[10px] text-rose-700 hover:bg-white"
-                  >
-                    Retry
-                  </button>
-                ) : null}
-              </div>
-            ))}
-            {pendingCommands.length > 8 ? (
-              <div className="rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-600">+{pendingCommands.length - 8} more</div>
-            ) : null}
-          </div>
-        ) : null}
-
         <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-0.5 py-1">
-          {sessionMessages.length === 0 ? (
+          {chatItems.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-slate-400">No messages yet</div>
           ) : (
-            sessionMessages.slice(-120).map((m, idx) => {
+            chatItems.map((item) => {
+              if (item.type === 'pending') {
+                const cmd = item.data
+                const statusText = cmd.state === 'failed' ? 'failed' : cmd.state === 'sending' ? 'sending...' : cmd.state === 'processing' ? 'sent' : 'pending...'
+                return (
+                  <div key={item.key} className="flex justify-end">
+                    <div className="max-w-[90%] rounded-2xl bg-slate-700/50 px-4 py-3 text-white/90 md:max-w-[75%]">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-slate-300">
+                        <span>you</span>
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                        <span>{statusText}</span>
+                        {cmd.state === 'failed' ? (
+                          <button
+                            type="button"
+                            onClick={() => onRetryCommand(cmd.requestId)}
+                            className="ml-1 rounded bg-white/20 px-1.5 py-0 text-[10px] hover:bg-white/30"
+                          >
+                            Retry
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed opacity-80">{cmd.text}</div>
+                    </div>
+                  </div>
+                )
+              }
+
+              const m = item.data
               const role = String(m.role || '')
               const isUser = role === 'user'
               const isSystem = role === 'system'
               const ts = typeof m.ts === 'number' ? new Date(m.ts * 1000).toLocaleTimeString() : '-'
 
               return (
-                <div key={`${m.id ?? idx}-${role}`} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                <div key={item.key} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                   <div
                     className={`max-w-[90%] rounded-2xl px-4 py-3 md:max-w-[75%] ${
                       isUser ? 'bg-slate-900 text-white' : isSystem ? 'bg-amber-100 text-amber-900' : 'bg-slate-50 text-slate-800'
