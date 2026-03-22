@@ -5,10 +5,10 @@ export function newRequestId() {
 }
 
 export function toneClass(tone: StatusTone): string {
-  if (tone === 'ok') return 'text-emerald-700 bg-emerald-50 border-emerald-200'
-  if (tone === 'warn') return 'text-amber-700 bg-amber-50 border-amber-200'
-  if (tone === 'bad') return 'text-rose-700 bg-rose-50 border-rose-200'
-  return 'text-slate-600 bg-slate-50 border-slate-200'
+  if (tone === 'ok') return 'text-emerald-700 bg-emerald-50/90'
+  if (tone === 'warn') return 'text-amber-700 bg-amber-50/90'
+  if (tone === 'bad') return 'text-rose-700 bg-rose-50/90'
+  return 'text-slate-600 bg-slate-100/90'
 }
 
 export function toEventRows(events: unknown[]): EventRow[] {

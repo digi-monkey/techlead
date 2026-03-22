@@ -24,11 +24,11 @@ type SessionViewProps = {
 }
 
 function pendingTone(state: PendingCommand['state']): string {
-  if (state === 'processing') return 'border-sky-200 bg-sky-50 text-sky-700'
-  if (state === 'sending') return 'border-indigo-200 bg-indigo-50 text-indigo-700'
-  if (state === 'retry_wait') return 'border-amber-200 bg-amber-50 text-amber-800'
-  if (state === 'failed') return 'border-rose-200 bg-rose-50 text-rose-700'
-  return 'border-slate-200 bg-slate-50 text-slate-700'
+  if (state === 'processing') return 'bg-sky-100 text-sky-700'
+  if (state === 'sending') return 'bg-indigo-100 text-indigo-700'
+  if (state === 'retry_wait') return 'bg-amber-100 text-amber-800'
+  if (state === 'failed') return 'bg-rose-100 text-rose-700'
+  return 'bg-slate-100 text-slate-600'
 }
 
 function pendingLabel(state: PendingCommand['state']): string {
@@ -60,14 +60,16 @@ export function SessionView(props: SessionViewProps) {
   const listRef = useRef<HTMLDivElement | null>(null)
   const sessionStatus = String(sessionState.status ?? '-')
   const sessionId = String(sessionState.session_id ?? '')
+  const provider = String(sessionState.provider ?? '-')
   const hasSession = sessionId.trim().length > 0
   const canSend = hasSession && sessionStatus !== 'ended' && !isSessionBusy && !isEndingSession
+  const showTyping = hasSession && sessionStatus === 'processing'
 
   useEffect(() => {
     const el = listRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [sessionMessages.length, pendingCommands.length])
+  }, [sessionMessages.length, pendingCommands.length, showTyping])
 
   const headerRight = useMemo(
     () => (
@@ -75,8 +77,8 @@ export function SessionView(props: SessionViewProps) {
         <select
           value={sessionProvider}
           onChange={(e) => onSessionProviderChange(e.target.value as SessionProvider)}
-          className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800"
-          title="session provider"
+          className="h-9 rounded-xl bg-slate-100 px-3 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-200 focus:bg-slate-200"
+          title="Session provider"
         >
           <option value="codex">codex</option>
           <option value="opencode">opencode</option>
@@ -85,17 +87,17 @@ export function SessionView(props: SessionViewProps) {
           type="button"
           onClick={onStartSession}
           disabled={isSessionBusy || isEndingSession}
-          className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-55"
+          className="h-9 rounded-xl bg-slate-900 px-3 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          New Session
+          New
         </button>
         <button
           type="button"
           onClick={onEndSession}
           disabled={!hasSession || isEndingSession}
-          className="h-9 rounded-lg border border-rose-300 bg-rose-50 px-3 text-sm text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-55"
+          className="h-9 rounded-xl bg-rose-100 px-3 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isEndingSession ? 'Ending...' : 'End Session'}
+          {isEndingSession ? 'Ending...' : 'End'}
         </button>
       </div>
     ),
@@ -104,102 +106,101 @@ export function SessionView(props: SessionViewProps) {
 
   return (
     <Panel title="Session" right={headerRight}>
-      <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-        <div className="truncate">
-          session: {hasSession ? sessionId : '(none)'} · status: {sessionStatus} · provider: {String(sessionState.provider ?? '-')}
-        </div>
-        <div className="mt-1">sync: {syncHint}</div>
+      <div className="mb-2 px-0.5 text-xs text-slate-500">
+        <div className="truncate">{hasSession ? sessionId : '(no session)'} · {provider} · {sessionStatus}</div>
+        <div className="mt-0.5">sync: {syncHint}</div>
       </div>
 
       {pendingCommands.length > 0 ? (
-        <div className="mb-3 flex flex-wrap gap-2">
-          {pendingCommands.slice(0, 6).map((cmd) => (
-            <div key={cmd.requestId} className={`rounded-lg border px-2.5 py-1 text-[11px] ${pendingTone(cmd.state)}`}>
-              {pendingLabel(cmd.state)} · {cmd.requestId.slice(0, 8)}
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {pendingCommands.slice(0, 8).map((cmd) => (
+            <div key={cmd.requestId} className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] ${pendingTone(cmd.state)}`}>
+              <span>{pendingLabel(cmd.state)}</span>
+              <span className="font-mono opacity-75">{cmd.requestId.slice(0, 6)}</span>
               {cmd.state === 'failed' ? (
                 <button
                   type="button"
                   onClick={() => onRetryCommand(cmd.requestId)}
-                  className="ml-2 rounded border border-rose-300 bg-white px-1.5 py-0.5 text-[10px] text-rose-700"
+                  className="rounded bg-white/80 px-1.5 py-0 text-[10px] text-rose-700 hover:bg-white"
                 >
                   Retry
                 </button>
               ) : null}
             </div>
           ))}
-          {pendingCommands.length > 6 ? <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">+{pendingCommands.length - 6} more</div> : null}
+          {pendingCommands.length > 8 ? (
+            <div className="rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-600">+{pendingCommands.length - 8} more</div>
+          ) : null}
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
-        <div ref={listRef} className="h-[52vh] min-h-[300px] space-y-2 overflow-y-auto p-1 md:h-[58vh]">
-          {sessionMessages.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">(no messages)</div>
-          ) : (
-            sessionMessages.slice(-120).map((m, idx) => {
-              const role = String(m.role || '')
-              const isUser = role === 'user'
-              const isSystem = role === 'system'
-              const ts = typeof m.ts === 'number' ? new Date(m.ts * 1000).toLocaleTimeString() : '-'
+      <div ref={listRef} className="h-[52vh] min-h-[300px] space-y-3 overflow-y-auto px-0.5 py-1 md:h-[58vh]">
+        {sessionMessages.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-sm text-slate-400">No messages yet</div>
+        ) : (
+          sessionMessages.slice(-120).map((m, idx) => {
+            const role = String(m.role || '')
+            const isUser = role === 'user'
+            const isSystem = role === 'system'
+            const ts = typeof m.ts === 'number' ? new Date(m.ts * 1000).toLocaleTimeString() : '-'
 
-              return (
-                <article key={`${m.id ?? idx}-${role}`} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[92%] rounded-2xl border px-3 py-2 shadow-sm md:max-w-[80%] ${
-                      isUser
-                        ? 'border-sky-200 bg-sky-50'
-                        : isSystem
-                          ? 'border-amber-200 bg-amber-50'
-                          : 'border-slate-200 bg-white'
-                    }`}
-                  >
-                    <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                      <span className="font-medium uppercase tracking-wide">{role || 'unknown'}</span>
-                      <span>
-                        #{m.id ?? idx} · {ts}
-                      </span>
-                    </div>
-                    <div className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{m.content}</div>
+            return (
+              <div key={`${m.id ?? idx}-${role}`} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[90%] rounded-2xl px-4 py-3 md:max-w-[75%] ${
+                    isUser ? 'bg-slate-900 text-white' : isSystem ? 'bg-amber-100 text-amber-900' : 'bg-slate-50 text-slate-800'
+                  }`}
+                >
+                  <div className={`mb-1 text-[11px] ${isUser ? 'text-slate-300' : 'text-slate-500'}`}>
+                    {role || 'unknown'} · {ts}
                   </div>
-                </article>
-              )
-            })
-          )}
-        </div>
+                  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.content}</div>
+                </div>
+              </div>
+            )
+          })
+        )}
 
-        <div className="mt-2 border-t border-slate-200 pt-2">
-          <div className="flex items-end gap-2">
-            <textarea
-              className="min-h-[78px] w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:bg-slate-100"
-              value={sessionInput}
-              onChange={(e) => onSessionInputChange(e.target.value)}
-              placeholder={
-                !hasSession
-                  ? 'create a new session first'
-                  : sessionStatus === 'ended'
-                    ? 'session ended, create a new one'
-                    : isSessionBusy
-                      ? 'agent is processing...'
-                      : 'type your message'
-              }
-              disabled={!canSend}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  onSendMessage()
-                }
-              }}
-            />
-            <button
-              type="button"
-              onClick={onSendMessage}
-              disabled={!canSend || sessionInput.trim().length === 0}
-              className="h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-700 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-55"
-            >
-              Send
-            </button>
+        {showTyping ? (
+          <div className="flex justify-start">
+            <div className="max-w-[90%] rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 md:max-w-[75%]">
+              <div className="mb-1 text-[11px] text-slate-500">assistant · typing</div>
+              <div className="flex items-center gap-1.5">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+              </div>
+            </div>
           </div>
-          {isSessionBusy ? <div className="mt-2 text-xs text-amber-700">Agent is processing previous message...</div> : null}
+        ) : null}
+      </div>
+
+      <div className="mt-2 py-1">
+        <div className="flex items-end gap-2">
+          <textarea
+            className="min-h-[80px] w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+            value={sessionInput}
+            onChange={(e) => onSessionInputChange(e.target.value)}
+            placeholder={!hasSession ? 'Create a new session first...' : sessionStatus === 'ended' ? 'Session ended. Start a new one.' : isSessionBusy ? 'Agent is thinking...' : 'Type your message...'}
+            disabled={!canSend}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                onSendMessage()
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={onSendMessage}
+            disabled={!canSend || sessionInput.trim().length === 0}
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            title="Send message"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M4.5 10h11M12.5 7l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </div>
       </div>
     </Panel>
