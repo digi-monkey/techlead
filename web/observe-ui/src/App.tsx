@@ -162,7 +162,7 @@ export default function App() {
 
   return (
     <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col px-3 py-3 sm:px-4 sm:py-4">
-      <header className="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
+      <header className="bg-slate-50 p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h1 className="text-base font-semibold text-slate-900 sm:text-lg">techlead</h1>
