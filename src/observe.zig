@@ -3,6 +3,7 @@ const http = std.http;
 
 const config = @import("config.zig");
 const ui = @import("ui.zig");
+const utils = @import("utils.zig");
 const runner = @import("runner.zig");
 const replay = @import("storage/replay.zig");
 const task_store = @import("storage/task_store.zig");
@@ -13,6 +14,10 @@ const Allocator = std.mem.Allocator;
 const TOKEN_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 const CONTROL_MIN_INTERVAL_MS: i64 = 300;
 const REQUEST_ID_TTL_SECONDS: i64 = 5 * 60;
+const BOOTSTRAP_TTL_SECONDS: i64 = 60;
+const SHARE_BOOTSTRAP_TTL_SECONDS: i64 = 10 * 60;
+const AUTH_COOKIE_OBSERVE = "tl_observe";
+const AUTH_COOKIE_CONTROL = "tl_control";
 const OBSERVE_UI_DIST_DIR = "web/observe-ui/dist";
 
 const TokenFile = struct {
@@ -20,6 +25,18 @@ const TokenFile = struct {
     control_token: []const u8,
     observe_expires_at: i64,
     control_expires_at: i64,
+};
+
+const BootstrapTicket = struct {
+    code: []const u8,
+    expires_at: i64,
+};
+
+const BootstrapIssue = struct {
+    bootstrap_id: []u8,
+    code: []u8,
+    expires_at: i64,
+    url: []u8,
 };
 
 const ServerContext = struct {
@@ -34,12 +51,23 @@ const ServerContext = struct {
     control_expires_at: i64,
     last_control_ms: i64 = 0,
     request_ids: std.StringHashMap(i64),
+    bootstrap_tickets: std.StringHashMap(BootstrapTicket),
+    external_url: ?[]const u8,
 };
 
 const ControlBody = struct {
     action: ?[]const u8 = null,
     prompt: ?[]const u8 = null,
     request_id: ?[]const u8 = null,
+};
+
+const BootstrapBody = struct {
+    ttl_seconds: ?i64 = null,
+};
+
+const TokenExchangeBody = struct {
+    bootstrap_id: ?[]const u8 = null,
+    code: ?[]const u8 = null,
 };
 
 const StartRunBody = struct {
@@ -55,6 +83,10 @@ const StartSessionBody = struct {
 
 const SessionMessageBody = struct {
     message: ?[]const u8 = null,
+    request_id: ?[]const u8 = null,
+};
+
+const EndSessionBody = struct {
     request_id: ?[]const u8 = null,
 };
 
@@ -95,6 +127,8 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
     defer allocator.free(tokens.observe_token);
     defer allocator.free(tokens.control_token);
 
+    const external_url = std.process.getEnvVarOwned(allocator, "TECHLEAD_EXTERNAL_URL") catch null;
+
     var ctx = ServerContext{
         .allocator = allocator,
         .target_dir = try allocator.dupe(u8, target_dir),
@@ -106,26 +140,54 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: []const u8, host
         .observe_expires_at = tokens.observe_expires_at,
         .control_expires_at = tokens.control_expires_at,
         .request_ids = std.StringHashMap(i64).init(allocator),
+        .bootstrap_tickets = std.StringHashMap(BootstrapTicket).init(allocator),
+        .external_url = external_url,
     };
     defer allocator.free(ctx.target_dir);
     defer allocator.free(ctx.log_dir);
     defer allocator.free(ctx.host);
     defer allocator.free(ctx.observe_token);
     defer allocator.free(ctx.control_token);
+    defer if (ctx.external_url) |url| allocator.free(url);
     defer {
         var it = ctx.request_ids.iterator();
         while (it.next()) |entry| allocator.free(entry.key_ptr.*);
         ctx.request_ids.deinit();
+    }
+    defer {
+        var it = ctx.bootstrap_tickets.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.code);
+        }
+        ctx.bootstrap_tickets.deinit();
     }
 
     const address = try std.net.Address.parseIp(host, port);
     var server = try address.listen(.{ .reuse_address = true });
     defer server.deinit();
 
-    ui.logSuccess("observe 服务已启动: http://{s}:{d}", .{ host, server.listen_address.getPort() });
+    if (ctx.external_url) |ext_url| {
+        ui.logSuccess("observe 服务已启动: http://{s}:{d} (外部地址: {s})", .{ host, server.listen_address.getPort(), ext_url });
+    } else {
+        ui.logSuccess("observe 服务已启动: http://{s}:{d}", .{ host, server.listen_address.getPort() });
+    }
     ui.logInfo("observe token: {s}", .{ctx.observe_token});
     ui.logInfo("control token: {s}", .{ctx.control_token});
-    ui.logInfo("扫码/分享入口: http://{s}:{d}/?token={s}", .{ host, server.listen_address.getPort(), ctx.observe_token });
+    const share_issue = try issueBootstrapTicket(&ctx, SHARE_BOOTSTRAP_TTL_SECONDS);
+    defer allocator.free(share_issue.bootstrap_id);
+    defer allocator.free(share_issue.code);
+    defer allocator.free(share_issue.url);
+    ui.logInfo("扫码/分享入口: {s}", .{share_issue.url});
+    printStartupQr(allocator, share_issue.url);
+    if (std.mem.eql(u8, host, "0.0.0.0") and ctx.external_url == null) {
+        ui.logWarn("当前 host=0.0.0.0；扫码前请将链接中的主机替换为本机局域网 IP", .{});
+    }
+    if (ctx.external_url) |ext_url| {
+        ui.logInfo("兼容入口: {s}/?token={s}", .{ ext_url, ctx.observe_token });
+    } else {
+        ui.logInfo("兼容入口: http://{s}:{d}/?token={s}", .{ host, server.listen_address.getPort(), ctx.observe_token });
+    }
 
     while (true) {
         const conn = server.accept() catch |err| {
@@ -146,6 +208,44 @@ pub fn runObserveRotateTokensCommand(allocator: Allocator, target_dir: []const u
     ui.logInfo("control token: {s}", .{tokens.control_token});
 }
 
+fn printStartupQr(allocator: Allocator, url: []const u8) void {
+    ui.logInfo("二维码（终端扫码）:", .{});
+
+    if (!utils.commandExists(allocator, "qrencode")) {
+        ui.logWarn("未检测到 qrencode，无法直接输出终端二维码", .{});
+        ui.logInfo("安装示例: sudo apt-get install -y qrencode", .{});
+        return;
+    }
+
+    const run_result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "qrencode", "-t", "ANSIUTF8", "-m", "1", url },
+        .max_output_bytes = 1024 * 1024,
+    }) catch |err| {
+        ui.logWarn("二维码渲染失败: {s}", .{@errorName(err)});
+        return;
+    };
+    defer allocator.free(run_result.stdout);
+    defer allocator.free(run_result.stderr);
+
+    if (!utils.isExitedZero(run_result.term)) {
+        const err_trimmed = std.mem.trim(u8, run_result.stderr, " \r\n\t");
+        if (err_trimmed.len > 0) {
+            ui.logWarn("二维码渲染失败: {s}", .{err_trimmed});
+        } else {
+            ui.logWarn("二维码渲染失败: qrencode exited non-zero", .{});
+        }
+        return;
+    }
+
+    if (run_result.stdout.len == 0) {
+        ui.logWarn("二维码渲染失败: empty output", .{});
+        return;
+    }
+
+    std.debug.print("{s}\n", .{run_result.stdout});
+}
+
 fn handleConnection(ctx: *ServerContext, conn: std.net.Server.Connection) !void {
     var send_buffer: [8192]u8 = undefined;
     var recv_buffer: [8192]u8 = undefined;
@@ -164,8 +264,9 @@ fn handleConnection(ctx: *ServerContext, conn: std.net.Server.Connection) !void 
 
 fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     const target = req.head.target;
+    const target_path = pathNoQuery(target);
     if (try serveObserveUiAsset(ctx, req, target)) return;
-    if (std.mem.eql(u8, target, "/") or std.mem.startsWith(u8, target, "/?")) {
+    if (std.mem.eql(u8, target, "/") or std.mem.startsWith(u8, target, "/?") or std.mem.eql(u8, target_path, "/connect")) {
         return respondHtml(req, dashboardHtml());
     }
 
@@ -174,16 +275,89 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/auth/qr/bootstrap")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) {
+        if (req.head.method != .POST and req.head.method != .GET) {
+            return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+        }
+        if (!authorizedObserve(ctx, req) and !authorizedControl(ctx, req)) {
             return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         }
-        const body = try std.fmt.allocPrint(ctx.allocator, "{{\"url\":\"http://{s}:{d}/?token={s}\"}}", .{ ctx.host, ctx.port, ctx.observe_token });
+        var ttl_seconds: i64 = BOOTSTRAP_TTL_SECONDS;
+        if (req.head.method == .POST) {
+            if (try parseBootstrapBody(req, ctx.allocator)) |body| {
+                if (body.ttl_seconds) |ttl| {
+                    if (ttl > 0 and ttl <= 30 * 60) ttl_seconds = ttl;
+                }
+            }
+        }
+        const issue = try issueBootstrapTicket(ctx, ttl_seconds);
+        defer ctx.allocator.free(issue.bootstrap_id);
+        defer ctx.allocator.free(issue.code);
+        defer ctx.allocator.free(issue.url);
+        const body = try std.fmt.allocPrint(
+            ctx.allocator,
+            "{{\"url\":{f},\"bootstrap_id\":{f},\"expires_at\":{d}}}",
+            .{ std.json.fmt(issue.url, .{}), std.json.fmt(issue.bootstrap_id, .{}), issue.expires_at },
+        );
         defer ctx.allocator.free(body);
         return respondJson(req, .ok, body);
     }
 
+    if (std.mem.startsWith(u8, target, "/auth/token/exchange")) {
+        if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
+        const payload = (try parseTokenExchangeBody(req, ctx.allocator)) orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
+        defer {
+            if (payload.bootstrap_id) |v| ctx.allocator.free(v);
+            if (payload.code) |v| ctx.allocator.free(v);
+        }
+        const bootstrap_id = payload.bootstrap_id orelse return respondJson(req, .bad_request, "{\"error\":\"bootstrap_id_required\"}");
+        const code = payload.code orelse return respondJson(req, .bad_request, "{\"error\":\"code_required\"}");
+        if (bootstrap_id.len == 0 or code.len == 0) return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
+
+        cleanupBootstrapTickets(ctx);
+        const removed = ctx.bootstrap_tickets.fetchRemove(bootstrap_id) orelse {
+            return respondJson(req, .unauthorized, "{\"error\":\"invalid_or_expired_bootstrap\"}");
+        };
+        defer {
+            ctx.allocator.free(removed.key);
+            ctx.allocator.free(removed.value.code);
+        }
+        if (std.time.timestamp() > removed.value.expires_at) {
+            return respondJson(req, .unauthorized, "{\"error\":\"bootstrap_expired\"}");
+        }
+        if (!std.mem.eql(u8, removed.value.code, code)) {
+            return respondJson(req, .unauthorized, "{\"error\":\"invalid_bootstrap_code\"}");
+        }
+        const now = std.time.timestamp();
+        const observe_age = @max(@as(i64, 0), ctx.observe_expires_at - now);
+        const control_age = @max(@as(i64, 0), ctx.control_expires_at - now);
+        if (observe_age == 0 or control_age == 0) {
+            return respondJson(req, .unauthorized, "{\"error\":\"token_expired\"}");
+        }
+
+        const observe_cookie = try std.fmt.allocPrint(
+            ctx.allocator,
+            "{s}={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age={d}",
+            .{ AUTH_COOKIE_OBSERVE, ctx.observe_token, observe_age },
+        );
+        defer ctx.allocator.free(observe_cookie);
+        const control_cookie = try std.fmt.allocPrint(
+            ctx.allocator,
+            "{s}={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age={d}",
+            .{ AUTH_COOKIE_CONTROL, ctx.control_token, control_age },
+        );
+        defer ctx.allocator.free(control_cookie);
+
+        const body = try std.fmt.allocPrint(
+            ctx.allocator,
+            "{{\"ok\":true,\"observe_expires_at\":{d},\"control_expires_at\":{d}}}",
+            .{ ctx.observe_expires_at, ctx.control_expires_at },
+        );
+        defer ctx.allocator.free(body);
+        return respondJsonWithCookies(req, .ok, body, observe_cookie, control_cookie);
+    }
+
     if (std.mem.startsWith(u8, target, "/events")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         const after = parseAfterQuery(target);
         const events = replay.readEventsAfter(ctx.allocator, ctx.target_dir, ctx.log_dir, after) catch "{\"events\":[],\"last_event_id\":0}";
         defer if (events.ptr != "{\"events\":[],\"last_event_id\":0}".ptr) ctx.allocator.free(events);
@@ -191,7 +365,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/events/stream")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (!try validateRequestedRunId(ctx.allocator, ctx.target_dir, target)) {
             return respondJson(req, .conflict, "{\"error\":\"run_id_mismatch\"}");
         }
@@ -200,13 +374,13 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/runs/current/events/stream")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         const after = parseAfterFromRequest(req);
         return streamEvents(req, ctx, after);
     }
 
     if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/events")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (!try validateRequestedRunId(ctx.allocator, ctx.target_dir, target)) {
             return respondJson(req, .conflict, "{\"error\":\"run_id_mismatch\"}");
         }
@@ -217,7 +391,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/runs/current/events")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         const after = parseAfterQuery(target);
         const events = replay.readEventsAfter(ctx.allocator, ctx.target_dir, ctx.log_dir, after) catch "{\"events\":[],\"last_event_id\":0}";
         defer if (events.ptr != "{\"events\":[],\"last_event_id\":0}".ptr) ctx.allocator.free(events);
@@ -230,15 +404,44 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
 
     if (std.mem.startsWith(u8, target, "/sessions/current")) {
         if (std.mem.eql(u8, target, "/sessions/current") and req.head.method == .GET) {
-            if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
             const state = session_service.getSessionStateJson(ctx.allocator, ctx.target_dir) catch "{\"error\":\"session_not_found\"}";
             defer if (state.ptr != "{\"error\":\"session_not_found\"}".ptr) ctx.allocator.free(state);
             return respondJson(req, .ok, state);
         }
-        if (std.mem.eql(u8, target, "/sessions/current/message")) {
-            if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (std.mem.eql(u8, target, "/sessions/current/end")) {
+            if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
             if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
             if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
+
+            var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
+            defer if (request_id) |rid| ctx.allocator.free(rid);
+            if (try parseEndSessionBody(req, ctx.allocator)) |body| {
+                defer if (body.request_id) |rid| ctx.allocator.free(rid);
+                if (body.request_id) |rid| {
+                    if (request_id) |old| ctx.allocator.free(old);
+                    request_id = try ctx.allocator.dupe(u8, rid);
+                }
+            }
+            if (request_id) |rid| {
+                if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
+            }
+
+            const end_result = session_service.endSession(ctx.allocator, ctx.target_dir) catch |err| {
+                ui.logWarn("session end failed: {any}", .{err});
+                return respondJson(req, .bad_request, "{\"error\":\"session_end_failed\"}");
+            };
+            const body = try std.fmt.allocPrint(
+                ctx.allocator,
+                "{{\"ok\":true,\"status\":{f}}}",
+                .{std.json.fmt(end_result.status, .{})},
+            );
+            defer ctx.allocator.free(body);
+            return respondJson(req, .ok, body);
+        }
+        if (std.mem.eql(u8, target, "/sessions/current/message")) {
+            if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
 
             var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
             defer if (request_id) |rid| ctx.allocator.free(rid);
@@ -259,23 +462,65 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
             if (message == null or std.mem.trim(u8, message.?, " \t\r\n").len == 0) {
                 return respondJson(req, .bad_request, "{\"error\":\"message_required\"}");
             }
-            if (request_id) |rid| {
-                if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
+            const rid = request_id orelse return respondJson(req, .bad_request, "{\"error\":\"request_id_required\"}");
+
+            const queue_result = session_service.enqueueMessage(ctx.allocator, ctx.target_dir, message.?, rid) catch |err| {
+                switch (err) {
+                    error.RequestIdRequired => return respondJson(req, .bad_request, "{\"error\":\"request_id_required\"}"),
+                    error.SessionBusy => return respondJson(req, .conflict, "{\"error\":\"session_busy\"}"),
+                    error.SessionNotActive => return respondJson(req, .conflict, "{\"error\":\"session_not_active\"}"),
+                    else => {
+                        ui.logWarn("session enqueue failed: {any}", .{err});
+                        return respondJson(req, .bad_request, "{\"error\":\"session_send_failed\"}");
+                    },
+                }
+            };
+            defer if (queue_result.reply) |reply| ctx.allocator.free(reply);
+
+            if (queue_result.accepted) {
+                startSessionMessageWorker(ctx.allocator, ctx.target_dir, rid) catch |spawn_err| {
+                    ui.logWarn("session worker spawn failed, fallback sync: {any}", .{spawn_err});
+                    const send_result = session_service.processInFlightMessage(ctx.allocator, ctx.target_dir, rid) catch |err| {
+                        ui.logWarn("session send failed after fallback: {any}", .{err});
+                        return respondJson(req, .bad_request, "{\"error\":\"session_send_failed\"}");
+                    };
+                    defer if (send_result.reply) |reply| ctx.allocator.free(reply);
+                    const sync_body = if (send_result.reply) |reply|
+                        try std.fmt.allocPrint(
+                            ctx.allocator,
+                            "{{\"ok\":true,\"status\":{f},\"deduplicated\":{},\"reply\":{f}}}",
+                            .{ std.json.fmt(send_result.status, .{}), send_result.deduplicated, std.json.fmt(reply, .{}) },
+                        )
+                    else
+                        try std.fmt.allocPrint(
+                            ctx.allocator,
+                            "{{\"ok\":true,\"status\":{f},\"deduplicated\":{},\"reply\":null}}",
+                            .{ std.json.fmt(send_result.status, .{}), send_result.deduplicated },
+                        );
+                    defer ctx.allocator.free(sync_body);
+                    return respondJson(req, .ok, sync_body);
+                };
             }
 
-            const reply = session_service.sendMessage(ctx.allocator, ctx.target_dir, message.?) catch |err| {
-                ui.logWarn("session send failed: {any}", .{err});
-                return respondJson(req, .bad_request, "{\"error\":\"session_send_failed\"}");
-            };
-            defer ctx.allocator.free(reply);
-            const body = try std.fmt.allocPrint(ctx.allocator, "{{\"ok\":true,\"reply\":{f}}}", .{std.json.fmt(reply, .{})});
+            const body = if (queue_result.reply) |reply|
+                try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "{{\"ok\":true,\"status\":{f},\"deduplicated\":{},\"reply\":{f}}}",
+                    .{ std.json.fmt(queue_result.status, .{}), queue_result.deduplicated, std.json.fmt(reply, .{}) },
+                )
+            else
+                try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "{{\"ok\":true,\"status\":{f},\"deduplicated\":{},\"reply\":null}}",
+                    .{ std.json.fmt(queue_result.status, .{}), queue_result.deduplicated },
+                );
             defer ctx.allocator.free(body);
             return respondJson(req, .ok, body);
         }
     }
 
     if (std.mem.startsWith(u8, target, "/sessions/start")) {
-        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
         if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
 
@@ -314,7 +559,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/runs/start")) {
-        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (req.head.method != .POST) {
             return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
         }
@@ -355,7 +600,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/control")) {
-        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (!try validateRequestedRunId(ctx.allocator, ctx.target_dir, target)) {
             return respondJson(req, .conflict, "{\"error\":\"run_id_mismatch\"}");
         }
@@ -408,7 +653,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     }
 
     if (std.mem.startsWith(u8, target, "/control") or std.mem.startsWith(u8, target, "/runs/current/control")) {
-        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (req.head.method != .POST and req.head.method != .GET) {
             return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
         }
@@ -471,11 +716,12 @@ fn serveObserveUiAsset(ctx: *ServerContext, req: *http.Server.Request, target: [
         break :blk target;
     };
 
-    if (!(std.mem.eql(u8, path_no_query, "/") or std.mem.startsWith(u8, path_no_query, "/assets/"))) {
+    const is_spa_entry = std.mem.eql(u8, path_no_query, "/") or std.mem.eql(u8, path_no_query, "/connect") or std.mem.startsWith(u8, path_no_query, "/connect/");
+    if (!(is_spa_entry or std.mem.startsWith(u8, path_no_query, "/assets/"))) {
         return false;
     }
 
-    const rel_path = if (std.mem.eql(u8, path_no_query, "/")) "index.html" else path_no_query[1..];
+    const rel_path = if (is_spa_entry) "index.html" else path_no_query[1..];
     if (std.mem.indexOf(u8, rel_path, "..") != null) return false;
 
     const full_path = try std.fs.path.join(ctx.allocator, &[_][]const u8{ OBSERVE_UI_DIST_DIR, rel_path });
@@ -517,6 +763,52 @@ fn respondBody(req: *http.Server.Request, status: http.Status, body: []const u8,
 
 fn respondJson(req: *http.Server.Request, status: http.Status, body: []const u8) !void {
     try respondBody(req, status, body, "application/json; charset=utf-8", "no-store");
+}
+
+fn respondJsonWithCookies(req: *http.Server.Request, status: http.Status, body: []const u8, observe_cookie: []const u8, control_cookie: []const u8) !void {
+    const headers = [_]http.Header{
+        .{ .name = "content-type", .value = "application/json; charset=utf-8" },
+        .{ .name = "cache-control", .value = "no-store" },
+        .{ .name = "set-cookie", .value = observe_cookie },
+        .{ .name = "set-cookie", .value = control_cookie },
+    };
+    try req.respond(body, .{
+        .status = status,
+        .keep_alive = false,
+        .extra_headers = &headers,
+    });
+}
+
+fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, request_id: []const u8) !void {
+    const exe_path = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(exe_path);
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &[_][]const u8{
+        exe_path,
+        "session",
+        "process-message",
+        "--dir",
+        target_dir,
+        "--request-id",
+        request_id,
+    });
+
+    var child = std.process.Child.init(argv.items, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+    child.cwd = target_dir;
+    try child.spawn();
+
+    const reaper = try std.Thread.spawn(.{}, reapSessionWorkerProcess, .{child});
+    reaper.detach();
+}
+
+fn reapSessionWorkerProcess(child_in: std.process.Child) void {
+    var child = child_in;
+    _ = child.wait() catch {};
 }
 
 fn respondHtml(req: *http.Server.Request, body: []const u8) !void {
@@ -565,8 +857,21 @@ fn streamEvents(req: *http.Server.Request, ctx: *ServerContext, after_start: usi
     try body.end();
 }
 
-fn authorized(req: *const http.Server.Request, expected_token: []const u8, expires_at: i64) bool {
+fn authorizedObserve(ctx: *const ServerContext, req: *const http.Server.Request) bool {
+    return authorized(req, ctx.observe_token, ctx.observe_expires_at, AUTH_COOKIE_OBSERVE);
+}
+
+fn authorizedControl(ctx: *const ServerContext, req: *const http.Server.Request) bool {
+    return authorized(req, ctx.control_token, ctx.control_expires_at, AUTH_COOKIE_CONTROL);
+}
+
+fn authorized(req: *const http.Server.Request, expected_token: []const u8, expires_at: i64, cookie_name: []const u8) bool {
     if (std.time.timestamp() > expires_at) return false;
+
+    if (cookieValue(req, cookie_name)) |cookie_token| {
+        if (std.mem.eql(u8, cookie_token, expected_token)) return true;
+    }
+
     var it = req.iterateHeaders();
     while (it.next()) |h| {
         if (!std.ascii.eqlIgnoreCase(h.name, "authorization")) continue;
@@ -576,6 +881,23 @@ fn authorized(req: *const http.Server.Request, expected_token: []const u8, expir
         return std.mem.eql(u8, got, expected_token);
     }
     return false;
+}
+
+fn cookieValue(req: *const http.Server.Request, name: []const u8) ?[]const u8 {
+    var it = req.iterateHeaders();
+    while (it.next()) |h| {
+        if (!std.ascii.eqlIgnoreCase(h.name, "cookie")) continue;
+        var pairs = std.mem.splitScalar(u8, h.value, ';');
+        while (pairs.next()) |pair_raw| {
+            const pair = std.mem.trim(u8, pair_raw, " \t\r\n");
+            if (pair.len <= name.len + 1) continue;
+            if (!std.mem.startsWith(u8, pair, name)) continue;
+            if (pair[name.len] != '=') continue;
+            const value = std.mem.trim(u8, pair[name.len + 1 ..], " \t\r\n");
+            if (value.len > 0) return value;
+        }
+    }
+    return null;
 }
 
 fn allowControlRequest(ctx: *ServerContext) bool {
@@ -630,7 +952,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
     const ts = store.asTaskStore();
 
     if (std.mem.eql(u8, target, "/tasks/events") or std.mem.startsWith(u8, target, "/tasks/events?")) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (req.head.method != .GET) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
         const after = parseAfterI64Query(target);
         const out = ts.getTaskEventsJson(ctx.allocator, after, 200) catch return respondJson(req, .bad_request, "{\"error\":\"events_failed\"}");
@@ -640,7 +962,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
 
     if (std.mem.eql(u8, target, "/tasks") or std.mem.startsWith(u8, target, "/tasks?")) {
         if (req.head.method == .GET) {
-            if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
             const status_text = queryValue(target, "status");
             const q = queryValue(target, "q");
             const limit = parseLimitQuery(target, 50);
@@ -657,7 +979,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
         }
 
         if (req.head.method == .POST) {
-            if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+            if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
             if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
 
             var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
@@ -700,7 +1022,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
     const task_id = taskIdFromPath(target) orelse return respondJson(req, .not_found, "{\"error\":\"not_found\"}");
 
     if (std.mem.endsWith(u8, pathNoQuery(target), "/actions")) {
-        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
         if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
 
@@ -732,7 +1054,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
     }
 
     if (req.head.method == .GET) {
-        if (!authorized(req, ctx.observe_token, ctx.observe_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         const out = ts.getTaskDetailJson(ctx.allocator, task_id) catch |err| switch (err) {
             error.TaskNotFound => return respondJson(req, .not_found, "{\"error\":\"task_not_found\"}"),
             else => return respondJson(req, .bad_request, "{\"error\":\"detail_failed\"}"),
@@ -742,7 +1064,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
     }
 
     if (req.head.method == .PATCH) {
-        if (!authorized(req, ctx.control_token, ctx.control_expires_at)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
+        if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
         if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
 
         var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
@@ -891,6 +1213,108 @@ fn parseLastEventId(payload: []const u8, fallback: usize) usize {
     return std.fmt.parseInt(usize, rest[i..j], 10) catch fallback;
 }
 
+fn cleanupBootstrapTickets(ctx: *ServerContext) void {
+    const now = std.time.timestamp();
+    var stale_keys: std.ArrayList([]const u8) = .empty;
+    defer stale_keys.deinit(ctx.allocator);
+    var it = ctx.bootstrap_tickets.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.expires_at <= now) {
+            stale_keys.append(ctx.allocator, entry.key_ptr.*) catch {};
+        }
+    }
+    for (stale_keys.items) |k| {
+        if (ctx.bootstrap_tickets.fetchRemove(k)) |removed| {
+            ctx.allocator.free(removed.key);
+            ctx.allocator.free(removed.value.code);
+        }
+    }
+}
+
+fn issueBootstrapTicket(ctx: *ServerContext, ttl_seconds: i64) !BootstrapIssue {
+    cleanupBootstrapTickets(ctx);
+    const now = std.time.timestamp();
+    const ttl = @max(@as(i64, 30), ttl_seconds);
+
+    const bootstrap_id = try generateToken(ctx.allocator);
+    errdefer ctx.allocator.free(bootstrap_id);
+    const code = try generateToken(ctx.allocator);
+    errdefer ctx.allocator.free(code);
+
+    const key_copy = try ctx.allocator.dupe(u8, bootstrap_id);
+    errdefer ctx.allocator.free(key_copy);
+    const code_copy = try ctx.allocator.dupe(u8, code);
+    errdefer ctx.allocator.free(code_copy);
+
+    const expires_at = now + ttl;
+    ctx.bootstrap_tickets.put(key_copy, .{
+        .code = code_copy,
+        .expires_at = expires_at,
+    }) catch |err| {
+        ctx.allocator.free(key_copy);
+        ctx.allocator.free(code_copy);
+        return err;
+    };
+
+    const url = if (ctx.external_url) |ext_url|
+        try std.fmt.allocPrint(
+            ctx.allocator,
+            "{s}/connect?bootstrap_id={s}&code={s}",
+            .{ ext_url, bootstrap_id, code },
+        )
+    else
+        try std.fmt.allocPrint(
+            ctx.allocator,
+            "http://{s}:{d}/connect?bootstrap_id={s}&code={s}",
+            .{ ctx.host, ctx.port, bootstrap_id, code },
+        );
+    errdefer ctx.allocator.free(url);
+
+    return .{
+        .bootstrap_id = bootstrap_id,
+        .code = code,
+        .expires_at = expires_at,
+        .url = url,
+    };
+}
+
+fn parseBootstrapBody(req: *http.Server.Request, allocator: Allocator) !?BootstrapBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(BootstrapBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+
+    return .{
+        .ttl_seconds = parsed.value.ttl_seconds,
+    };
+}
+
+fn parseTokenExchangeBody(req: *http.Server.Request, allocator: Allocator) !?TokenExchangeBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(TokenExchangeBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+
+    return .{
+        .bootstrap_id = if (parsed.value.bootstrap_id) |v| try allocator.dupe(u8, v) else null,
+        .code = if (parsed.value.code) |v| try allocator.dupe(u8, v) else null,
+    };
+}
+
 fn parseControlBody(req: *http.Server.Request, allocator: Allocator) !?ControlBody {
     const len_u64 = req.head.content_length orelse return null;
     if (len_u64 == 0) return null;
@@ -962,6 +1386,23 @@ fn parseSessionMessageBody(req: *http.Server.Request, allocator: Allocator) !?Se
     defer parsed.deinit();
     return .{
         .message = if (parsed.value.message) |m| try allocator.dupe(u8, m) else null,
+        .request_id = if (parsed.value.request_id) |rid| try allocator.dupe(u8, rid) else null,
+    };
+}
+
+fn parseEndSessionBody(req: *http.Server.Request, allocator: Allocator) !?EndSessionBody {
+    const len_u64 = req.head.content_length orelse return null;
+    if (len_u64 == 0) return null;
+    if (len_u64 > 1024 * 1024) return error.RequestBodyTooLarge;
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = try reader.readAlloc(allocator, @intCast(len_u64));
+    defer allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(EndSessionBody, allocator, body_raw, .{}) catch return null;
+    defer parsed.deinit();
+    return .{
         .request_id = if (parsed.value.request_id) |rid| try allocator.dupe(u8, rid) else null,
     };
 }
@@ -1174,246 +1615,255 @@ fn decodeUrlComponent(allocator: Allocator, raw: []const u8) ![]u8 {
 }
 
 fn dashboardHtml() []const u8 {
-    return
-        \\<!doctype html>
-        \\<html>
-        \\<head>
-        \\  <meta charset="utf-8" />
-        \\  <meta name="viewport" content="width=device-width, initial-scale=1" />
-        \\  <title>Techlead Observe</title>
-        \\  <style>
-        \\    :root { --bg:#0f172a; --card:#111827; --fg:#e5e7eb; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
-        \\    body { margin:0; font-family: ui-monospace, Menlo, Consolas, monospace; background:linear-gradient(135deg,#0b1220,#111827); color:var(--fg); }
-        \\    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
-        \\    .grid { display:grid; grid-template-columns:1fr; gap:12px; }
-        \\    .card { background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:10px; padding:12px; }
-        \\    h2 { margin:0 0 10px 0; font-size:14px; color:#cbd5e1; letter-spacing:.5px; }
-        \\    button { background:#1f2937; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px 10px; cursor:pointer; margin-right:8px; margin-bottom:8px; }
-        \\    button:hover { border-color:#64748b; }
-        \\    input { width:100%; box-sizing:border-box; background:#0b1220; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px; margin:8px 0; }
-        \\    pre { margin:0; white-space:pre-wrap; word-break:break-word; color:#cbd5e1; max-height:320px; overflow:auto; }
-        \\    .events { max-height:380px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
-        \\    .evt { border:1px solid #334155; border-left:4px solid #475569; border-radius:8px; padding:8px; background:#0b1220; }
-        \\    .evt-head { display:flex; gap:8px; align-items:center; font-size:12px; color:#cbd5e1; margin-bottom:4px; }
-        \\    .evt-id { color:#94a3b8; }
-        \\    .evt-src { color:#60a5fa; }
-        \\    .evt-type { color:#f8fafc; font-weight:600; }
-        \\    .evt-time { color:#94a3b8; margin-left:auto; }
-        \\    .evt-body { font-size:12px; color:#cbd5e1; white-space:pre-wrap; word-break:break-word; }
-        \\    .evt.ok { border-left-color:#22c55e; }
-        \\    .evt.warn { border-left-color:#f59e0b; }
-        \\    .evt.bad { border-left-color:#ef4444; }
-        \\    .muted { color:var(--muted); font-size:12px; }
-        \\    .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
-        \\  </style>
-        \\</head>
-        \\<body>
-        \\  <div class="wrap">
-        \\    <div class="grid">
-        \\      <div class="card">
-        \\        <h2>CONTROL</h2>
-        \\        <div>
-        \\          <button onclick="startRun('optimize')">start optimize</button>
-        \\          <button onclick="startRun('pool')">start pool</button>
-        \\        </div>
-        \\        <div>
-        \\          <button onclick="sendControl('pause')">pause</button>
-        \\          <button onclick="sendControl('resume')">resume</button>
-        \\          <button onclick="sendControl('abort')">abort</button>
-        \\        </div>
-        \\        <input id="prompt" placeholder="inject prompt..." />
-        \\        <button onclick="injectPrompt()">inject_prompt</button>
-        \\        <div id="status" class="muted">ready</div>
-        \\      </div>
-        \\      <div class="card">
-        \\        <h2>TASKS</h2>
-        \\        <pre id="tasks">loading...</pre>
-        \\      </div>
-        \\      <div class="card">
-        \\        <h2>SESSION CHAT</h2>
-        \\        <div>
-        \\          <button onclick="startSession()">start session</button>
-        \\        </div>
-        \\        <div id="session-meta" class="muted">session: (none)</div>
-        \\        <pre id="session-chat">(no session)</pre>
-        \\        <input id="session-input" placeholder="say something to agent..." />
-        \\        <button onclick="sendSessionMessage()">send message</button>
-        \\      </div>
-        \\      <div class="card">
-        \\        <h2>EVENTS (incremental)</h2>
-        \\        <div id="events" class="events"><div class="muted">(loading...)</div></div>
-        \\      </div>
-        \\    </div>
-        \\  </div>
-        \\<script>
-        \\const token = new URLSearchParams(location.search).get('token') || '';
-        \\if (token) { history.replaceState({}, '', location.pathname); }
-        \\let after = 0;
-        \\let sse = null;
-        \\let eventRows = [];
-        \\const H = token ? { 'Authorization': 'Bearer ' + token } : {};
-        \\function newReqId(){ return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
-        \\function setStatus(s, cls='muted'){ const el=document.getElementById('status'); el.className=cls; el.textContent=s; }
-        \\function pretty(v){
-        \\  if (v == null) return '';
-        \\  if (typeof v === 'string') {
-        \\    try { return JSON.stringify(JSON.parse(v)); } catch { return v; }
-        \\  }
-        \\  try { return JSON.stringify(v); } catch { return String(v); }
-        \\}
-        \\function classify(type){
-        \\  const t = String(type || '');
-        \\  if (t.includes('failed') || t.includes('abort') || t.includes('error')) return 'bad';
-        \\  if (t.includes('pause') || t.includes('warn') || t.includes('requeued')) return 'warn';
-        \\  if (t.includes('succeeded') || t.includes('completed') || t.includes('done')) return 'ok';
-        \\  return '';
-        \\}
-        \\function fmtTs(ts){
-        \\  if (!ts) return '-';
-        \\  const n = Number(ts) * 1000;
-        \\  if (!Number.isFinite(n)) return '-';
-        \\  return new Date(n).toLocaleTimeString();
-        \\}
-        \\function toViewRow(e){
-        \\  let inner = {};
-        \\  try { inner = JSON.parse(e.event_jsonl || '{}'); } catch { inner = { raw: e.event_jsonl || '' }; }
-        \\  const body = pretty(inner.payload || inner.raw || '');
-        \\  return {
-        \\    id: e.event_id,
-        \\    cls: classify(inner.event_type),
-        \\    source: inner.source || '-',
-        \\    type: inner.event_type || '-',
-        \\    time: fmtTs(inner.ts),
-        \\    body,
-        \\  };
-        \\}
-        \\function renderEvents(){
-        \\  const el = document.getElementById('events');
-        \\  if (!eventRows.length) {
-        \\    el.innerHTML = '<div class=\"muted\">(no events)</div>';
-        \\    return;
-        \\  }
-        \\  el.innerHTML = eventRows.map(r => `
-        \\    <div class=\"evt ${r.cls}\">
-        \\      <div class=\"evt-head\">
-        \\        <span class=\"evt-id\">#${r.id}</span>
-        \\        <span class=\"evt-src\">${r.source}</span>
-        \\        <span class=\"evt-type\">${r.type}</span>
-        \\        <span class=\"evt-time\">${r.time}</span>
-        \\      </div>
-        \\      <div class=\"evt-body\">${(r.body || '').replaceAll('<','&lt;').replaceAll('>','&gt;')}</div>
-        \\    </div>
-        \\  `).join('');
-        \\  el.scrollTop = el.scrollHeight;
-        \\}
-        \\function ingestEvents(obj){
-        \\  if (obj.last_event_id) after = obj.last_event_id;
-        \\  const rows = (obj.events || []).map(toViewRow);
-        \\  if (!rows.length) return;
-        \\  eventRows = eventRows.concat(rows).slice(-300);
-        \\  renderEvents();
-        \\}
-        \\async function refreshTasks(){
-        \\  const r = await fetch('/tasks', { headers: H });
-        \\  const txt = await r.text();
-        \\  try { document.getElementById('tasks').textContent = JSON.stringify(JSON.parse(txt), null, 2); }
-        \\  catch { document.getElementById('tasks').textContent = txt; }
-        \\}
-        \\async function refreshSession(){
-        \\  if(!token){ return; }
-        \\  const r = await fetch('/sessions/current', { headers: H });
-        \\  const txt = await r.text();
-        \\  try{
-        \\    const s = JSON.parse(txt);
-        \\    if(!s.session_id){ document.getElementById('session-meta').textContent = 'session: (none)'; document.getElementById('session-chat').textContent='(no session)'; return; }
-        \\    document.getElementById('session-meta').textContent = `session: ${s.session_id} | ${s.status} | ${s.provider}`;
-        \\    const lines = (s.messages||[]).slice(-80).map(m => `[${m.role}] ${m.content}`);
-        \\    document.getElementById('session-chat').textContent = lines.join('\\n\\n') || '(empty)';
-        \\  } catch {}
-        \\}
-        \\async function startSession(){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('starting session ...');
-        \\  const r = await fetch('/sessions/start', {
-        \\    method:'POST',
-        \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ provider:'codex', request_id })
-        \\  });
-        \\  const t = await r.text();
-        \\  setStatus(t, r.ok ? 'ok' : 'bad');
-        \\  await refreshSession();
-        \\}
-        \\async function sendSessionMessage(){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const message = document.getElementById('session-input').value || '';
-        \\  if(!message.trim()){ setStatus('message empty','warn'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('sending message ...');
-        \\  const r = await fetch('/sessions/current/message', {
-        \\    method:'POST',
-        \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ message, request_id })
-        \\  });
-        \\  const t = await r.text();
-        \\  setStatus(t, r.ok ? 'ok' : 'bad');
-        \\  if(r.ok){ document.getElementById('session-input').value = ''; await refreshSession(); }
-        \\}
-        \\async function refreshEvents(){
-        \\  const r = await fetch('/runs/current/events?after='+after, { headers: H });
-        \\  const txt = await r.text();
-        \\  try {
-        \\    ingestEvents(JSON.parse(txt));
-        \\  } catch {
-        \\    document.getElementById('events').innerHTML = '<div class=\"bad\">failed to parse events</div>';
-        \\  }
-        \\}
-        \\function startSSE(){
-        \\  // EventSource cannot carry Authorization headers reliably; keep polling mode only.
-        \\  return;
-        \\}
-        \\async function sendControl(action){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('sending '+action+' ...');
-        \\  const r = await fetch('/runs/current/control', {
-        \\    method: 'POST',
-        \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ action, request_id })
-        \\  });
-        \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
-        \\}
-        \\async function startRun(mode){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('starting '+mode+' ...');
-        \\  const r = await fetch('/runs/start', {
-        \\    method: 'POST',
-        \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ mode, request_id })
-        \\  });
-        \\  const t = await r.text();
-        \\  setStatus(t, r.ok ? 'ok' : 'bad');
-        \\}
-        \\async function injectPrompt(){
-        \\  if(!token){ setStatus('missing token','bad'); return; }
-        \\  const p = document.getElementById('prompt').value || '';
-        \\  if(!p){ setStatus('prompt empty','warn'); return; }
-        \\  const request_id = newReqId();
-        \\  setStatus('injecting ...');
-        \\  const r = await fetch('/runs/current/control', {
-        \\    method: 'POST',
-        \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
-        \\    body: JSON.stringify({ action: 'inject_prompt', prompt: p, request_id })
-        \\  });
-        \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
-        \\}
-        \\refreshTasks(); refreshEvents(); refreshSession(); startSSE();
-        \\setInterval(refreshTasks, 3000);
-        \\setInterval(refreshSession, 2500);
-        \\setInterval(() => { if(!sse) refreshEvents(); }, 1500);
-        \\</script>
-        \\</body>
-        \\</html>
+    return 
+    \\<!doctype html>
+    \\<html>
+    \\<head>
+    \\  <meta charset="utf-8" />
+    \\  <meta name="viewport" content="width=device-width, initial-scale=1" />
+    \\  <title>Techlead Observe</title>
+    \\  <style>
+    \\    :root { --bg:#0f172a; --card:#111827; --fg:#e5e7eb; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
+    \\    body { margin:0; font-family: ui-monospace, Menlo, Consolas, monospace; background:linear-gradient(135deg,#0b1220,#111827); color:var(--fg); }
+    \\    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
+    \\    .grid { display:grid; grid-template-columns:1fr; gap:12px; }
+    \\    .card { background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:10px; padding:12px; }
+    \\    h2 { margin:0 0 10px 0; font-size:14px; color:#cbd5e1; letter-spacing:.5px; }
+    \\    button { background:#1f2937; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px 10px; cursor:pointer; margin-right:8px; margin-bottom:8px; }
+    \\    button:hover { border-color:#64748b; }
+    \\    input { width:100%; box-sizing:border-box; background:#0b1220; color:var(--fg); border:1px solid #334155; border-radius:8px; padding:8px; margin:8px 0; }
+    \\    pre { margin:0; white-space:pre-wrap; word-break:break-word; color:#cbd5e1; max-height:320px; overflow:auto; }
+    \\    .events { max-height:380px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+    \\    .evt { border:1px solid #334155; border-left:4px solid #475569; border-radius:8px; padding:8px; background:#0b1220; }
+    \\    .evt-head { display:flex; gap:8px; align-items:center; font-size:12px; color:#cbd5e1; margin-bottom:4px; }
+    \\    .evt-id { color:#94a3b8; }
+    \\    .evt-src { color:#60a5fa; }
+    \\    .evt-type { color:#f8fafc; font-weight:600; }
+    \\    .evt-time { color:#94a3b8; margin-left:auto; }
+    \\    .evt-body { font-size:12px; color:#cbd5e1; white-space:pre-wrap; word-break:break-word; }
+    \\    .evt.ok { border-left-color:#22c55e; }
+    \\    .evt.warn { border-left-color:#f59e0b; }
+    \\    .evt.bad { border-left-color:#ef4444; }
+    \\    .muted { color:var(--muted); font-size:12px; }
+    \\    .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+    \\  </style>
+    \\</head>
+    \\<body>
+    \\  <div class="wrap">
+    \\    <div class="grid">
+    \\      <div class="card">
+    \\        <h2>CONTROL</h2>
+    \\        <div>
+    \\          <button onclick="startRun('optimize')">start optimize</button>
+    \\          <button onclick="startRun('pool')">start pool</button>
+    \\        </div>
+    \\        <div>
+    \\          <button onclick="sendControl('pause')">pause</button>
+    \\          <button onclick="sendControl('resume')">resume</button>
+    \\          <button onclick="sendControl('abort')">abort</button>
+    \\        </div>
+    \\        <input id="prompt" placeholder="inject prompt..." />
+    \\        <button onclick="injectPrompt()">inject_prompt</button>
+    \\        <div id="status" class="muted">ready</div>
+    \\      </div>
+    \\      <div class="card">
+    \\        <h2>TASKS</h2>
+    \\        <pre id="tasks">loading...</pre>
+    \\      </div>
+    \\      <div class="card">
+    \\        <h2>SESSION CHAT</h2>
+    \\        <div>
+    \\          <button onclick="startSession()">start session</button>
+    \\        </div>
+    \\        <div id="session-meta" class="muted">session: (none)</div>
+    \\        <pre id="session-chat">(no session)</pre>
+    \\        <input id="session-input" placeholder="say something to agent..." />
+    \\        <button onclick="sendSessionMessage()">send message</button>
+    \\      </div>
+    \\      <div class="card">
+    \\        <h2>EVENTS (incremental)</h2>
+    \\        <div id="events" class="events"><div class="muted">(loading...)</div></div>
+    \\      </div>
+    \\    </div>
+    \\  </div>
+    \\<script>
+    \\const token = new URLSearchParams(location.search).get('token') || '';
+    \\if (token) { history.replaceState({}, '', location.pathname); }
+    \\let after = 0;
+    \\let sse = null;
+    \\let eventRows = [];
+    \\const H = token ? { 'Authorization': 'Bearer ' + token } : {};
+    \\function newReqId(){ return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
+    \\function setStatus(s, cls='muted'){ const el=document.getElementById('status'); el.className=cls; el.textContent=s; }
+    \\function pretty(v){
+    \\  if (v == null) return '';
+    \\  if (typeof v === 'string') {
+    \\    try { return JSON.stringify(JSON.parse(v)); } catch { return v; }
+    \\  }
+    \\  try { return JSON.stringify(v); } catch { return String(v); }
+    \\}
+    \\function classify(type){
+    \\  const t = String(type || '');
+    \\  if (t.includes('failed') || t.includes('abort') || t.includes('error')) return 'bad';
+    \\  if (t.includes('pause') || t.includes('warn') || t.includes('requeued')) return 'warn';
+    \\  if (t.includes('succeeded') || t.includes('completed') || t.includes('done')) return 'ok';
+    \\  return '';
+    \\}
+    \\function fmtTs(ts){
+    \\  if (!ts) return '-';
+    \\  const n = Number(ts) * 1000;
+    \\  if (!Number.isFinite(n)) return '-';
+    \\  return new Date(n).toLocaleTimeString();
+    \\}
+    \\function escapeHtml(value){
+    \\  const s = value == null ? '' : String(value);
+    \\  return s
+    \\    .replace(/&/g, '&amp;')
+    \\    .replace(/</g, '&lt;')
+    \\    .replace(/>/g, '&gt;')
+    \\    .replace(/"/g, '&quot;')
+    \\    .replace(/'/g, '&#39;');
+    \\}
+    \\function toViewRow(e){
+    \\  let inner = {};
+    \\  try { inner = JSON.parse(e.event_jsonl || '{}'); } catch { inner = { raw: e.event_jsonl || '' }; }
+    \\  const body = pretty(inner.payload || inner.raw || '');
+    \\  return {
+    \\    id: e.event_id,
+    \\    cls: classify(inner.event_type),
+    \\    source: inner.source || '-',
+    \\    type: inner.event_type || '-',
+    \\    time: fmtTs(inner.ts),
+    \\    body,
+    \\  };
+    \\}
+    \\function renderEvents(){
+    \\  const el = document.getElementById('events');
+    \\  if (!eventRows.length) {
+    \\    el.innerHTML = '<div class=\"muted\">(no events)</div>';
+    \\    return;
+    \\  }
+    \\  el.innerHTML = eventRows.map(r => `
+    \\    <div class=\"evt ${r.cls}\">
+    \\      <div class=\"evt-head\">
+    \\        <span class=\"evt-id\">#${escapeHtml(r.id)}</span>
+    \\        <span class=\"evt-src\">${escapeHtml(r.source)}</span>
+    \\        <span class=\"evt-type\">${escapeHtml(r.type)}</span>
+    \\        <span class=\"evt-time\">${escapeHtml(r.time)}</span>
+    \\      </div>
+    \\      <div class=\"evt-body\">${escapeHtml(r.body)}</div>
+    \\    </div>
+    \\  `).join('');
+    \\  el.scrollTop = el.scrollHeight;
+    \\}
+    \\function ingestEvents(obj){
+    \\  if (obj.last_event_id) after = obj.last_event_id;
+    \\  const rows = (obj.events || []).map(toViewRow);
+    \\  if (!rows.length) return;
+    \\  eventRows = eventRows.concat(rows).slice(-300);
+    \\  renderEvents();
+    \\}
+    \\async function refreshTasks(){
+    \\  const r = await fetch('/tasks', { headers: H });
+    \\  const txt = await r.text();
+    \\  try { document.getElementById('tasks').textContent = JSON.stringify(JSON.parse(txt), null, 2); }
+    \\  catch { document.getElementById('tasks').textContent = txt; }
+    \\}
+    \\async function refreshSession(){
+    \\  if(!token){ return; }
+    \\  const r = await fetch('/sessions/current', { headers: H });
+    \\  const txt = await r.text();
+    \\  try{
+    \\    const s = JSON.parse(txt);
+    \\    if(!s.session_id){ document.getElementById('session-meta').textContent = 'session: (none)'; document.getElementById('session-chat').textContent='(no session)'; return; }
+    \\    document.getElementById('session-meta').textContent = `session: ${s.session_id} | ${s.status} | ${s.provider}`;
+    \\    const lines = (s.messages||[]).slice(-80).map(m => `[${m.role}] ${m.content}`);
+    \\    document.getElementById('session-chat').textContent = lines.join('\\n\\n') || '(empty)';
+    \\  } catch {}
+    \\}
+    \\async function startSession(){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('starting session ...');
+    \\  const r = await fetch('/sessions/start', {
+    \\    method:'POST',
+    \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ provider:'codex', request_id })
+    \\  });
+    \\  const t = await r.text();
+    \\  setStatus(t, r.ok ? 'ok' : 'bad');
+    \\  await refreshSession();
+    \\}
+    \\async function sendSessionMessage(){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const message = document.getElementById('session-input').value || '';
+    \\  if(!message.trim()){ setStatus('message empty','warn'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('sending message ...');
+    \\  const r = await fetch('/sessions/current/message', {
+    \\    method:'POST',
+    \\    headers: { ...H, 'Content-Type':'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ message, request_id })
+    \\  });
+    \\  const t = await r.text();
+    \\  setStatus(t, r.ok ? 'ok' : 'bad');
+    \\  if(r.ok){ document.getElementById('session-input').value = ''; await refreshSession(); }
+    \\}
+    \\async function refreshEvents(){
+    \\  const r = await fetch('/runs/current/events?after='+after, { headers: H });
+    \\  const txt = await r.text();
+    \\  try {
+    \\    ingestEvents(JSON.parse(txt));
+    \\  } catch {
+    \\    document.getElementById('events').innerHTML = '<div class=\"bad\">failed to parse events</div>';
+    \\  }
+    \\}
+    \\function startSSE(){
+    \\  // EventSource cannot carry Authorization headers reliably; keep polling mode only.
+    \\  return;
+    \\}
+    \\async function sendControl(action){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('sending '+action+' ...');
+    \\  const r = await fetch('/runs/current/control', {
+    \\    method: 'POST',
+    \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ action, request_id })
+    \\  });
+    \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
+    \\}
+    \\async function startRun(mode){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('starting '+mode+' ...');
+    \\  const r = await fetch('/runs/start', {
+    \\    method: 'POST',
+    \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ mode, request_id })
+    \\  });
+    \\  const t = await r.text();
+    \\  setStatus(t, r.ok ? 'ok' : 'bad');
+    \\}
+    \\async function injectPrompt(){
+    \\  if(!token){ setStatus('missing token','bad'); return; }
+    \\  const p = document.getElementById('prompt').value || '';
+    \\  if(!p){ setStatus('prompt empty','warn'); return; }
+    \\  const request_id = newReqId();
+    \\  setStatus('injecting ...');
+    \\  const r = await fetch('/runs/current/control', {
+    \\    method: 'POST',
+    \\    headers: { ...H, 'Content-Type': 'application/json', 'X-Request-Id': request_id },
+    \\    body: JSON.stringify({ action: 'inject_prompt', prompt: p, request_id })
+    \\  });
+    \\  setStatus(await r.text(), r.ok ? 'ok' : 'bad');
+    \\}
+    \\refreshTasks(); refreshEvents(); refreshSession(); startSSE();
+    \\setInterval(refreshTasks, 3000);
+    \\setInterval(refreshSession, 2500);
+    \\setInterval(() => { if(!sse) refreshEvents(); }, 1500);
+    \\</script>
+    \\</body>
+    \\</html>
     ;
 }

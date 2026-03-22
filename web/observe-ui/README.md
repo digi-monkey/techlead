@@ -1,9 +1,9 @@
 # Observe UI (Vite + React + TypeScript + Tailwind)
 
-工程化版前端控制台，覆盖三个模式：
-- `Observe`：事件流与任务面板
-- `Control`：run 启动与 pause/resume/abort/ask 控制
-- `Session`：远程 agent 会话启动与消息交互
+工程化版前端控制台，聚焦 `Agent Session` 远程操控：
+- Session 对话（启动会话、发送消息）
+- Run 控制（start/pause/resume/abort/ask）
+- 事件流观察（增量刷新）
 
 ## 启动开发
 
@@ -41,11 +41,23 @@ pnpm dev
 VITE_BACKEND_URL=http://127.0.0.1:7810 pnpm dev
 ```
 
-## Token 用法
+## 扫码连接（推荐）
 
-- 页面会自动读取 URL 参数 `?token=...` 作为初始 token。
-- UI 顶部支持分别填写 `observe token` 与 `control token`。
-- 若你只粘贴一个 token，到需要另一类权限的操作会返回 `401`。
+后端启动后会输出扫码链接（`/connect?...`）和终端二维码（需安装 `qrencode`），前端扫码后会自动：
+
+1. 调用 `POST /auth/token/exchange`
+2. 写入 HttpOnly Cookie（observe/control）
+3. 清理 URL 中的敏感参数
+
+默认不需要手动填写 token。
+
+前端操作入口：
+- `Scan QR`：打开摄像头扫码入口，识别后自动触发换票授权
+
+## Token 兼容模式（调试）
+
+- 页面仍兼容 `?token=` / `?observe_token=` / `?control_token=`。
+- 如需手工指定 token，可在页面里打开 `Show Token Debug`。
 
 ## 构建
 

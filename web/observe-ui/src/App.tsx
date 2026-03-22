@@ -1,458 +1,283 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { Sidebar } from './components/Sidebar'
-import { apiRequest, newRequestId, toEventRows } from './lib/api'
-import { ControlView } from './views/ControlView'
-import { ObserveView } from './views/ObserveView'
+import { apiRequest, newRequestId } from './lib/api'
+import { extractBootstrapParams, readAuthQuery } from './lib/auth'
+import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
+import { useQrScanner } from './hooks/useQrScanner'
+import { useSessionOutbox } from './hooks/useSessionOutbox'
+import { useSessionPolling } from './hooks/useSessionPolling'
 import { SessionView } from './views/SessionView'
-import { TasksView } from './views/TasksView'
-import {
-  MODE_META,
-  type EventRow,
-  type JsonValue,
-  type Mode,
-  type SessionMessage,
-  type StatusTone,
-  type TaskDetailResponse,
-  type TaskListResponse,
-} from './types'
+import type { JsonValue } from './types'
+
+type SessionProvider = 'codex' | 'opencode'
+const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 
 export default function App() {
-  const queryTokens = useMemo(() => {
-    const params = new URLSearchParams(window.location.search)
-    const shared = params.get('token') ?? ''
-    return {
-      observe: params.get('observe_token') ?? shared,
-      control: params.get('control_token') ?? params.get('ctrl_token') ?? shared,
+  const query = useMemo(() => readAuthQuery(window.location.search), [])
+
+  const [observeToken, setObserveToken] = useState(query.observe)
+  const [controlToken, setControlToken] = useState(query.control)
+  const [showTokenDebug, setShowTokenDebug] = useState(false)
+
+  const [showScanner, setShowScanner] = useState(false)
+  const [sessionInput, setSessionInput] = useState('')
+  const [isEndingSession, setIsEndingSession] = useState(false)
+  const [sessionProvider, setSessionProvider] = useState<SessionProvider>(() => {
+    const raw = window.localStorage.getItem(SESSION_PROVIDER_STORAGE_KEY)
+    return raw === 'opencode' ? 'opencode' : 'codex'
+  })
+
+  const sessionInputRef = useRef(sessionInput)
+  sessionInputRef.current = sessionInput
+
+  const observeAuth = observeToken.trim() || undefined
+  const controlAuth = controlToken.trim() || undefined
+  const isDebugBuild = import.meta.env.DEV
+
+  useEffect(() => {
+    window.localStorage.setItem(SESSION_PROVIDER_STORAGE_KEY, sessionProvider)
+  }, [sessionProvider])
+
+  const {
+    outboxRef,
+    pendingCommands,
+    updateOutbox,
+    enqueueMessage,
+    retryCommandNow,
+    clearOutbox,
+    reconcileFromSessionState,
+  } = useSessionOutbox()
+
+  const {
+    sessionState,
+    sessionSync,
+    sessionStatus,
+    sessionInFlightRequestId,
+    sessionMessages,
+  } = useSessionPolling({
+    observeAuth,
+    outboxRef,
+    reconcileFromSessionState,
+  })
+
+  const isSessionBusy = pendingCommands.length > 0 || sessionStatus === 'processing'
+
+  const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
+    try {
+      await apiRequest<JsonValue>('/auth/token/exchange', undefined, {
+        method: 'POST',
+        body: JSON.stringify({ bootstrap_id: bootstrapId, code }),
+      })
+      setObserveToken('')
+      setControlToken('')
+      return true
+    } catch (err) {
+      return false
     }
   }, [])
 
-  const [mode, setMode] = useState<Mode>('observe')
-  const [observeToken, setObserveToken] = useState(queryTokens.observe)
-  const [controlToken, setControlToken] = useState(queryTokens.control)
-  const [statusText, setStatusText] = useState('ready')
-  const [statusTone, setStatusTone] = useState<StatusTone>('idle')
-
-  const [after, setAfter] = useState(0)
-  const [events, setEvents] = useState<EventRow[]>([])
-  const [tasksRaw, setTasksRaw] = useState('{"tasks":[]}')
-  const [tasksList, setTasksList] = useState<TaskListResponse>({
-    tasks: [],
-    summary: {},
-    cursor: 0,
-    next_cursor: null,
-    limit: 50,
-    total: 0,
-  })
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [taskDetail, setTaskDetail] = useState<TaskDetailResponse | null>(null)
-  const [taskStatusFilter, setTaskStatusFilter] = useState('')
-  const [taskSearch, setTaskSearch] = useState('')
-  const [createTitle, setCreateTitle] = useState('')
-  const [createPrompt, setCreatePrompt] = useState('')
-  const [createPriority, setCreatePriority] = useState('0')
-  const [createMaxRetries, setCreateMaxRetries] = useState('')
-  const [editTitle, setEditTitle] = useState('')
-  const [editPrompt, setEditPrompt] = useState('')
-  const [editPriority, setEditPriority] = useState('0')
-  const [editMaxRetries, setEditMaxRetries] = useState('')
-
-  const [runMode, setRunMode] = useState<'optimize' | 'pool'>('optimize')
-  const [askPrompt, setAskPrompt] = useState('')
-
-  const [sessionState, setSessionState] = useState<JsonValue>({})
-  const [sessionInput, setSessionInput] = useState('')
-
-  const sessionMessages = (Array.isArray(sessionState.messages) ? sessionState.messages : []) as SessionMessage[]
-
-  async function refreshSessionOnce() {
-    try {
-      const resp = await apiRequest<JsonValue>('/sessions/current', observeToken)
-      setSessionState(resp)
-    } catch (err) {
-      setStatusTone('warn')
-      setStatusText(`refresh session failed: ${(err as Error).message}`)
-    }
-  }
-
-  async function refreshTasksList() {
-    const params = new URLSearchParams()
-    params.set('limit', '100')
-    if (taskStatusFilter) params.set('status', taskStatusFilter)
-    if (taskSearch.trim()) params.set('q', taskSearch.trim())
-    const list = await apiRequest<TaskListResponse>(`/tasks?${params.toString()}`, observeToken)
-    setTasksList(list)
-    setTasksRaw(JSON.stringify(list, null, 2))
-    if (selectedTaskId && !list.tasks.some((t) => t.task_id === selectedTaskId)) {
-      setSelectedTaskId(null)
-      setTaskDetail(null)
-    }
-  }
-
-  async function refreshTaskDetail(taskId: string) {
-    const detail = await apiRequest<TaskDetailResponse>(`/tasks/${encodeURIComponent(taskId)}`, observeToken)
-    setTaskDetail(detail)
-    setEditTitle(detail.task.title)
-    setEditPrompt(detail.task.prompt ?? '')
-    setEditPriority(String(detail.task.priority))
-    setEditMaxRetries(detail.task.max_retries == null ? '' : String(detail.task.max_retries))
-  }
-
-  async function createTask() {
-    if (!createTitle.trim()) {
-      setStatusTone('warn')
-      setStatusText('title required')
+  const applyScannedPayload = useCallback(async (rawPayload: string, setScannerHint: (status: string) => void) => {
+    const parsed = extractBootstrapParams(rawPayload)
+    if (!parsed) {
+      setScannerHint('invalid payload: missing bootstrap_id/code')
       return
     }
+
+    setScannerHint('ticket parsed, authorizing...')
+    const ok = await exchangeBootstrapTicket(parsed.bootstrapId, parsed.code)
+    setScannerHint(ok ? 'connected via scan' : 'authorization failed')
+  }, [exchangeBootstrapTicket])
+
+  const { scannerStatus, scannerActive, scannerVideoRef, startScanner, stopScanner } = useQrScanner({ onPayload: applyScannedPayload })
+
+  const handleRetryCommand = useCallback((requestId: string) => {
+    retryCommandNow(requestId)
+  }, [retryCommandNow])
+
+  const handleSessionInputChange = useCallback((value: string) => {
+    setSessionInput(value)
+  }, [])
+
+  const handleSessionProviderChange = useCallback((value: SessionProvider) => {
+    setSessionProvider(value)
+  }, [])
+
+  const startSession = useCallback(async () => {
     try {
       const requestId = newRequestId()
-      await apiRequest<JsonValue>('/tasks', controlToken, {
+      await apiRequest<JsonValue>('/sessions/start', controlAuth, {
         method: 'POST',
         headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({
-          title: createTitle.trim(),
-          prompt: createPrompt || null,
-          priority: Number(createPriority || '0'),
-          max_retries: createMaxRetries.trim() ? Number(createMaxRetries) : null,
-          request_id: requestId,
-        }),
+        body: JSON.stringify({ provider: sessionProvider, request_id: requestId }),
       })
-      setCreateTitle('')
-      setCreatePrompt('')
-      setCreatePriority('0')
-      setCreateMaxRetries('')
-      await refreshTasksList()
-      setStatusTone('ok')
-      setStatusText('task created')
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
-    }
-  }
-
-  async function patchSelectedTask() {
-    if (!selectedTaskId || !taskDetail) return
-    try {
-      const requestId = newRequestId()
-      await apiRequest<JsonValue>(`/tasks/${encodeURIComponent(selectedTaskId)}`, controlToken, {
-        method: 'PATCH',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({
-          title: editTitle,
-          prompt: editPrompt,
-          priority: Number(editPriority || '0'),
-          max_retries: editMaxRetries.trim() ? Number(editMaxRetries) : null,
-          version: taskDetail.task.version,
-          request_id: requestId,
-        }),
-      })
-      await refreshTaskDetail(selectedTaskId)
-      await refreshTasksList()
-      setStatusTone('ok')
-      setStatusText('task updated')
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
-    }
-  }
-
-  async function runTaskAction(action: 'requeue' | 'cancel' | 'resume' | 'force_fail') {
-    if (!selectedTaskId) return
-    try {
-      const requestId = newRequestId()
-      await apiRequest<JsonValue>(`/tasks/${encodeURIComponent(selectedTaskId)}/actions`, controlToken, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({ action, request_id: requestId }),
-      })
-      await refreshTaskDetail(selectedTaskId)
-      await refreshTasksList()
-      setStatusTone('ok')
-      setStatusText(`task action: ${action}`)
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
-    }
-  }
-
-  async function startRun() {
-    try {
-      const requestId = newRequestId()
-      const result = await apiRequest<JsonValue>('/runs/start', controlToken, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({ mode: runMode, request_id: requestId }),
-      })
-      setStatusTone('ok')
-      setStatusText(JSON.stringify(result))
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
-    }
-  }
-
-  async function controlRun(action: 'pause' | 'resume' | 'abort' | 'ask') {
-    try {
-      const requestId = newRequestId()
-      const payload: JsonValue = { action, request_id: requestId }
-      if (action === 'ask') payload.prompt = askPrompt
-      const result = await apiRequest<JsonValue>('/runs/current/control', controlToken, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify(payload),
-      })
-      setStatusTone('ok')
-      setStatusText(JSON.stringify(result))
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
-    }
-  }
-
-  async function startSession() {
-    try {
-      const requestId = newRequestId()
-      const result = await apiRequest<JsonValue>('/sessions/start', controlToken, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({ provider: 'codex', request_id: requestId }),
-      })
-      setStatusTone('ok')
-      setStatusText(JSON.stringify(result))
-      await refreshSessionOnce()
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
-    }
-  }
-
-  async function sendSessionMessage() {
-    if (!sessionInput.trim()) {
-      setStatusTone('warn')
-      setStatusText('message empty')
-      return
-    }
-    try {
-      const requestId = newRequestId()
-      const result = await apiRequest<JsonValue>('/sessions/current/message', controlToken, {
-        method: 'POST',
-        headers: { 'X-Request-Id': requestId },
-        body: JSON.stringify({ message: sessionInput, request_id: requestId }),
-      })
-      setStatusTone('ok')
-      setStatusText(JSON.stringify(result))
+      clearOutbox()
       setSessionInput('')
-      await refreshSessionOnce()
-    } catch (err) {
-      setStatusTone('bad')
-      setStatusText((err as Error).message)
+    } catch {
+      void 0
     }
-  }
+  }, [controlAuth, sessionProvider, clearOutbox])
+
+  const endSession = useCallback(async () => {
+    if (isEndingSession) return
+    setIsEndingSession(true)
+    try {
+      const requestId = newRequestId()
+      await apiRequest<JsonValue>('/sessions/current/end', controlAuth, {
+        method: 'POST',
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({ request_id: requestId }),
+      })
+      clearOutbox()
+      setSessionInput('')
+    } catch {
+      void 0
+    } finally {
+      setIsEndingSession(false)
+    }
+  }, [controlAuth, clearOutbox, isEndingSession])
+
+  const sendSessionMessage = useCallback(() => {
+    const result = enqueueMessage(sessionInputRef.current)
+    if (!result.ok) return
+    setSessionInput('')
+  }, [enqueueMessage])
 
   useEffect(() => {
-    if (!observeToken) return
-
-    let cancelled = false
-    const tick = async () => {
-      try {
-        const eventBody = await apiRequest<{ events?: unknown[]; last_event_id?: number }>(`/runs/current/events?after=${after}`, observeToken)
-        if (cancelled) return
-
-        const rows = toEventRows(eventBody.events ?? [])
-        if (rows.length > 0) {
-          setEvents((prev) => prev.concat(rows).slice(-300))
-        }
-        if (typeof eventBody.last_event_id === 'number' && eventBody.last_event_id > after) {
-          setAfter(eventBody.last_event_id)
-        }
-      } catch (err) {
-        if (cancelled) return
-        setStatusTone('warn')
-        setStatusText(`refresh observe failed: ${(err as Error).message}`)
+    const removeQuerySecrets = () => {
+      if (query.hasSensitive) {
+        history.replaceState({}, '', location.pathname)
       }
     }
 
-    const warmup = window.setTimeout(() => {
-      void tick()
-    }, 0)
-    const timer = window.setInterval(() => {
-      void tick()
-    }, 2500)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(warmup)
-      window.clearInterval(timer)
-    }
-  }, [observeToken, after])
-
-  useEffect(() => {
-    if (!observeToken) return
-    let cancelled = false
-    const tick = async () => {
-      try {
-        await refreshTasksList()
-      } catch (err) {
-        if (cancelled) return
-        setStatusTone('warn')
-        setStatusText(`refresh tasks failed: ${(err as Error).message}`)
+    const exchange = async () => {
+      if (!query.bootstrapId || !query.code) {
+        removeQuerySecrets()
+        return
       }
-    }
-    const warmup = window.setTimeout(() => {
-      void tick()
-    }, 0)
-    const timer = window.setInterval(() => {
-      void tick()
-    }, 3000)
-    return () => {
-      cancelled = true
-      window.clearTimeout(warmup)
-      window.clearInterval(timer)
-    }
-  }, [observeToken, taskStatusFilter, taskSearch])
 
-  useEffect(() => {
-    if (!observeToken || !selectedTaskId) {
-      setTaskDetail(null)
-      return
-    }
-    let cancelled = false
-    const tick = async () => {
-      try {
-        const detail = await apiRequest<TaskDetailResponse>(`/tasks/${encodeURIComponent(selectedTaskId)}`, observeToken)
-        if (cancelled) return
-        setTaskDetail(detail)
-        setEditTitle(detail.task.title)
-        setEditPrompt(detail.task.prompt ?? '')
-        setEditPriority(String(detail.task.priority))
-        setEditMaxRetries(detail.task.max_retries == null ? '' : String(detail.task.max_retries))
-      } catch (err) {
-        if (cancelled) return
-        setStatusTone('warn')
-        setStatusText(`refresh task detail failed: ${(err as Error).message}`)
-      }
-    }
-    const warmup = window.setTimeout(() => {
-      void tick()
-    }, 0)
-    const timer = window.setInterval(() => {
-      void tick()
-    }, 3000)
-    return () => {
-      cancelled = true
-      window.clearTimeout(warmup)
-      window.clearInterval(timer)
-    }
-  }, [observeToken, selectedTaskId])
-
-  useEffect(() => {
-    if (!observeToken) return
-
-    let cancelled = false
-    const tick = async () => {
-      try {
-        const resp = await apiRequest<JsonValue>('/sessions/current', observeToken)
-        if (cancelled) return
-        setSessionState(resp)
-      } catch (err) {
-        if (cancelled) return
-        setStatusTone('warn')
-        setStatusText(`refresh session failed: ${(err as Error).message}`)
-      }
+      removeQuerySecrets()
+      await exchangeBootstrapTicket(query.bootstrapId, query.code)
     }
 
-    const warmup = window.setTimeout(() => {
-      void tick()
-    }, 0)
-    const timer = window.setInterval(() => {
-      void tick()
-    }, 2500)
+    void exchange()
+    return undefined
+  }, [exchangeBootstrapTicket, query.bootstrapId, query.code, query.hasSensitive])
 
-    return () => {
-      cancelled = true
-      window.clearTimeout(warmup)
-      window.clearInterval(timer)
-    }
-  }, [observeToken])
-
-  const meta = MODE_META[mode]
+  useOutboxDispatcher({
+    controlAuth,
+    outboxRef,
+    sessionStatus,
+    sessionInFlightRequestId,
+    updateOutbox,
+  })
 
   return (
-    <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-4 md:p-6 lg:grid-cols-[280px_1fr]">
-      <Sidebar
-        mode={mode}
-        onModeChange={setMode}
-        statusText={statusText}
-        statusTone={statusTone}
-        observeToken={observeToken}
-        controlToken={controlToken}
-        onObserveTokenChange={setObserveToken}
-        onControlTokenChange={setControlToken}
-      />
+    <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col">
+      <header className="bg-slate-900 py-3 text-white">
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold sm:text-lg">techlead</h1>
+          </div>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowScanner((prev) => {
+                  const next = !prev
+                  if (!next) stopScanner()
+                  return next
+                })
+              }}
+              className="rounded-xl bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 sm:px-3"
+            >
+              {showScanner ? 'Hide QR' : 'Scan QR'}
+            </button>
+            {isDebugBuild ? (
+              <button
+                type="button"
+                onClick={() => setShowTokenDebug((v) => !v)}
+                className="rounded-xl bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 sm:px-3"
+              >
+                {showTokenDebug ? 'Hide' : 'Debug'}
+              </button>
+            ) : null}
+          </div>
+        </div>
 
-      <main className="space-y-4">
-        <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">{meta.title}</h2>
-          <p className="mt-1 text-sm text-slate-600">{meta.subtitle}</p>
-        </header>
+        {showScanner ? (
+          <div className="mt-2 bg-slate-50 p-2 text-xs text-slate-700 sm:mt-3 sm:p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void startScanner()}
+                disabled={scannerActive}
+                className="rounded-xl bg-white px-3 py-1.5 text-xs hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Start Camera
+              </button>
+              <button
+                type="button"
+                onClick={() => stopScanner()}
+                disabled={!scannerActive}
+                className="rounded-xl bg-white px-3 py-1.5 text-xs hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Stop
+              </button>
+              <span className="text-slate-500">{scannerStatus}</span>
+            </div>
 
-        {mode === 'observe' && <ObserveView events={events} tasksRaw={tasksRaw} />}
+            <video
+              ref={scannerVideoRef}
+              muted
+              playsInline
+              autoPlay
+              className={`mt-2 max-h-48 w-full rounded-xl bg-black object-cover sm:max-h-56 ${scannerActive ? '' : 'hidden'}`}
+            />
+          </div>
+        ) : null}
 
-        {mode === 'control' && (
-          <ControlView
-            runMode={runMode}
-            askPrompt={askPrompt}
-            onRunModeChange={setRunMode}
-            onAskPromptChange={setAskPrompt}
-            onStartRun={startRun}
-            onControlRun={controlRun}
-          />
-        )}
+        {isDebugBuild && showTokenDebug ? (
+          <div className="mt-2 grid gap-2 bg-slate-50 p-2 sm:mt-3 sm:grid-cols-2 sm:p-3">
+            <label className="block text-xs font-medium text-slate-600">
+              Observe Token
+              <input
+                className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:bg-white"
+                value={observeToken}
+                onChange={(e) => setObserveToken(e.target.value.trim())}
+                placeholder="observe token"
+              />
+            </label>
+            <label className="block text-xs font-medium text-slate-600">
+              Control Token
+              <input
+                className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:bg-white"
+                value={controlToken}
+                onChange={(e) => setControlToken(e.target.value.trim())}
+                placeholder="control token"
+              />
+            </label>
+          </div>
+        ) : null}
+      </header>
 
-        {mode === 'tasks' && (
-          <TasksView
-            list={tasksList}
-            selectedTaskId={selectedTaskId}
-            detail={taskDetail}
-            statusFilter={taskStatusFilter}
-            search={taskSearch}
-            createTitle={createTitle}
-            createPrompt={createPrompt}
-            createPriority={createPriority}
-            createMaxRetries={createMaxRetries}
-            editTitle={editTitle}
-            editPrompt={editPrompt}
-            editPriority={editPriority}
-            editMaxRetries={editMaxRetries}
-            onStatusFilterChange={setTaskStatusFilter}
-            onSearchChange={setTaskSearch}
-            onSelectTask={setSelectedTaskId}
-            onRefresh={() => void refreshTasksList()}
-            onCreateTitleChange={setCreateTitle}
-            onCreatePromptChange={setCreatePrompt}
-            onCreatePriorityChange={setCreatePriority}
-            onCreateMaxRetriesChange={setCreateMaxRetries}
-            onCreateTask={() => void createTask()}
-            onEditTitleChange={setEditTitle}
-            onEditPromptChange={setEditPrompt}
-            onEditPriorityChange={setEditPriority}
-            onEditMaxRetriesChange={setEditMaxRetries}
-            onPatchTask={() => void patchSelectedTask()}
-            onTaskAction={(action) => void runTaskAction(action)}
-          />
-        )}
-
-        {mode === 'session' && (
-          <SessionView
-            sessionState={sessionState}
-            sessionMessages={sessionMessages}
-            sessionInput={sessionInput}
-            onSessionInputChange={setSessionInput}
-            onStartSession={startSession}
-            onSendMessage={sendSessionMessage}
-          />
-        )}
-      </main>
+      <div className="min-h-0 flex-1 overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+        <SessionView
+          sessionState={sessionState}
+          sessionMessages={sessionMessages}
+          sessionInput={sessionInput}
+          sessionProvider={sessionProvider}
+          isSessionBusy={isSessionBusy}
+          isEndingSession={isEndingSession}
+          pendingCommands={pendingCommands}
+          syncState={sessionSync}
+          onSessionInputChange={handleSessionInputChange}
+          onSessionProviderChange={handleSessionProviderChange}
+          onStartSession={startSession}
+          onEndSession={endSession}
+          onSendMessage={sendSessionMessage}
+          onRetryCommand={handleRetryCommand}
+        />
+      </div>
     </div>
   )
 }

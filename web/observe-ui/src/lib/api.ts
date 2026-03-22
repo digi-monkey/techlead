@@ -5,10 +5,10 @@ export function newRequestId() {
 }
 
 export function toneClass(tone: StatusTone): string {
-  if (tone === 'ok') return 'text-emerald-700 bg-emerald-50 border-emerald-200'
-  if (tone === 'warn') return 'text-amber-700 bg-amber-50 border-amber-200'
-  if (tone === 'bad') return 'text-rose-700 bg-rose-50 border-rose-200'
-  return 'text-slate-600 bg-slate-50 border-slate-200'
+  if (tone === 'ok') return 'text-emerald-700 bg-emerald-50/90'
+  if (tone === 'warn') return 'text-amber-700 bg-amber-50/90'
+  if (tone === 'bad') return 'text-rose-700 bg-rose-50/90'
+  return 'text-slate-600 bg-slate-100/90'
 }
 
 export function toEventRows(events: unknown[]): EventRow[] {
@@ -34,16 +34,45 @@ export function toEventRows(events: unknown[]): EventRow[] {
     .filter((row) => Number.isFinite(row.id))
 }
 
-export async function apiRequest<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
-  if (!token) throw new Error('token missing')
+export class ApiError extends Error {
+  status: number
+  bodyText: string
+  errorCode?: string
 
+  constructor(status: number, bodyText: string, errorCode?: string) {
+    super(`${status} ${bodyText}`)
+    this.name = 'ApiError'
+    this.status = status
+    this.bodyText = bodyText
+    this.errorCode = errorCode
+  }
+}
+
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError
+}
+
+export async function apiRequest<T>(path: string, token?: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {})
-  headers.set('Authorization', `Bearer ${token}`)
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json; charset=utf-8')
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json; charset=utf-8')
 
-  const resp = await fetch(path, { ...options, headers })
+  const resp = await fetch(path, { ...options, headers, credentials: 'include' })
   const text = await resp.text()
-  if (!resp.ok) throw new Error(`${resp.status} ${text}`)
+  if (!resp.ok) {
+    let errorCode: string | undefined
+    try {
+      const parsed = JSON.parse(text) as JsonValue
+      const raw = parsed.error
+      if (typeof raw === 'string' && raw.trim().length > 0) {
+        errorCode = raw
+      }
+    } catch {
+      // Keep raw body text in error.
+    }
+    throw new ApiError(resp.status, text, errorCode)
+  }
   if (!text.trim()) return {} as T
   return JSON.parse(text) as T
 }
