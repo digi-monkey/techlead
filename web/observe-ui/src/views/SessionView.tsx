@@ -187,33 +187,33 @@ export function SessionView(props: SessionViewProps) {
         </div>
 
         <div className="mt-3 pt-2">
-          <div className="flex items-end gap-2">
+          <div className="relative">
             <textarea
-            className="min-h-[80px] w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-            value={sessionInput}
-            onChange={(e) => onSessionInputChange(e.target.value)}
-            placeholder={!hasSession ? 'Create a new session first...' : sessionStatus === 'ended' ? 'Session ended. Start a new one.' : isSessionBusy ? 'Agent is thinking...' : 'Type your message...'}
-            disabled={!canSend}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                onSendMessage()
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={onSendMessage}
-            disabled={!canSend || sessionInput.trim().length === 0}
-            className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-            title="Send message"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4.5 10h11M12.5 7l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+              className="min-h-[100px] w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 pr-14 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-70"
+              value={sessionInput}
+              onChange={(e) => onSessionInputChange(e.target.value)}
+              placeholder={!hasSession ? 'Create a new session first...' : sessionStatus === 'ended' ? 'Session ended. Start a new one.' : isSessionBusy ? 'Agent is thinking...' : 'Type your message...'}
+              disabled={!canSend}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  onSendMessage()
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={onSendMessage}
+              disabled={!canSend || sessionInput.trim().length === 0}
+              className="absolute right-2 bottom-2 flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm transition-all hover:scale-105 hover:bg-slate-800 active:scale-95 disabled:scale-100 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+              title="Send message"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4.5 10h11M12.5 7l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
       </div>
     </Panel>
   )
