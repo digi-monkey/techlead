@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useCallback } from 'react'
 import { Panel } from '../components/Panel'
+import { ChatMessageItem, ChatPendingItem, ChatTypingIndicator } from '../components/ChatItems'
 import type { PendingOutboxCommand } from '../hooks/useSessionOutbox'
 import type { SessionSyncState } from '../hooks/useSessionPolling'
 import type { JsonValue, SessionMessage } from '../types'
@@ -86,6 +87,10 @@ export function SessionView(props: SessionViewProps) {
     el.scrollTop = el.scrollHeight
   }, [chatItems.length, showTyping])
 
+  const handleRetry = useCallback((requestId: string) => {
+    onRetryCommand(requestId)
+  }, [onRetryCommand])
+
   const headerRight = useMemo(
     () => (
       <div className="flex items-center gap-2">
@@ -145,66 +150,13 @@ export function SessionView(props: SessionViewProps) {
           ) : (
             chatItems.map((item) => {
               if (item.type === 'pending') {
-                const cmd = item.data
-                const statusText = cmd.state === 'failed' ? 'failed' : cmd.state === 'sending' ? 'sending...' : cmd.state === 'processing' ? 'sent' : 'pending...'
-                return (
-                  <div key={item.key} className="flex justify-end">
-                    <div className="max-w-[90%] rounded-2xl bg-slate-700/50 px-4 py-3 text-white/90 md:max-w-[75%]">
-                      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-slate-300">
-                        <span>you</span>
-                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-                        <span>{statusText}</span>
-                        {cmd.state === 'failed' ? (
-                          <button
-                            type="button"
-                            onClick={() => onRetryCommand(cmd.requestId)}
-                            className="ml-1 rounded bg-white/20 px-1.5 py-0 text-[10px] hover:bg-white/30"
-                          >
-                            Retry
-                          </button>
-                        ) : null}
-                      </div>
-                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed opacity-80">{cmd.text}</div>
-                    </div>
-                  </div>
-                )
+                return <ChatPendingItem key={item.key} item={item.data} onRetry={handleRetry} />
               }
-
-              const m = item.data
-              const role = String(m.role || '')
-              const isUser = role === 'user'
-              const isSystem = role === 'system'
-              const ts = typeof m.ts === 'number' ? new Date(m.ts * 1000).toLocaleTimeString() : '-'
-
-              return (
-                <div key={item.key} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[90%] rounded-2xl px-4 py-3 md:max-w-[75%] ${
-                      isUser ? 'bg-slate-900 text-white' : isSystem ? 'bg-amber-100 text-amber-900' : 'bg-slate-50 text-slate-800'
-                    }`}
-                  >
-                    <div className={`mb-1 text-[11px] ${isUser ? 'text-slate-300' : 'text-slate-500'}`}>
-                      {role || 'unknown'} · {ts}
-                    </div>
-                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.content}</div>
-                  </div>
-                </div>
-              )
+              return <ChatMessageItem key={item.key} item={item.data} />
             })
           )}
 
-          {showTyping ? (
-            <div className="flex justify-start">
-              <div className="max-w-[90%] rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 md:max-w-[75%]">
-                <div className="mb-1 text-[11px] text-slate-500">assistant · typing</div>
-                <div className="flex items-center gap-1.5">
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                </div>
-              </div>
-            </div>
-          ) : null}
+          <ChatTypingIndicator show={showTyping} />
         </div>
 
         <div className="mt-3 pt-2">

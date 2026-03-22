@@ -57,6 +57,13 @@ export function useSessionPolling(options: UseSessionPollingOptions) {
   useEffect(() => {
     let cancelled = false
     let timer: number | null = null
+    let isVisible = !document.hidden
+
+    const handleVisibilityChange = () => {
+      isVisible = !document.hidden
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     const poll = async () => {
       try {
@@ -100,13 +107,18 @@ export function useSessionPolling(options: UseSessionPollingOptions) {
       const hasPending = outboxRef.current.some((item) => item.state !== 'completed')
       const baseDelay = hasPending || sessionStatusRef.current === 'processing' ? 1200 : 2500
       const errMultiplier = Math.max(1, sessionSyncRef.current.consecutiveErrors)
-      const delay = Math.min(20_000, baseDelay * errMultiplier)
+
+      const visibleDelay = Math.min(20_000, baseDelay * errMultiplier)
+      const backgroundDelay = Math.max(10_000, visibleDelay * 4)
+      const delay = isVisible ? visibleDelay : backgroundDelay
+
       timer = window.setTimeout(() => void poll(), delay)
     }
 
     timer = window.setTimeout(() => void poll(), 0)
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (timer != null) window.clearTimeout(timer)
     }
   }, [observeAuth, onRefreshError, onRequireAuthorization, outboxRef, reconcileFromSessionState])
