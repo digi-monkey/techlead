@@ -106,78 +106,79 @@ export function SessionView(props: SessionViewProps) {
 
   return (
     <Panel title="Session" right={headerRight}>
-      <div className="mb-2 px-0.5 text-xs text-slate-500">
-        <div className="truncate">{hasSession ? sessionId : '(no session)'} · {provider} · {sessionStatus}</div>
-        <div className="mt-0.5">sync: {syncHint}</div>
-      </div>
-
-      {pendingCommands.length > 0 ? (
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {pendingCommands.slice(0, 8).map((cmd) => (
-            <div key={cmd.requestId} className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] ${pendingTone(cmd.state)}`}>
-              <span>{pendingLabel(cmd.state)}</span>
-              <span className="font-mono opacity-75">{cmd.requestId.slice(0, 6)}</span>
-              {cmd.state === 'failed' ? (
-                <button
-                  type="button"
-                  onClick={() => onRetryCommand(cmd.requestId)}
-                  className="rounded bg-white/80 px-1.5 py-0 text-[10px] text-rose-700 hover:bg-white"
-                >
-                  Retry
-                </button>
-              ) : null}
-            </div>
-          ))}
-          {pendingCommands.length > 8 ? (
-            <div className="rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-600">+{pendingCommands.length - 8} more</div>
-          ) : null}
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="mb-2 px-0.5 text-xs text-slate-500">
+          <div className="truncate">{hasSession ? sessionId : '(no session)'} · {provider} · {sessionStatus}</div>
+          <div className="mt-0.5">sync: {syncHint}</div>
         </div>
-      ) : null}
 
-      <div ref={listRef} className="h-[52vh] min-h-[300px] space-y-3 overflow-y-auto px-0.5 py-1 md:h-[58vh]">
-        {sessionMessages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-slate-400">No messages yet</div>
-        ) : (
-          sessionMessages.slice(-120).map((m, idx) => {
-            const role = String(m.role || '')
-            const isUser = role === 'user'
-            const isSystem = role === 'system'
-            const ts = typeof m.ts === 'number' ? new Date(m.ts * 1000).toLocaleTimeString() : '-'
-
-            return (
-              <div key={`${m.id ?? idx}-${role}`} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`max-w-[90%] rounded-2xl px-4 py-3 md:max-w-[75%] ${
-                    isUser ? 'bg-slate-900 text-white' : isSystem ? 'bg-amber-100 text-amber-900' : 'bg-slate-50 text-slate-800'
-                  }`}
-                >
-                  <div className={`mb-1 text-[11px] ${isUser ? 'text-slate-300' : 'text-slate-500'}`}>
-                    {role || 'unknown'} · {ts}
-                  </div>
-                  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.content}</div>
-                </div>
+        {pendingCommands.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {pendingCommands.slice(0, 8).map((cmd) => (
+              <div key={cmd.requestId} className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] ${pendingTone(cmd.state)}`}>
+                <span>{pendingLabel(cmd.state)}</span>
+                <span className="font-mono opacity-75">{cmd.requestId.slice(0, 6)}</span>
+                {cmd.state === 'failed' ? (
+                  <button
+                    type="button"
+                    onClick={() => onRetryCommand(cmd.requestId)}
+                    className="rounded bg-white/80 px-1.5 py-0 text-[10px] text-rose-700 hover:bg-white"
+                  >
+                    Retry
+                  </button>
+                ) : null}
               </div>
-            )
-          })
-        )}
-
-        {showTyping ? (
-          <div className="flex justify-start">
-            <div className="max-w-[90%] rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 md:max-w-[75%]">
-              <div className="mb-1 text-[11px] text-slate-500">assistant · typing</div>
-              <div className="flex items-center gap-1.5">
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-              </div>
-            </div>
+            ))}
+            {pendingCommands.length > 8 ? (
+              <div className="rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-600">+{pendingCommands.length - 8} more</div>
+            ) : null}
           </div>
         ) : null}
-      </div>
 
-      <div className="mt-2 py-1">
-        <div className="flex items-end gap-2">
-          <textarea
+        <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-0.5 py-1">
+          {sessionMessages.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-slate-400">No messages yet</div>
+          ) : (
+            sessionMessages.slice(-120).map((m, idx) => {
+              const role = String(m.role || '')
+              const isUser = role === 'user'
+              const isSystem = role === 'system'
+              const ts = typeof m.ts === 'number' ? new Date(m.ts * 1000).toLocaleTimeString() : '-'
+
+              return (
+                <div key={`${m.id ?? idx}-${role}`} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[90%] rounded-2xl px-4 py-3 md:max-w-[75%] ${
+                      isUser ? 'bg-slate-900 text-white' : isSystem ? 'bg-amber-100 text-amber-900' : 'bg-slate-50 text-slate-800'
+                    }`}
+                  >
+                    <div className={`mb-1 text-[11px] ${isUser ? 'text-slate-300' : 'text-slate-500'}`}>
+                      {role || 'unknown'} · {ts}
+                    </div>
+                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.content}</div>
+                  </div>
+                </div>
+              )
+            })
+          )}
+
+          {showTyping ? (
+            <div className="flex justify-start">
+              <div className="max-w-[90%] rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 md:max-w-[75%]">
+                <div className="mb-1 text-[11px] text-slate-500">assistant · typing</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-3 pt-2">
+          <div className="flex items-end gap-2">
+            <textarea
             className="min-h-[80px] w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
             value={sessionInput}
             onChange={(e) => onSessionInputChange(e.target.value)}
@@ -202,6 +203,7 @@ export function SessionView(props: SessionViewProps) {
             </svg>
           </button>
         </div>
+      </div>
       </div>
     </Panel>
   )

@@ -236,7 +236,7 @@ export default function App() {
   })
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-2 px-3 py-3 sm:space-y-3 sm:px-4 sm:py-4">
+    <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col px-3 py-3 sm:px-4 sm:py-4">
       <header className="py-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
