@@ -16,4 +16,5 @@ export type SessionMessage = {
   content: string
   ts?: number
   request_id?: string | null
+  provider?: string
 }

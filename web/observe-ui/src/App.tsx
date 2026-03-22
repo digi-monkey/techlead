@@ -61,7 +61,10 @@ export default function App() {
   })
 
   const hasSession = typeof sessionState.session_id === 'string' && sessionState.session_id.trim().length > 0
-  const isSessionBusy = sessionStatus === 'processing' || (hasSession && pendingCommands.length > 0)
+  const isSessionBusy = useMemo(() =>
+    sessionStatus === 'processing' || (hasSession && pendingCommands.length > 0),
+    [sessionStatus, hasSession, pendingCommands.length]
+  )
 
   const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
     try {

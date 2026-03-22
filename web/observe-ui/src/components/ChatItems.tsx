@@ -4,13 +4,17 @@ import type { SessionMessage } from '../types'
 
 type ChatMessageItemProps = {
   item: SessionMessage
+  defaultProvider?: string
 }
 
-export const ChatMessageItem = memo(function ChatMessageItem({ item }: ChatMessageItemProps) {
+export const ChatMessageItem = memo(function ChatMessageItem({ item, defaultProvider }: ChatMessageItemProps) {
   const role = String(item.role || '')
   const isUser = role === 'user'
   const isSystem = role === 'system'
+  const isAssistant = role === 'assistant'
   const ts = typeof item.ts === 'number' ? new Date(item.ts * 1000).toLocaleTimeString() : '-'
+  const provider = item.provider || defaultProvider
+  const roleLabel = isAssistant && provider ? provider : role
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -20,7 +24,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({ item }: ChatMessa
         }`}
       >
         <div className={`mb-1 text-[11px] ${isUser ? 'text-slate-300' : 'text-slate-500'}`}>
-          {role || 'unknown'} · {ts}
+          {roleLabel || 'unknown'} · {ts}
         </div>
         <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.content}</div>
       </div>

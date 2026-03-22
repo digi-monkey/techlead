@@ -84,8 +84,15 @@ export function SessionView(props: SessionViewProps) {
   useEffect(() => {
     const el = listRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [chatItems.length, showTyping])
+    // Only auto-scroll if user is already near the bottom (within 100px)
+    // This prevents aggressive scrolling during typing while preserving auto-scroll for new messages
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+    if (isNearBottom) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight
+      })
+    }
+  }, [sessionMessages.length])
 
   const handleRetry = useCallback((requestId: string) => {
     onRetryCommand(requestId)
@@ -148,7 +155,7 @@ export function SessionView(props: SessionViewProps) {
         </button>
       </div>
     ),
-    [isToggleBusy, isEndingSession, showEnd, onSessionProviderChange, sessionProvider, syncState, handleSessionToggle],
+    [isToggleBusy, isEndingSession, showEnd, onSessionProviderChange, sessionProvider, syncState.consecutiveErrors, syncState.lastOkAt, handleSessionToggle],
   )
 
   const panelTitle = hasSession ? sessionId : 'Session'
@@ -165,7 +172,7 @@ export function SessionView(props: SessionViewProps) {
               if (item.type === 'pending') {
                 return <ChatPendingItem key={item.key} item={item.data} onRetry={handleRetry} />
               }
-              return <ChatMessageItem key={item.key} item={item.data} />
+              return <ChatMessageItem key={item.key} item={item.data} defaultProvider={sessionProvider} />
             })
           )}
 

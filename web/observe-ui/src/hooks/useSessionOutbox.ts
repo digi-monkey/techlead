@@ -124,11 +124,14 @@ export function useSessionOutbox() {
 
   useEffect(() => {
     outboxRef.current = outbox
-    try {
-      localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(outbox))
-    } catch {
-      // Ignore localStorage failures.
-    }
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(outbox))
+      } catch {
+        // Ignore localStorage failures.
+      }
+    }, 500)
+    return () => clearTimeout(timer)
   }, [outbox])
 
   const pendingCommands = useMemo<PendingOutboxCommand[]>(() => {
