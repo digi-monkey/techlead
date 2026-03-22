@@ -73,32 +73,42 @@ export function SessionView(props: SessionViewProps) {
 
   const headerRight = useMemo(
     () => (
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex items-center gap-1.5">
         <select
           value={sessionProvider}
           onChange={(e) => onSessionProviderChange(e.target.value as SessionProvider)}
-          className="h-9 rounded-xl bg-slate-100 px-3 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-200 focus:bg-slate-200"
+          className="h-7 rounded-lg bg-slate-100 px-2 text-xs font-medium text-slate-600 outline-none transition-colors hover:bg-slate-200 focus:bg-slate-200"
           title="Session provider"
         >
           <option value="codex">codex</option>
           <option value="opencode">opencode</option>
         </select>
-        <button
-          type="button"
-          onClick={onStartSession}
-          disabled={isSessionBusy || isEndingSession}
-          className="h-9 rounded-xl bg-slate-900 px-3 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          New
-        </button>
-        <button
-          type="button"
-          onClick={onEndSession}
-          disabled={!hasSession || isEndingSession}
-          className="h-9 rounded-xl bg-rose-100 px-3 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isEndingSession ? 'Ending...' : 'End'}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onStartSession}
+            disabled={isSessionBusy || isEndingSession}
+            className="flex h-7 items-center gap-1 rounded-lg bg-slate-900 px-2.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            title="New session"
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span>New</span>
+          </button>
+          <button
+            type="button"
+            onClick={onEndSession}
+            disabled={!hasSession || isEndingSession}
+            className="flex h-7 items-center gap-1 rounded-lg bg-rose-50 px-2.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+            title="End session"
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M4 4l12 12M16 4L4 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span>{isEndingSession ? '...' : 'End'}</span>
+          </button>
+        </div>
       </div>
     ),
     [hasSession, isEndingSession, isSessionBusy, onEndSession, onSessionProviderChange, onStartSession, sessionProvider],
