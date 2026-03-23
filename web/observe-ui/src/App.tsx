@@ -14,12 +14,24 @@ type SessionProvider = 'codex' | 'opencode'
 type MainView = 'session' | 'task-pool'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 const MAIN_VIEW_STORAGE_KEY = 'techlead.observe.main.view'
+const AUTH_COOKIE_OBSERVE = 'tl_observe'
+const AUTH_COOKIE_CONTROL = 'tl_control'
+
+function getCookie(name: string): string | null {
+  const value = `; ${document.cookie}`
+  const parts = value.split(`; ${name}=`)
+  if (parts.length === 2) return parts.pop()?.split(';').shift() ?? null
+  return null
+}
 
 export default function App() {
   const query = useMemo(() => readAuthQuery(window.location.search), [])
 
-  const [observeToken, setObserveToken] = useState(query.observe)
-  const [controlToken, setControlToken] = useState(query.control)
+  const cookieObserve = getCookie(AUTH_COOKIE_OBSERVE) ?? ''
+  const cookieControl = getCookie(AUTH_COOKIE_CONTROL) ?? ''
+
+  const [observeToken, setObserveToken] = useState(query.observe || cookieObserve)
+  const [controlToken, setControlToken] = useState(query.control || cookieControl)
   const [showTokenDebug, setShowTokenDebug] = useState(false)
 
   const [showScanner, setShowScanner] = useState(false)
@@ -87,8 +99,10 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({ bootstrap_id: bootstrapId, code }),
       })
-      setObserveToken('')
-      setControlToken('')
+      const observe = getCookie(AUTH_COOKIE_OBSERVE)
+      const control = getCookie(AUTH_COOKIE_CONTROL)
+      if (observe) setObserveToken(observe)
+      if (control) setControlToken(control)
       return true
     } catch (err) {
       return false

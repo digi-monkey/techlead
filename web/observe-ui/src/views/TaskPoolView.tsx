@@ -36,6 +36,9 @@ function formatUnixTs(ts: number): string {
 function formatError(err: unknown, fallback: string): string {
   if (!isApiError(err)) return `${fallback}: ${(err as Error).message}`
   const code = err.errorCode?.trim() || 'unknown_error'
+  if (err.status === 401) {
+    return `未授权 401：请先扫码授权或提供有效 token（${code}）`
+  }
   if (err.status === 409) {
     return `冲突 409：请求与当前任务状态不一致，请刷新后重试（${code}）`
   }
@@ -240,15 +243,6 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
   }, [selectedTaskId])
 
   const refreshList = useCallback(async (silent: boolean) => {
-    if (!observeAuth) {
-      setTasks([])
-      setSummary({})
-      setNextCursor(null)
-      setTotal(0)
-      setListLoading(false)
-      setListError('缺少 observe token，无法读取任务列表')
-      return
-    }
     if (!silent) setListLoading(true)
     try {
       const data = await listTaskPoolTasks({
@@ -271,11 +265,6 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
   }, [observeAuth, statusFilter, searchQuery, cursor])
 
   const refreshDetail = useCallback(async (taskId: string, silent: boolean) => {
-    if (!observeAuth) {
-      setSelectedTask(null)
-      setDetailError('缺少 observe token，无法读取任务详情')
-      return
-    }
     if (!silent) setDetailLoading(true)
     try {
       const detail = await getTaskPoolDetail({ token: observeAuth, taskId })
@@ -300,10 +289,6 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
   }, [observeAuth])
 
   const refreshTimeline = useCallback(async (taskId: string) => {
-    if (!observeAuth) {
-      setTimelineError('缺少 observe token，无法读取时间线')
-      return
-    }
     try {
       const stream = await getTaskPoolEvents({ token: observeAuth, after: timelineCursorRef.current })
       timelineCursorRef.current = Math.max(timelineCursorRef.current, stream.last_event_id)
@@ -385,10 +370,6 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
 
   const executeAction = useCallback(async (action: TaskPoolAction) => {
     if (!selectedTaskId) return
-    if (!controlAuth) {
-      setActionMessage('缺少 control token，无法执行动作')
-      return
-    }
     setActionBusy(action)
     setActionMessage('')
     try {
