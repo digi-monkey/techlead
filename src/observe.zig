@@ -22,6 +22,7 @@ const AUTH_COOKIE_CONTROL = "tl_control";
 const OBSERVE_UI_DIST_DIR = "web/observe-ui/dist";
 var g_session_worker_requests: std.StringHashMapUnmanaged(void) = .empty;
 var g_session_worker_mutex: std.Thread.Mutex = .{};
+const SESSION_WORKER_EXIT_REASON = "SessionWorkerExitedNonZero";
 
 const TokenFile = struct {
     observe_token: []const u8,
@@ -793,35 +794,35 @@ fn respondJsonWithCookies(req: *http.Server.Request, status: http.Status, body: 
     });
 }
 
-fn registerSessionWorker(allocator: Allocator, request_id: []const u8) !?[]const u8 {
+fn registerSessionWorker(request_id: []const u8) !?[]const u8 {
     g_session_worker_mutex.lock();
     defer g_session_worker_mutex.unlock();
 
     if (g_session_worker_requests.contains(request_id)) return null;
-    const key = try allocator.dupe(u8, request_id);
-    errdefer allocator.free(key);
-    try g_session_worker_requests.put(allocator, key, {});
+    const key = try std.heap.c_allocator.dupe(u8, request_id);
+    errdefer std.heap.c_allocator.free(key);
+    try g_session_worker_requests.put(std.heap.c_allocator, key, {});
     return key;
 }
 
-fn unregisterSessionWorker(allocator: Allocator, request_id: []const u8) void {
+fn unregisterSessionWorker(request_id: []const u8) void {
     g_session_worker_mutex.lock();
     defer g_session_worker_mutex.unlock();
 
     if (g_session_worker_requests.fetchRemove(request_id)) |entry| {
-        allocator.free(entry.key);
+        std.heap.c_allocator.free(entry.key);
     }
 }
 
 const SessionWorkerReaperArgs = struct {
     child: std.process.Child,
-    allocator: Allocator,
+    target_dir: []const u8,
     request_id: []const u8,
 };
 
 fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, request_id: []const u8) !bool {
-    const tracked_request_id = (try registerSessionWorker(allocator, request_id)) orelse return false;
-    errdefer unregisterSessionWorker(allocator, tracked_request_id);
+    const tracked_request_id = (try registerSessionWorker(request_id)) orelse return false;
+    errdefer unregisterSessionWorker(tracked_request_id);
 
     const exe_path = try std.fs.selfExePathAlloc(allocator);
     defer allocator.free(exe_path);
@@ -845,9 +846,11 @@ fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, reque
     child.cwd = target_dir;
     try child.spawn();
 
+    const target_dir_copy = try std.heap.c_allocator.dupe(u8, target_dir);
+    errdefer std.heap.c_allocator.free(target_dir_copy);
     const reaper = try std.Thread.spawn(.{}, reapSessionWorkerProcess, .{SessionWorkerReaperArgs{
         .child = child,
-        .allocator = allocator,
+        .target_dir = target_dir_copy,
         .request_id = tracked_request_id,
     }});
     reaper.detach();
@@ -856,14 +859,23 @@ fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, reque
 
 fn reapSessionWorkerProcess(args_in: SessionWorkerReaperArgs) void {
     var args = args_in;
+    defer std.heap.c_allocator.free(args.target_dir);
+
     const term = args.child.wait() catch {
-        unregisterSessionWorker(args.allocator, args.request_id);
+        const reason = "SessionWorkerWaitFailed";
+        session_service.failInFlightMessage(std.heap.c_allocator, args.target_dir, args.request_id, reason) catch |err| {
+            ui.logWarn("session worker wait failed cleanup error for request_id={s}: {any}", .{ args.request_id, err });
+        };
+        unregisterSessionWorker(args.request_id);
         return;
     };
     if (!utils.isExitedZero(term)) {
         ui.logWarn("session worker exited non-zero for request_id={s}", .{args.request_id});
+        session_service.failInFlightMessage(std.heap.c_allocator, args.target_dir, args.request_id, SESSION_WORKER_EXIT_REASON) catch |err| {
+            ui.logWarn("session worker non-zero cleanup error for request_id={s}: {any}", .{ args.request_id, err });
+        };
     }
-    unregisterSessionWorker(args.allocator, args.request_id);
+    unregisterSessionWorker(args.request_id);
 }
 
 fn respondHtml(req: *http.Server.Request, body: []const u8) !void {
@@ -1102,6 +1114,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
             .request_id = request_id,
         }) catch |err| switch (err) {
             error.ActionRejected => return respondJson(req, .conflict, "{\"error\":\"action_rejected\"}"),
+            error.ForceMergeDisabled => return respondJson(req, .bad_request, "{\"error\":\"force_merge_disabled\"}"),
             else => return respondJson(req, .bad_request, "{\"error\":\"action_failed\"}"),
         };
         return respondJson(req, .ok, "{\"ok\":true}");
@@ -1182,6 +1195,7 @@ fn parseTaskAction(text: []const u8) ?task_store.Action {
     if (std.mem.eql(u8, text, "resume")) return .@"resume";
     if (std.mem.eql(u8, text, "force_fail")) return .force_fail;
     if (std.mem.eql(u8, text, "retry_review")) return .retry_review;
+    if (std.mem.eql(u8, text, "force_merge")) return .force_merge;
     return null;
 }
 
