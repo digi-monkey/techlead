@@ -32,7 +32,11 @@ pub fn runCommand(cfg: config.Config, allocator: Allocator) !void {
 
 /// Runs the main command with explicit execution mode.
 pub fn runCommandWithMode(cfg: config.Config, allocator: Allocator, mode: RunMode) !void {
-    try validateRunEnvironment(cfg, allocator);
+    if (mode == .optimize) {
+        try validateRunEnvironment(cfg, allocator);
+    } else {
+        try run_service.validatePoolRunEnvironment(cfg, allocator);
+    }
 
     var sqlite = try sqlite_store.SqliteEventStore.init(allocator, cfg.work_dir, cfg.log_dir);
     defer sqlite.deinit();

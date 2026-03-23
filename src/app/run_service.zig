@@ -4,8 +4,8 @@ const git = @import("../git.zig");
 const ui = @import("../ui.zig");
 const utils = @import("../utils.zig");
 const control_service = @import("control_service.zig");
+const pool_service = @import("pool_service.zig");
 const event_store = @import("../storage/store.zig");
-const sqlite_task_store = @import("../storage/sqlite_task_store.zig");
 const sqlite_runtime_store = @import("../storage/sqlite_runtime_store.zig");
 const opencode_provider = @import("../providers/opencode_provider.zig");
 const codex_cli_provider = @import("../providers/codex_cli_provider.zig");
@@ -33,6 +33,18 @@ pub fn validateRunEnvironment(cfg: config.Config, allocator: std.mem.Allocator) 
 
     try git.verifyGitRepo(cfg.work_dir, allocator);
     ui.logSuccess("环境检查通过", .{});
+    std.debug.print("\n", .{});
+}
+
+pub fn validatePoolRunEnvironment(cfg: config.Config, allocator: std.mem.Allocator) !void {
+    ui.logInfo("检查 pool 运行环境...", .{});
+
+    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, cfg.work_dir);
+    defer allocator.free(abs_work_dir);
+    ui.logInfo("工作目录: {s}", .{abs_work_dir});
+
+    try git.verifyGitRepo(cfg.work_dir, allocator);
+    ui.logSuccess("pool 环境检查通过", .{});
     std.debug.print("\n", .{});
 }
 
@@ -64,7 +76,7 @@ pub fn executeWithProvider(
     writeRunState(allocator, cfg, run_id, mode, "running");
 
     if (mode == .pool) {
-        try runPoolMode(cfg, allocator, provider, provider_name, primary_es, mirror_es, run_id);
+        try pool_service.run(cfg, allocator, provider, provider_name, primary_es, mirror_es, run_id);
         appendRunEvent(primary_es, mirror_es, run_id, .system, "run.completed", "{\"status\":\"completed\"}");
         writeRunState(allocator, cfg, run_id, mode, "completed");
         ui.logSuccess("pool 模式完成", .{});
@@ -372,79 +384,4 @@ fn writeRunState(allocator: std.mem.Allocator, cfg: config.Config, run_id: []con
     store.upsertRunState(run_id, @tagName(mode), status, std.time.timestamp()) catch |err| {
         ui.logWarn("写入 run_state 失败: {any}", .{err});
     };
-}
-
-fn runPoolMode(
-    cfg: config.Config,
-    allocator: std.mem.Allocator,
-    provider: anytype,
-    provider_name: []const u8,
-    primary_es: event_store.EventStore,
-    mirror_es: ?event_store.EventStore,
-    run_id: []const u8,
-) !void {
-    var sqlite = try sqlite_task_store.SqliteTaskStore.init(allocator, cfg.work_dir);
-    defer sqlite.deinit();
-    const ts = sqlite.asTaskStore();
-
-    var iteration: usize = 1;
-    while (true) {
-        const claimed_task = try ts.claimNext(.{
-            .owner = run_id,
-            .lease_seconds = cfg.pool_lease_seconds,
-            .default_max_retries = cfg.pool_max_retries,
-        });
-        if (claimed_task == null) break;
-        var task = claimed_task.?;
-        defer task.deinit(allocator);
-
-        var claim_buf: [384]u8 = undefined;
-        const claim_payload = std.fmt.bufPrint(
-            &claim_buf,
-            "{{\"task_id\":{f},\"status\":\"claimed\",\"lease_until\":{d},\"retry_count\":{d}}}",
-            .{ std.json.fmt(task.task_id, .{}), task.lease_until orelse 0, task.retry_count },
-        ) catch "{\"status\":\"claimed\"}";
-        appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.claimed", claim_payload);
-
-        try ts.markRunning(task.task_id, run_id, cfg.pool_lease_seconds, run_id);
-        var run_buf: [384]u8 = undefined;
-        const run_payload = std.fmt.bufPrint(
-            &run_buf,
-            "{{\"task_id\":{f},\"status\":\"running\"}}",
-            .{std.json.fmt(task.task_id, .{})},
-        ) catch "{\"status\":\"running\"}";
-        appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.running", run_payload);
-
-        var provider_started_buf: [128]u8 = undefined;
-        const provider_started_payload = std.fmt.bufPrint(&provider_started_buf, "{{\"provider\":\"{s}\"}}", .{provider_name}) catch "{\"provider\":\"unknown\"}";
-        appendRunEvent(primary_es, mirror_es, run_id, .provider, "provider.invoke.started", provider_started_payload);
-        const exec_result = try provider.runIteration(cfg, allocator, iteration, null, task.prompt);
-        iteration += 1;
-
-        if (exec_result.success) {
-            try ts.markDone(task.task_id, run_id, run_id);
-            var done_buf: [256]u8 = undefined;
-            const done_payload = std.fmt.bufPrint(&done_buf, "{{\"task_id\":{f},\"status\":\"done\"}}", .{std.json.fmt(task.task_id, .{})}) catch "{\"status\":\"done\"}";
-            appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.done", done_payload);
-        } else {
-            const fail_res = try ts.markFailedOrRequeue(task.task_id, run_id, run_id, "provider_failed", cfg.pool_max_retries);
-            if (fail_res.status == .queued) {
-                var requeue_buf: [256]u8 = undefined;
-                const requeue_payload = std.fmt.bufPrint(
-                    &requeue_buf,
-                    "{{\"task_id\":{f},\"status\":\"queued\",\"retry_count\":{d},\"max_retries\":{d}}}",
-                    .{ std.json.fmt(task.task_id, .{}), fail_res.retry_count, fail_res.max_retries },
-                ) catch "{\"status\":\"queued\"}";
-                appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.requeued", requeue_payload);
-            } else {
-                var failed_buf: [256]u8 = undefined;
-                const failed_payload = std.fmt.bufPrint(
-                    &failed_buf,
-                    "{{\"task_id\":{f},\"status\":\"failed\",\"retry_count\":{d},\"max_retries\":{d}}}",
-                    .{ std.json.fmt(task.task_id, .{}), fail_res.retry_count, fail_res.max_retries },
-                ) catch "{\"status\":\"failed\"}";
-                appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.failed", failed_payload);
-            }
-        }
-    }
 }

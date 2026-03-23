@@ -7,6 +7,12 @@ const utils = @import("../utils.zig");
 
 /// Provider backed by `codex exec` non-interactive CLI.
 pub const CodexCliProvider = struct {
+    const PromptRunOptions = struct {
+        require_decision: bool,
+        iteration: ?usize,
+        log_label: []const u8,
+    };
+
     pub fn asProvider(self: *CodexCliProvider) provider_api.Provider {
         return .{
             .ctx = self,
@@ -39,14 +45,59 @@ pub const CodexCliProvider = struct {
 
         const log_name = try std.fmt.allocPrint(allocator, "iteration-{d}.log", .{iteration});
         defer allocator.free(log_name);
+
+        return runPromptInternal(cfg, allocator, prompt, log_name, .{
+            .require_decision = true,
+            .iteration = iteration,
+            .log_label = log_name,
+        });
+    }
+
+    fn runPrompt(
+        ctx: *anyopaque,
+        cfg: config.Config,
+        allocator: std.mem.Allocator,
+        prompt: []const u8,
+        log_label: []const u8,
+    ) !provider_api.ExecutionResult {
+        _ = ctx;
+
+        const sanitized_label = try sanitizeLogLabel(allocator, log_label);
+        defer allocator.free(sanitized_label);
+        const log_name = try std.fmt.allocPrint(allocator, "{s}.log", .{sanitized_label});
+        defer allocator.free(log_name);
+
+        return runPromptInternal(cfg, allocator, prompt, log_name, .{
+            .require_decision = false,
+            .iteration = null,
+            .log_label = log_label,
+        });
+    }
+
+    fn runPromptInternal(
+        cfg: config.Config,
+        allocator: std.mem.Allocator,
+        prompt: []const u8,
+        log_name: []const u8,
+        options: PromptRunOptions,
+    ) !provider_api.ExecutionResult {
+        if (!utils.commandExists(allocator, "codex")) {
+            ui.logError("找不到 codex CLI，请确保已安装", .{});
+            return error.MissingCodex;
+        }
+
         const log_dir_path = try std.fs.path.join(allocator, &[_][]const u8{ cfg.work_dir, cfg.log_dir });
         defer allocator.free(log_dir_path);
         try std.fs.cwd().makePath(log_dir_path);
         const log_file_path = try std.fs.path.join(allocator, &[_][]const u8{ log_dir_path, log_name });
         defer allocator.free(log_file_path);
 
-        ui.logInfo("第 {d} 次迭代：调用 Codex CLI...", .{iteration});
-        ui.logInfo("执行: codex exec --cd {s} --json", .{cfg.work_dir});
+        if (options.iteration) |iter| {
+            ui.logInfo("第 {d} 次迭代：调用 Codex CLI...", .{iter});
+        } else {
+            ui.logInfo("调用 Codex CLI ({s})...", .{options.log_label});
+        }
+        ui.logInfo("执行: codex exec --cd {s} --json --dangerously-bypass-approvals-and-sandbox", .{cfg.work_dir});
 
         var argv: std.ArrayList([]const u8) = .empty;
         defer argv.deinit(allocator);
@@ -56,8 +107,7 @@ pub const CodexCliProvider = struct {
             "--cd",
             cfg.work_dir,
             "--json",
-            "--sandbox",
-            "danger-full-access",
+            "--dangerously-bypass-approvals-and-sandbox",
         });
         if (cfg.model.len > 0) {
             try argv.append(allocator, "--model");
@@ -94,7 +144,7 @@ pub const CodexCliProvider = struct {
         try merged.appendSlice(allocator, run_result.stderr);
 
         const decision = opencode.findDecision(merged.items);
-        if (decision == null) {
+        if (options.require_decision and decision == null) {
             ui.logWarn("未解析到标准 DECISION，判定为失败，请查看日志: {s}", .{log_file_path});
             return .{ .success = false };
         }
@@ -118,6 +168,20 @@ pub const CodexCliProvider = struct {
         return .{ .success = true };
     }
 
+    fn sanitizeLogLabel(allocator: std.mem.Allocator, label: []const u8) ![]u8 {
+        if (label.len == 0) return allocator.dupe(u8, "prompt");
+
+        var out = try allocator.alloc(u8, label.len);
+        errdefer allocator.free(out);
+
+        for (label, 0..) |ch, i| {
+            const is_safe = std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_' or ch == '.';
+            out[i] = if (is_safe) ch else '_';
+        }
+
+        return out;
+    }
+
     fn containsFatalRuntimeError(text: []const u8) bool {
         const fatal_markers = [_][]const u8{
             "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted",
@@ -133,6 +197,7 @@ pub const CodexCliProvider = struct {
 
     const vtable = provider_api.Provider.VTable{
         .runIteration = runIteration,
+        .runPrompt = runPrompt,
     };
 };
 

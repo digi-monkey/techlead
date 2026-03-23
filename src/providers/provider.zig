@@ -20,6 +20,13 @@ pub const Provider = struct {
             experiment_branch: ?[]const u8,
             prompt_patch: ?[]const u8,
         ) anyerror!ExecutionResult,
+        runPrompt: *const fn (
+            ctx: *anyopaque,
+            cfg: config.Config,
+            allocator: std.mem.Allocator,
+            prompt: []const u8,
+            log_label: []const u8,
+        ) anyerror!ExecutionResult,
     };
 
     pub fn runIteration(
@@ -31,5 +38,15 @@ pub const Provider = struct {
         prompt_patch: ?[]const u8,
     ) !ExecutionResult {
         return self.vtable.runIteration(self.ctx, cfg, allocator, iteration, experiment_branch, prompt_patch);
+    }
+
+    pub fn runPrompt(
+        self: Provider,
+        cfg: config.Config,
+        allocator: std.mem.Allocator,
+        prompt: []const u8,
+        log_label: []const u8,
+    ) !ExecutionResult {
+        return self.vtable.runPrompt(self.ctx, cfg, allocator, prompt, log_label);
     }
 };

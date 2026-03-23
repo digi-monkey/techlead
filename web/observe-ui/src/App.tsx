@@ -7,10 +7,13 @@ import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
 import { useSessionPolling } from './hooks/useSessionPolling'
 import { SessionView } from './views/SessionView'
+import { TaskPoolView } from './views/TaskPoolView'
 import type { JsonValue } from './types'
 
 type SessionProvider = 'codex' | 'opencode'
+type MainView = 'session' | 'task-pool'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
+const MAIN_VIEW_STORAGE_KEY = 'techlead.observe.main.view'
 
 export default function App() {
   const query = useMemo(() => readAuthQuery(window.location.search), [])
@@ -22,6 +25,10 @@ export default function App() {
   const [showScanner, setShowScanner] = useState(false)
   const [sessionInput, setSessionInput] = useState('')
   const [isEndingSession, setIsEndingSession] = useState(false)
+  const [mainView, setMainView] = useState<MainView>(() => {
+    const raw = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)
+    return raw === 'task-pool' ? 'task-pool' : 'session'
+  })
   const [sessionProvider, setSessionProvider] = useState<SessionProvider>(() => {
     const raw = window.localStorage.getItem(SESSION_PROVIDER_STORAGE_KEY)
     return raw === 'opencode' ? 'opencode' : 'codex'
@@ -37,6 +44,10 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(SESSION_PROVIDER_STORAGE_KEY, sessionProvider)
   }, [sessionProvider])
+
+  useEffect(() => {
+    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, mainView)
+  }, [mainView])
 
   const {
     outboxRef,
@@ -61,9 +72,13 @@ export default function App() {
   })
 
   const hasSession = typeof sessionState.session_id === 'string' && sessionState.session_id.trim().length > 0
+  const hasBlockingPendingCommands = useMemo(
+    () => pendingCommands.some((cmd) => cmd.state !== 'failed'),
+    [pendingCommands]
+  )
   const isSessionBusy = useMemo(() =>
-    sessionStatus === 'processing' || (hasSession && pendingCommands.length > 0),
-    [sessionStatus, hasSession, pendingCommands.length]
+    sessionStatus === 'processing' || (hasSession && hasBlockingPendingCommands),
+    [sessionStatus, hasSession, hasBlockingPendingCommands]
   )
 
   const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
@@ -184,12 +199,34 @@ export default function App() {
     updateOutbox,
   })
 
+  const maxWidthClass = mainView === 'task-pool' ? 'max-w-[1700px]' : 'max-w-4xl'
+
   return (
-    <div className="mx-auto flex h-full max-h-dvh w-full max-w-4xl flex-col">
+    <div className={`mx-auto flex h-full max-h-dvh w-full ${maxWidthClass} flex-col`}>
       <header className="bg-slate-900 py-3 text-white">
         <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <h1 className="text-base font-semibold sm:text-lg">techlead</h1>
+            <nav className="flex items-center gap-1 rounded-lg bg-slate-800 p-1">
+              <button
+                type="button"
+                onClick={() => setMainView('session')}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  mainView === 'session' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                Session
+              </button>
+              <button
+                type="button"
+                onClick={() => setMainView('task-pool')}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  mainView === 'task-pool' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                Task Pool
+              </button>
+            </nav>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
             <button
@@ -274,22 +311,26 @@ export default function App() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
-        <SessionView
-          sessionState={sessionState}
-          sessionMessages={sessionMessages}
-          sessionInput={sessionInput}
-          sessionProvider={sessionProvider}
-          isSessionBusy={isSessionBusy}
-          isEndingSession={isEndingSession}
-          pendingCommands={pendingCommands}
-          syncState={sessionSync}
-          onSessionInputChange={handleSessionInputChange}
-          onSessionProviderChange={handleSessionProviderChange}
-          onStartSession={startSession}
-          onEndSession={endSession}
-          onSendMessage={sendSessionMessage}
-          onRetryCommand={handleRetryCommand}
-        />
+        {mainView === 'session' ? (
+          <SessionView
+            sessionState={sessionState}
+            sessionMessages={sessionMessages}
+            sessionInput={sessionInput}
+            sessionProvider={sessionProvider}
+            isSessionBusy={isSessionBusy}
+            isEndingSession={isEndingSession}
+            pendingCommands={pendingCommands}
+            syncState={sessionSync}
+            onSessionInputChange={handleSessionInputChange}
+            onSessionProviderChange={handleSessionProviderChange}
+            onStartSession={startSession}
+            onEndSession={endSession}
+            onSendMessage={sendSessionMessage}
+            onRetryCommand={handleRetryCommand}
+          />
+        ) : (
+          <TaskPoolView observeAuth={observeAuth} controlAuth={controlAuth} />
+        )}
       </div>
     </div>
   )

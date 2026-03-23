@@ -147,3 +147,24 @@ From demo-topk:
 - The CLI attaches to OpenCode with --attach and pins remote working directory with --dir.
 - This helps avoid cross-project context leakage when using a shared server.
 - Iteration logs are written to .techlead/iteration-logs in the target project.
+
+## Linux Service Deployment (Observe)
+
+Use the deployment script to install `observe` as a `systemd` service and inject your production external URL via environment variable.
+
+Example (production):
+
+    sudo TECHLEAD_EXTERNAL_URL="https://techlead.pingkey.xyz" \
+      ./scripts/deploy-observe-service.sh \
+      --target-dir /home/retric/techlead \
+      --host 0.0.0.0 \
+      --port 7810
+
+What it does:
+- Builds latest binary (`zig build`)
+- Installs binary to `/usr/local/bin/techlead`
+- Writes env file `/etc/default/techlead-observe` (includes `TECHLEAD_EXTERNAL_URL`)
+- Writes unit file `/etc/systemd/system/techlead-observe.service`
+- Runs `systemctl daemon-reload && systemctl enable --now techlead-observe`
+
+After deployment, `observe` startup QR/share links will use `TECHLEAD_EXTERNAL_URL`.

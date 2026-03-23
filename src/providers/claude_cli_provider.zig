@@ -28,7 +28,23 @@ pub const ClaudeCliProvider = struct {
         return error.ProviderNotImplemented;
     }
 
+    fn runPrompt(
+        ctx: *anyopaque,
+        cfg: config.Config,
+        allocator: std.mem.Allocator,
+        prompt: []const u8,
+        log_label: []const u8,
+    ) !provider_api.ExecutionResult {
+        _ = ctx;
+        _ = cfg;
+        _ = allocator;
+        _ = prompt;
+        _ = log_label;
+        return error.ProviderNotImplemented;
+    }
+
     const vtable = provider_api.Provider.VTable{
         .runIteration = runIteration,
+        .runPrompt = runPrompt,
     };
 };

@@ -68,7 +68,6 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
       const now = nowMs()
       const ready = items.find((item) => {
         if (item.state === 'queued') return true
-        if (item.state === 'failed') return true
         if (item.state === 'retry_wait') return !item.nextRetryAt || item.nextRetryAt <= now
         if (item.state === 'sending') return now - item.updatedAt >= STALE_SENDING_RETRY_MS
         if (item.state === 'processing') {
@@ -145,6 +144,15 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
             lastError: 'session busy',
           }))
           onStatusUpdate?.('warn', 'session busy, retry queued')
+        } else if (isApiError(err) && err.status < 500) {
+          // Client-side/session-state errors are usually deterministic; stop auto-retrying.
+          updateOutbox(ready.requestId, (item) => ({
+            ...item,
+            state: 'failed',
+            nextRetryAt: undefined,
+            lastError: summarizeApiError(err),
+          }))
+          onStatusUpdate?.('warn', 'message failed, tap retry after session is ready')
         } else {
           const delay = nextRetryDelayMs(ready.attempts + 1)
           updateOutbox(ready.requestId, (item) => ({

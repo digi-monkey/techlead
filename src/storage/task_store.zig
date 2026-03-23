@@ -10,6 +10,14 @@ pub const TaskStatus = enum {
     canceled,
 };
 
+pub const ReviewStage = enum {
+    none,
+    open,
+    changes_requested,
+    approved,
+    merged,
+};
+
 pub fn taskStatusFromString(text: []const u8) !TaskStatus {
     if (std.mem.eql(u8, text, "queued")) return .queued;
     if (std.mem.eql(u8, text, "claimed")) return .claimed;
@@ -25,6 +33,19 @@ pub fn taskStatusToString(status: TaskStatus) []const u8 {
     return @tagName(status);
 }
 
+pub fn reviewStageFromString(text: []const u8) !ReviewStage {
+    if (std.mem.eql(u8, text, "none")) return .none;
+    if (std.mem.eql(u8, text, "open")) return .open;
+    if (std.mem.eql(u8, text, "changes_requested")) return .changes_requested;
+    if (std.mem.eql(u8, text, "approved")) return .approved;
+    if (std.mem.eql(u8, text, "merged")) return .merged;
+    return error.InvalidReviewStage;
+}
+
+pub fn reviewStageToString(stage: ReviewStage) []const u8 {
+    return @tagName(stage);
+}
+
 pub const Task = struct {
     task_id: []u8,
     title: []u8,
@@ -36,6 +57,13 @@ pub const Task = struct {
     max_retries: ?u32,
     priority: i32,
     last_error: ?[]u8,
+    review_stage: ReviewStage,
+    review_round: u32,
+    base_branch: ?[]u8,
+    head_branch: ?[]u8,
+    head_sha: ?[]u8,
+    merge_commit: ?[]u8,
+    review_feedback: ?[]u8,
     version: i64,
     created_at: i64,
     updated_at: i64,
@@ -46,7 +74,44 @@ pub const Task = struct {
         if (self.prompt) |v| allocator.free(v);
         if (self.lease_owner) |v| allocator.free(v);
         if (self.last_error) |v| allocator.free(v);
+        if (self.base_branch) |v| allocator.free(v);
+        if (self.head_branch) |v| allocator.free(v);
+        if (self.head_sha) |v| allocator.free(v);
+        if (self.merge_commit) |v| allocator.free(v);
+        if (self.review_feedback) |v| allocator.free(v);
     }
+};
+
+pub const TaskReviewRole = enum {
+    correctness_reviewer,
+    maintainability_reviewer,
+};
+
+pub fn taskReviewRoleToString(role: TaskReviewRole) []const u8 {
+    return @tagName(role);
+}
+
+pub const TaskReviewVerdict = enum {
+    approve,
+    request_changes,
+    block,
+};
+
+pub fn taskReviewVerdictToString(verdict: TaskReviewVerdict) []const u8 {
+    return @tagName(verdict);
+}
+
+pub const CreateTaskReviewInput = struct {
+    task_id: []const u8,
+    review_round: u32,
+    role: TaskReviewRole,
+    verdict: TaskReviewVerdict,
+    score: ?i32,
+    summary: []const u8,
+    blockers_json: []const u8,
+    suggestions_json: []const u8,
+    confidence: ?f64,
+    reviewer_run_id: ?[]const u8,
 };
 
 pub const TaskEvent = struct {
@@ -99,6 +164,8 @@ pub const Action = enum {
     cancel,
     @"resume",
     force_fail,
+    retry_review,
+    force_merge,
 };
 
 pub const OperatorMeta = struct {
@@ -129,11 +196,25 @@ pub const TaskStore = struct {
         markRunning: *const fn (ctx: *anyopaque, task_id: []const u8, owner: []const u8, lease_seconds: u64, run_id: []const u8) anyerror!void,
         markDone: *const fn (ctx: *anyopaque, task_id: []const u8, owner: []const u8, run_id: []const u8) anyerror!void,
         markFailedOrRequeue: *const fn (ctx: *anyopaque, task_id: []const u8, owner: []const u8, run_id: []const u8, message: []const u8, default_max_retries: u32) anyerror!FailResult,
+        markReviewOpen: *const fn (ctx: *anyopaque, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, base_branch: []const u8, head_branch: []const u8, head_sha: []const u8) anyerror!void,
+        markReviewApproved: *const fn (ctx: *anyopaque, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32) anyerror!void,
+        markReviewChangesRequestedAndRequeue: *const fn (
+            ctx: *anyopaque,
+            task_id: []const u8,
+            owner: []const u8,
+            run_id: []const u8,
+            review_round: u32,
+            feedback: []const u8,
+            reason: []const u8,
+            default_max_retries: u32,
+        ) anyerror!FailResult,
+        markMergedDone: *const fn (ctx: *anyopaque, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, merge_commit: []const u8) anyerror!void,
         listTasksJson: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator, query: ListQuery) anyerror![]u8,
         getTaskDetailJson: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator, task_id: []const u8) anyerror![]u8,
         getTaskEventsJson: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator, after_id: i64, limit: usize) anyerror![]u8,
         createTask: *const fn (ctx: *anyopaque, input: CreateTaskInput, meta: OperatorMeta) anyerror!void,
         patchTask: *const fn (ctx: *anyopaque, task_id: []const u8, input: PatchTaskInput, meta: OperatorMeta) anyerror!void,
+        createTaskReview: *const fn (ctx: *anyopaque, input: CreateTaskReviewInput) anyerror!void,
         applyAction: *const fn (ctx: *anyopaque, task_id: []const u8, action: Action, meta: OperatorMeta) anyerror!void,
         close: *const fn (ctx: *anyopaque) void,
     };
@@ -154,6 +235,40 @@ pub const TaskStore = struct {
         return self.vtable.markFailedOrRequeue(self.ctx, task_id, owner, run_id, message, default_max_retries);
     }
 
+    pub fn markReviewOpen(self: TaskStore, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, base_branch: []const u8, head_branch: []const u8, head_sha: []const u8) !void {
+        return self.vtable.markReviewOpen(self.ctx, task_id, owner, run_id, review_round, base_branch, head_branch, head_sha);
+    }
+
+    pub fn markReviewApproved(self: TaskStore, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32) !void {
+        return self.vtable.markReviewApproved(self.ctx, task_id, owner, run_id, review_round);
+    }
+
+    pub fn markReviewChangesRequestedAndRequeue(
+        self: TaskStore,
+        task_id: []const u8,
+        owner: []const u8,
+        run_id: []const u8,
+        review_round: u32,
+        feedback: []const u8,
+        reason: []const u8,
+        default_max_retries: u32,
+    ) !FailResult {
+        return self.vtable.markReviewChangesRequestedAndRequeue(
+            self.ctx,
+            task_id,
+            owner,
+            run_id,
+            review_round,
+            feedback,
+            reason,
+            default_max_retries,
+        );
+    }
+
+    pub fn markMergedDone(self: TaskStore, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, merge_commit: []const u8) !void {
+        return self.vtable.markMergedDone(self.ctx, task_id, owner, run_id, review_round, merge_commit);
+    }
+
     pub fn listTasksJson(self: TaskStore, allocator: std.mem.Allocator, query: ListQuery) ![]u8 {
         return self.vtable.listTasksJson(self.ctx, allocator, query);
     }
@@ -172,6 +287,10 @@ pub const TaskStore = struct {
 
     pub fn patchTask(self: TaskStore, task_id: []const u8, input: PatchTaskInput, meta: OperatorMeta) !void {
         return self.vtable.patchTask(self.ctx, task_id, input, meta);
+    }
+
+    pub fn createTaskReview(self: TaskStore, input: CreateTaskReviewInput) !void {
+        return self.vtable.createTaskReview(self.ctx, input);
     }
 
     pub fn applyAction(self: TaskStore, task_id: []const u8, action: Action, meta: OperatorMeta) !void {
