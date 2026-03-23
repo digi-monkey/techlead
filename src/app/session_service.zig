@@ -5,6 +5,7 @@ const utils = @import("../utils.zig");
 const sqlite_session_store = @import("../storage/sqlite_session_store.zig");
 
 const Allocator = std.mem.Allocator;
+const SESSION_AGENT_TIMEOUT_SECONDS: u32 = 2 * 60 * 60;
 
 pub const SendMessageResult = struct {
     status: []const u8,
@@ -234,6 +235,39 @@ pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, requ
     };
 }
 
+pub fn failInFlightMessage(allocator: Allocator, target_dir: []const u8, request_id: []const u8, reason: []const u8) !void {
+    g_session_ops_mutex.lock();
+    defer g_session_ops_mutex.unlock();
+
+    var store = try getStore(allocator, target_dir);
+    const maybe_session = try store.getCurrentSession();
+    if (maybe_session == null) return;
+    var session = maybe_session.?;
+    defer session.deinit(store.allocator);
+
+    const rid = std.mem.trim(u8, request_id, " \t\r\n");
+    if (rid.len == 0) return;
+
+    if (!std.mem.eql(u8, session.status, "processing")) return;
+    const in_flight = session.in_flight_request_id orelse return;
+    if (!std.mem.eql(u8, in_flight, rid)) return;
+
+    if (try store.findReplyByRequestId(session.session_id, rid)) |reply| {
+        defer store.allocator.free(reply);
+        try store.updateSessionStatus(session.session_id, "active");
+        try store.setInFlightRequestId(session.session_id, null);
+        try store.setLastError(session.session_id, null);
+        return;
+    }
+
+    const fail_text = try std.fmt.allocPrint(allocator, "session worker aborted before completion: {s}", .{reason});
+    defer allocator.free(fail_text);
+    _ = try store.addMessage(session.session_id, "system", fail_text, rid);
+    try store.updateSessionStatus(session.session_id, "error");
+    try store.setInFlightRequestId(session.session_id, null);
+    try store.setLastError(session.session_id, reason);
+}
+
 const AssistantOutput = struct {
     reply: []u8,
     provider_session_id: ?[]u8 = null,
@@ -270,6 +304,7 @@ fn generateAssistantReply(
                     "exec",
                     "resume",
                     "--json",
+                    "--dangerously-bypass-approvals-and-sandbox",
                     "--output-last-message",
                     out_path,
                 });
@@ -280,16 +315,13 @@ fn generateAssistantReply(
                 try argv.append(allocator, sid);
                 try argv.append(allocator, text);
             } else {
-                const prompt = try buildInitialPrompt(allocator, text);
-                defer allocator.free(prompt);
                 try argv.appendSlice(allocator, &[_][]const u8{
                     "codex",
                     "exec",
                     "--json",
                     "--cd",
                     work_dir,
-                    "--sandbox",
-                    "danger-full-access",
+                    "--dangerously-bypass-approvals-and-sandbox",
                     "--output-last-message",
                     out_path,
                 });
@@ -297,19 +329,16 @@ fn generateAssistantReply(
                     try argv.append(allocator, "--model");
                     try argv.append(allocator, model);
                 }
-                try argv.append(allocator, prompt);
+                try argv.append(allocator, text);
             }
         } else {
-            const prompt = try buildInitialPrompt(allocator, text);
-            defer allocator.free(prompt);
             try argv.appendSlice(allocator, &[_][]const u8{
                 "codex",
                 "exec",
                 "--json",
                 "--cd",
                 work_dir,
-                "--sandbox",
-                "danger-full-access",
+                "--dangerously-bypass-approvals-and-sandbox",
                 "--output-last-message",
                 out_path,
             });
@@ -317,10 +346,10 @@ fn generateAssistantReply(
                 try argv.append(allocator, "--model");
                 try argv.append(allocator, model);
             }
-            try argv.append(allocator, prompt);
+            try argv.append(allocator, text);
         }
 
-        const run_result = try runChildWithUtf8Env(allocator, work_dir, argv.items, 32 * 1024 * 1024);
+        const run_result = try runChildWithUtf8Env(allocator, work_dir, argv.items, 32 * 1024 * 1024, SESSION_AGENT_TIMEOUT_SECONDS);
         defer allocator.free(run_result.stdout);
         defer allocator.free(run_result.stderr);
 
@@ -375,7 +404,7 @@ fn generateAssistantReply(
             true,
         );
 
-        var run_result = try runChildWithUtf8Env(allocator, work_dir, argv.items, 32 * 1024 * 1024);
+        var run_result = try runChildWithUtf8Env(allocator, work_dir, argv.items, 32 * 1024 * 1024, SESSION_AGENT_TIMEOUT_SECONDS);
         var need_retry_without_attach = !utils.isExitedZero(run_result.term) and opencode_url.len > 0;
         if (need_retry_without_attach) {
             ui.logWarn("session opencode run with --attach exited non-zero, retrying without attach", .{});
@@ -413,7 +442,7 @@ fn generateAssistantReply(
                 text,
                 false,
             );
-            run_result = try runChildWithUtf8Env(allocator, work_dir, retry_argv.items, 32 * 1024 * 1024);
+            run_result = try runChildWithUtf8Env(allocator, work_dir, retry_argv.items, 32 * 1024 * 1024, SESSION_AGENT_TIMEOUT_SECONDS);
             parsed_opt = try parseOpencodeRunOutput(allocator, run_result.stdout);
         }
         defer allocator.free(run_result.stdout);
@@ -440,29 +469,38 @@ fn generateAssistantReply(
     return error.ProviderNotSupportedForSession;
 }
 
-fn buildInitialPrompt(allocator: Allocator, text: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator,
-        \\You are a coding agent in an ongoing remote session.
-        \\Respond concisely and continue the conversation naturally.
-        \\If code changes are requested, explain what you would do and ask for confirmation only when risky.
-        \\
-        \\User message:
-        \\{s}
-        \\
-        \\Reply to the latest user message.
-    , .{text});
-}
-
-fn runChildWithUtf8Env(allocator: Allocator, cwd: []const u8, argv: []const []const u8, max_output_bytes: usize) !std.process.Child.RunResult {
+fn runChildWithUtf8Env(
+    allocator: Allocator,
+    cwd: []const u8,
+    argv: []const []const u8,
+    max_output_bytes: usize,
+    timeout_seconds: u32,
+) !std.process.Child.RunResult {
     var env_map = try std.process.getEnvMap(allocator);
     defer env_map.deinit();
     try env_map.put("LANG", "C.UTF-8");
     try env_map.put("LC_ALL", "C.UTF-8");
     try env_map.put("LC_CTYPE", "C.UTF-8");
 
+    var effective_argv: std.ArrayList([]const u8) = .empty;
+    defer effective_argv.deinit(allocator);
+
+    if (timeout_seconds > 0 and utils.commandExists(allocator, "timeout")) {
+        var timeout_buf: [32]u8 = undefined;
+        const timeout_spec = try std.fmt.bufPrint(&timeout_buf, "{d}s", .{timeout_seconds});
+        try effective_argv.appendSlice(allocator, &[_][]const u8{
+            "timeout",
+            "--kill-after=5s",
+            timeout_spec,
+        });
+        try effective_argv.appendSlice(allocator, argv);
+    } else {
+        try effective_argv.appendSlice(allocator, argv);
+    }
+
     return std.process.Child.run(.{
         .allocator = allocator,
-        .argv = argv,
+        .argv = effective_argv.items,
         .cwd = cwd,
         .env_map = &env_map,
         .max_output_bytes = max_output_bytes,

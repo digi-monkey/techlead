@@ -20,6 +20,8 @@ const SHARE_BOOTSTRAP_TTL_SECONDS: i64 = 10 * 60;
 const AUTH_COOKIE_OBSERVE = "tl_observe";
 const AUTH_COOKIE_CONTROL = "tl_control";
 const OBSERVE_UI_DIST_DIR = "web/observe-ui/dist";
+var g_session_worker_requests: std.StringHashMapUnmanaged(void) = .empty;
+var g_session_worker_mutex: std.Thread.Mutex = .{};
 
 const TokenFile = struct {
     observe_token: []const u8,
@@ -479,7 +481,7 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
             defer if (queue_result.reply) |reply| ctx.allocator.free(reply);
 
             if (queue_result.accepted) {
-                startSessionMessageWorker(ctx.allocator, ctx.target_dir, rid) catch |spawn_err| {
+                const started = startSessionMessageWorker(ctx.allocator, ctx.target_dir, rid) catch |spawn_err| {
                     ui.logWarn("session worker spawn failed, fallback sync: {any}", .{spawn_err});
                     const send_result = session_service.processInFlightMessage(ctx.allocator, ctx.target_dir, rid) catch |err| {
                         ui.logWarn("session send failed after fallback: {any}", .{err});
@@ -501,6 +503,17 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
                     defer ctx.allocator.free(sync_body);
                     return respondJson(req, .ok, sync_body);
                 };
+                if (!started) {
+                    ui.logWarn("session worker already running for request_id={s}", .{rid});
+                }
+            } else if (std.mem.eql(u8, queue_result.status, "processing") and queue_result.deduplicated and queue_result.reply == null) {
+                const recovered = startSessionMessageWorker(ctx.allocator, ctx.target_dir, rid) catch |spawn_err| blk: {
+                    ui.logWarn("session deduplicated processing recovery failed: {any}", .{spawn_err});
+                    break :blk false;
+                };
+                if (recovered) {
+                    ui.logWarn("session in-flight had no active worker, respawned request_id={s}", .{rid});
+                }
             }
 
             const body = if (queue_result.reply) |reply|
@@ -780,7 +793,36 @@ fn respondJsonWithCookies(req: *http.Server.Request, status: http.Status, body: 
     });
 }
 
-fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, request_id: []const u8) !void {
+fn registerSessionWorker(allocator: Allocator, request_id: []const u8) !?[]const u8 {
+    g_session_worker_mutex.lock();
+    defer g_session_worker_mutex.unlock();
+
+    if (g_session_worker_requests.contains(request_id)) return null;
+    const key = try allocator.dupe(u8, request_id);
+    errdefer allocator.free(key);
+    try g_session_worker_requests.put(allocator, key, {});
+    return key;
+}
+
+fn unregisterSessionWorker(allocator: Allocator, request_id: []const u8) void {
+    g_session_worker_mutex.lock();
+    defer g_session_worker_mutex.unlock();
+
+    if (g_session_worker_requests.fetchRemove(request_id)) |entry| {
+        allocator.free(entry.key);
+    }
+}
+
+const SessionWorkerReaperArgs = struct {
+    child: std.process.Child,
+    allocator: Allocator,
+    request_id: []const u8,
+};
+
+fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, request_id: []const u8) !bool {
+    const tracked_request_id = (try registerSessionWorker(allocator, request_id)) orelse return false;
+    errdefer unregisterSessionWorker(allocator, tracked_request_id);
+
     const exe_path = try std.fs.selfExePathAlloc(allocator);
     defer allocator.free(exe_path);
 
@@ -803,13 +845,25 @@ fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, reque
     child.cwd = target_dir;
     try child.spawn();
 
-    const reaper = try std.Thread.spawn(.{}, reapSessionWorkerProcess, .{child});
+    const reaper = try std.Thread.spawn(.{}, reapSessionWorkerProcess, .{SessionWorkerReaperArgs{
+        .child = child,
+        .allocator = allocator,
+        .request_id = tracked_request_id,
+    }});
     reaper.detach();
+    return true;
 }
 
-fn reapSessionWorkerProcess(child_in: std.process.Child) void {
-    var child = child_in;
-    _ = child.wait() catch {};
+fn reapSessionWorkerProcess(args_in: SessionWorkerReaperArgs) void {
+    var args = args_in;
+    const term = args.child.wait() catch {
+        unregisterSessionWorker(args.allocator, args.request_id);
+        return;
+    };
+    if (!utils.isExitedZero(term)) {
+        ui.logWarn("session worker exited non-zero for request_id={s}", .{args.request_id});
+    }
+    unregisterSessionWorker(args.allocator, args.request_id);
 }
 
 fn respondHtml(req: *http.Server.Request, body: []const u8) !void {
@@ -1040,7 +1094,7 @@ fn handleTasksApi(ctx: *ServerContext, req: *http.Server.Request, target: []cons
         if (request_id) |rid| {
             if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
         }
-        const action_text = body.action orelse return respondJson(req, .bad_request, "{\"error\":\"action_required\"}");
+        const action_text = body.action orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
         const action = parseTaskAction(action_text) orelse return respondJson(req, .bad_request, "{\"error\":\"invalid_action\"}");
         ts.applyAction(task_id, action, .{
             .operator = "observe-user",
@@ -1127,6 +1181,7 @@ fn parseTaskAction(text: []const u8) ?task_store.Action {
     if (std.mem.eql(u8, text, "cancel")) return .cancel;
     if (std.mem.eql(u8, text, "resume")) return .@"resume";
     if (std.mem.eql(u8, text, "force_fail")) return .force_fail;
+    if (std.mem.eql(u8, text, "retry_review")) return .retry_review;
     return null;
 }
 

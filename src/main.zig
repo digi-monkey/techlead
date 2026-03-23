@@ -11,6 +11,9 @@ comptime {
     _ = @import("providers/provider_contract_test.zig");
     _ = @import("core/domain.zig");
     _ = @import("core/scheduler.zig");
+    _ = @import("pool/result_parser.zig");
+    _ = @import("storage/sqlite_task_store.zig");
+    _ = @import("app/pool_service.zig");
 }
 
 const Allocator = std.mem.Allocator;
@@ -382,6 +385,10 @@ pub fn main() !void {
             return;
         };
         _ = session_service.processInFlightMessage(allocator, target_dir, rid) catch |err| {
+            const err_name = @errorName(err);
+            session_service.failInFlightMessage(allocator, target_dir, rid, err_name) catch |cleanup_err| {
+                ui.logWarn("session process-message cleanup failed: {any}", .{cleanup_err});
+            };
             ui.logWarn("session process-message failed: {any}", .{err});
             return;
         };
