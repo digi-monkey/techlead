@@ -842,86 +842,256 @@ pub const SqliteControlPlaneStore = struct {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = lease_seconds;
-        _ = run_id;
+
+        const now = std.time.timestamp();
+        const lease_until = now + @as(i64, @intCast(lease_seconds));
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='running', lease_owner='{s}', lease_until={d}, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ owner_q, lease_until, now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        try self.appendTaskEvent(task_id, run_id, "task.running", "{}", null, null, null);
     }
 
     fn markDone(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8) controlplane_store.StoreError!void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = run_id;
+
+        const now = std.time.timestamp();
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='done', lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        try self.appendTaskEvent(task_id, run_id, "task.done", "{}", null, null, null);
     }
 
     fn markFailedOrRequeue(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, message: []const u8, default_max_retries: u32) controlplane_store.StoreError!task_store.FailResult {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = run_id;
-        _ = message;
-        _ = default_max_retries;
-        return .{ .status = .failed, .retry_count = 0, .max_retries = 3 };
+
+        const now = std.time.timestamp();
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+        const msg_q = try sqlQuote(self.allocator, message);
+        defer self.allocator.free(msg_q);
+
+        const read_sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT retry_count,COALESCE(max_retries,{d}) FROM tasks WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}' LIMIT 1;",
+            .{ default_max_retries, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(read_sql);
+        const stmt = try self.prepare(read_sql);
+        defer self.finalize(stmt);
+        if (self.api.step(stmt) != SQLITE_ROW) return error.TaskNotClaimed;
+        const current_retry: u32 = @intCast(self.api.column_int(stmt, 0));
+        const max_retries: u32 = @intCast(self.api.column_int(stmt, 1));
+        const next_retry = current_retry + 1;
+        const should_requeue = next_retry < max_retries;
+
+        const new_status = if (should_requeue) "queued" else "failed";
+        const last_error_val = if (should_requeue) "NULL" else try std.fmt.allocPrint(self.allocator, "'{s}'", .{msg_q});
+        defer if (!should_requeue) self.allocator.free(last_error_val);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='{s}', retry_count={d}, lease_owner=NULL, lease_until=NULL, last_error={s}, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ new_status, next_retry, last_error_val, now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        const event_type = if (should_requeue) "task.requeue" else "task.failed";
+        try self.appendTaskEvent(task_id, run_id, event_type, "{}", null, null, null);
+
+        const final_status: task_store.TaskStatus = if (should_requeue) .queued else .failed;
+        return .{ .status = final_status, .retry_count = next_retry, .max_retries = max_retries };
     }
 
     fn markReviewOpen(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, base_branch: []const u8, head_branch: []const u8, head_sha: []const u8) controlplane_store.StoreError!void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = run_id;
-        _ = review_round;
-        _ = base_branch;
-        _ = head_branch;
-        _ = head_sha;
+
+        const now = std.time.timestamp();
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+        const base_q = try sqlQuote(self.allocator, base_branch);
+        defer self.allocator.free(base_q);
+        const head_q = try sqlQuote(self.allocator, head_branch);
+        defer self.allocator.free(head_q);
+        const sha_q = try sqlQuote(self.allocator, head_sha);
+        defer self.allocator.free(sha_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='review', review_stage='open', review_round={d}, base_branch='{s}', head_branch='{s}', head_sha='{s}', updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ review_round, base_q, head_q, sha_q, now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        const payload = try std.fmt.allocPrint(
+            self.allocator,
+            "{{\"task_id\":{f},\"status\":\"review\",\"review_stage\":\"open\",\"review_round\":{d},\"base_branch\":{f},\"head_branch\":{f},\"head_sha\":{f}}}",
+            .{ std.json.fmt(task_id, .{}), review_round, std.json.fmt(base_branch, .{}), std.json.fmt(head_branch, .{}), std.json.fmt(head_sha, .{}) },
+        );
+        defer self.allocator.free(payload);
+        try self.appendTaskEvent(task_id, run_id, "task.review.opened", payload, null, null, null);
     }
 
     fn markReviewApproved(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32) controlplane_store.StoreError!void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = run_id;
-        _ = review_round;
+
+        const now = std.time.timestamp();
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='review', review_stage='approved', review_feedback=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        const payload = try std.fmt.allocPrint(
+            self.allocator,
+            "{{\"task_id\":{f},\"status\":\"review\",\"review_stage\":\"approved\",\"review_round\":{d}}}",
+            .{ std.json.fmt(task_id, .{}), review_round },
+        );
+        defer self.allocator.free(payload);
+        try self.appendTaskEvent(task_id, run_id, "task.review.approved", payload, null, null, null);
     }
 
     fn markReviewChangesRequestedAndRequeue(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, feedback: []const u8, reason: []const u8, default_max_retries: u32) controlplane_store.StoreError!task_store.FailResult {
+        _ = review_round;
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = run_id;
-        _ = review_round;
-        _ = feedback;
-        _ = reason;
-        _ = default_max_retries;
-        return .{ .status = .queued, .retry_count = 0, .max_retries = 3 };
+
+        const now = std.time.timestamp();
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+        const feedback_q = try sqlQuote(self.allocator, feedback);
+        defer self.allocator.free(feedback_q);
+
+        const read_sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT retry_count,COALESCE(max_retries,{d}) FROM tasks WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}' LIMIT 1;",
+            .{ default_max_retries, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(read_sql);
+        const stmt = try self.prepare(read_sql);
+        defer self.finalize(stmt);
+        if (self.api.step(stmt) != SQLITE_ROW) return error.TaskNotClaimed;
+        const current_retry: u32 = @intCast(self.api.column_int(stmt, 0));
+        const max_retries: u32 = @intCast(self.api.column_int(stmt, 1));
+        const is_review_gate_blocked = std.mem.eql(u8, reason, "review_gate_blocked");
+        const next_retry = if (is_review_gate_blocked) current_retry else current_retry + 1;
+        const should_requeue = is_review_gate_blocked or next_retry < max_retries;
+
+        const new_status = if (should_requeue) "queued" else "failed";
+        var last_error_buf: ?[]u8 = null;
+        defer if (last_error_buf) |b| self.allocator.free(b);
+        const last_error_val = if (should_requeue) "NULL" else blk: {
+            last_error_buf = try std.fmt.allocPrint(self.allocator, "'{s}'", .{feedback_q});
+            break :blk last_error_buf.?;
+        };
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='{s}', review_stage='changes_requested', retry_count={d}, lease_owner=NULL, lease_until=NULL, review_feedback='{s}', last_error={s}, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ new_status, next_retry, feedback_q, last_error_val, now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        const event_type = if (should_requeue) "task.review.changes_requested.requeue" else "task.review.changes_requested.fail";
+        try self.appendTaskEvent(task_id, run_id, event_type, "{}", null, null, null);
+
+        const final_status: task_store.TaskStatus = if (should_requeue) .queued else .failed;
+        return .{ .status = final_status, .retry_count = next_retry, .max_retries = max_retries };
     }
 
     fn markMergedDone(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, merge_commit: []const u8) controlplane_store.StoreError!void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = owner;
-        _ = run_id;
-        _ = review_round;
-        _ = merge_commit;
+
+        const now = std.time.timestamp();
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+        const merge_q = try sqlQuote(self.allocator, merge_commit);
+        defer self.allocator.free(merge_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET status='done', review_stage='merged', merge_commit='{s}', lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
+            .{ merge_q, now, pid_q, task_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+        const payload = try std.fmt.allocPrint(
+            self.allocator,
+            "{{\"task_id\":{f},\"status\":\"done\",\"review_stage\":\"merged\",\"review_round\":{d},\"merge_commit\":{f}}}",
+            .{ std.json.fmt(task_id, .{}), review_round, std.json.fmt(merge_commit, .{}) },
+        );
+        defer self.allocator.free(payload);
+        try self.appendTaskEvent(task_id, run_id, "task.merge.succeeded", payload, null, null, null);
     }
 
     fn createTaskReview(ctx: *anyopaque, project_id: []const u8, input: task_store.CreateTaskReviewInput) controlplane_store.StoreError!void {

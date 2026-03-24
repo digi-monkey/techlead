@@ -21,6 +21,8 @@ pub const StoreError = error{
     // Data parsing errors
     InvalidTaskStatus,
     InvalidReviewStage,
+    // Concurrency errors
+    TaskNotClaimed,
 };
 
 pub const Project = struct {
