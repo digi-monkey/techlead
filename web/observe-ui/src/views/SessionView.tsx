@@ -18,6 +18,7 @@ type SessionViewProps = {
   sessionInput: string
   sessionProvider: SessionProvider
   isSessionBusy: boolean
+  isStartingSession: boolean
   isEndingSession: boolean
   pendingCommands: PendingCommand[]
   syncState: SessionSyncState
@@ -42,6 +43,7 @@ export function SessionView(props: SessionViewProps) {
     sessionInput,
     sessionProvider,
     isSessionBusy,
+    isStartingSession,
     isEndingSession,
     pendingCommands,
     syncState,
@@ -111,7 +113,7 @@ export function SessionView(props: SessionViewProps) {
     }
   }, [hasSession, sessionStatus])
 
-  const isToggleBusy = isSessionBusy || isEndingSession
+  const isToggleBusy = isSessionBusy || isStartingSession || isEndingSession
   const showEnd = hasSession && sessionStatus !== 'ended'
 
   const headerRight = useMemo(
@@ -134,15 +136,17 @@ export function SessionView(props: SessionViewProps) {
           type="button"
           onClick={handleSessionToggle}
           disabled={isToggleBusy}
-          className={`flex h-7 w-7 items-center justify-center rounded-lg text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`flex h-7 items-center justify-center rounded-lg px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             showEnd
               ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
               : 'bg-slate-900 text-white hover:bg-slate-800'
-          }`}
+          } ${isStartingSession || isEndingSession ? 'w-auto whitespace-nowrap' : 'w-7'}`}
           title={showEnd ? 'End session' : 'New session'}
         >
-          {isEndingSession ? (
-            <span className="text-[10px]">...</span>
+          {isStartingSession ? (
+            <span className="whitespace-nowrap text-[10px]">Starting...</span>
+          ) : isEndingSession ? (
+            <span className="whitespace-nowrap text-[10px]">Ending...</span>
           ) : showEnd ? (
             <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M4 4l12 12M16 4L4 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -155,7 +159,7 @@ export function SessionView(props: SessionViewProps) {
         </button>
       </div>
     ),
-    [isToggleBusy, isEndingSession, showEnd, onSessionProviderChange, sessionProvider, syncState.consecutiveErrors, syncState.lastOkAt, handleSessionToggle],
+    [isToggleBusy, isStartingSession, isEndingSession, showEnd, onSessionProviderChange, sessionProvider, syncState.consecutiveErrors, syncState.lastOkAt, handleSessionToggle],
   )
 
   const panelTitle = hasSession ? sessionId : 'Session'

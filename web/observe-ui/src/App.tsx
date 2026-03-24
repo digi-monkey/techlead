@@ -36,6 +36,7 @@ export default function App() {
 
   const [showScanner, setShowScanner] = useState(false)
   const [sessionInput, setSessionInput] = useState('')
+  const [isStartingSession, setIsStartingSession] = useState(false)
   const [isEndingSession, setIsEndingSession] = useState(false)
   const [mainView, setMainView] = useState<MainView>(() => {
     const raw = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)
@@ -136,7 +137,8 @@ export default function App() {
   }, [])
 
   const startSession = useCallback(async () => {
-    // Starting a new session should not replay stale local outbox items from old bugs/reloads.
+    if (!controlAuth || isStartingSession) return
+    setIsStartingSession(true)
     clearOutbox()
     try {
       const requestId = newRequestId()
@@ -149,8 +151,10 @@ export default function App() {
       setSessionInput('')
     } catch {
       void 0
+    } finally {
+      setIsStartingSession(false)
     }
-  }, [controlAuth, sessionProvider, clearOutbox])
+  }, [controlAuth, sessionProvider, clearOutbox, isStartingSession])
 
   const endSession = useCallback(async () => {
     if (isEndingSession) return
@@ -332,6 +336,7 @@ export default function App() {
             sessionInput={sessionInput}
             sessionProvider={sessionProvider}
             isSessionBusy={isSessionBusy}
+            isStartingSession={isStartingSession}
             isEndingSession={isEndingSession}
             pendingCommands={pendingCommands}
             syncState={sessionSync}
