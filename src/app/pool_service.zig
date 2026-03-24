@@ -11,6 +11,8 @@ const result_parser = @import("../pool/result_parser.zig");
 const IMPLEMENT_PROMPT_TEMPLATE = @embedFile("../pool/prompts/implement.md");
 const REVIEW_CORRECTNESS_TEMPLATE = @embedFile("../pool/prompts/review_correctness.md");
 const REVIEW_MAINTAINABILITY_TEMPLATE = @embedFile("../pool/prompts/review_maintainability.md");
+const POOL_WORKTREE_REL = ".techlead/pool-worktree";
+const MAX_GIT_LOG_SNIPPET: usize = 1024;
 
 const TaskOutcome = enum {
     done,
@@ -68,6 +70,13 @@ pub fn run(
     mirror_es: ?event_store.EventStore,
     run_id: []const u8,
 ) !void {
+    const pool_work_dir = try ensurePoolWorktree(allocator, cfg.work_dir, cfg.main_branch);
+    defer allocator.free(pool_work_dir);
+
+    var pool_cfg = cfg;
+    pool_cfg.work_dir = pool_work_dir;
+    ui.logInfo("pool 使用 git worktree: {s}", .{pool_cfg.work_dir});
+
     var sqlite = try sqlite_task_store.SqliteTaskStore.init(allocator, cfg.work_dir);
     defer sqlite.deinit();
     const ts = sqlite.asTaskStore();
@@ -94,10 +103,43 @@ pub fn run(
         ) catch "{\"status\":\"claimed\"}";
         appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.claimed", claim_payload);
 
-        const outcome = processClaimedTask(cfg, allocator, provider, provider_name, run_id, ts, &task) catch |err| blk: {
-            const fail_msg = @errorName(err);
-            ui.logWarn("pool task {s} failed: {s}", .{ task.task_id, fail_msg });
-            _ = try ts.markFailedOrRequeue(task.task_id, run_id, run_id, fail_msg, cfg.pool_max_retries);
+        const outcome = processClaimedTask(pool_cfg, allocator, provider, provider_name, run_id, ts, &task) catch |err| blk: {
+            const err_msg = @errorName(err);
+            const git_context = if (err == error.GitCommandFailed)
+                collectGitFailureContext(allocator, pool_cfg.work_dir) catch try allocator.dupe(u8, "(git context unavailable)")
+            else
+                try allocator.dupe(u8, "");
+            defer allocator.free(git_context);
+
+            const detailed_msg = if (git_context.len == 0)
+                try std.fmt.allocPrint(
+                    allocator,
+                    "task processing failed: phase=processClaimedTask error={s} task_id={s}",
+                    .{ err_msg, task.task_id },
+                )
+            else
+                try std.fmt.allocPrint(
+                    allocator,
+                    "task processing failed: phase=processClaimedTask error={s} task_id={s} git_context={s}",
+                    .{ err_msg, task.task_id, git_context },
+                );
+            defer allocator.free(detailed_msg);
+
+            ui.logError("pool task {s} failed: {s}", .{ task.task_id, detailed_msg });
+
+            // Log detailed error event to task_events table
+            logTaskError(allocator, ts, task.task_id, run_id, "processClaimedTask", err, detailed_msg);
+
+            // Also log to run events for backward compatibility
+            var error_payload_buf: [512]u8 = undefined;
+            const error_payload = std.fmt.bufPrint(
+                &error_payload_buf,
+                "{{\"task_id\":{f},\"phase\":\"processClaimedTask\",\"error\":{f},\"error_type\":{f}}}",
+                .{ std.json.fmt(task.task_id, .{}), std.json.fmt(err_msg, .{}), std.json.fmt(err_msg, .{}) },
+            ) catch "{\"status\":\"error\"}";
+            appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.error", error_payload);
+
+            _ = try ts.markFailedOrRequeue(task.task_id, run_id, run_id, detailed_msg, cfg.pool_max_retries);
             break :blk null;
         };
 
@@ -133,6 +175,7 @@ fn processClaimedTask(
     task: *task_store.Task,
 ) !TaskOutcome {
     try ts.markRunning(task.task_id, run_id, cfg.pool_lease_seconds, run_id);
+    try prepareWorktreeForTask(allocator, cfg.work_dir);
 
     const review_round = task.review_round + 1;
     const base_branch = cfg.main_branch;
@@ -147,12 +190,16 @@ fn processClaimedTask(
     defer implement_result.deinit(allocator);
 
     if (implement_result.status != .implemented) {
+        ui.logWarn("task {s} implement phase blocked: status={s}", .{ task.task_id, @tagName(implement_result.status) });
         return error.ImplementBlocked;
     }
+
+    try ensureImplementationCommit(allocator, cfg.work_dir, task.task_id, review_round);
 
     const head_sha = try gitRevParse(allocator, cfg.work_dir, "HEAD");
     defer allocator.free(head_sha);
     if (std.mem.eql(u8, base_sha, head_sha)) {
+        ui.logWarn("task {s} no commit produced: base_sha equals head_sha", .{task.task_id});
         return error.NoCommitProduced;
     }
 
@@ -173,7 +220,11 @@ fn processClaimedTask(
         .review_correctness,
         review_round,
     ) catch |err| {
-        const feedback = try std.fmt.allocPrint(allocator, "correctness review failed: {s}", .{@errorName(err)});
+        const err_name = @errorName(err);
+        ui.logError("task {s} correctness review failed: error={s} round={d}", .{ task.task_id, err_name, review_round });
+        logTaskError(allocator, ts, task.task_id, run_id, "runReviewPhase.correctness", err, @errorName(err));
+
+        const feedback = try std.fmt.allocPrint(allocator, "correctness review failed: error={s}", .{err_name});
         defer allocator.free(feedback);
         const retry_result = try ts.markReviewChangesRequestedAndRequeue(
             task.task_id,
@@ -213,7 +264,11 @@ fn processClaimedTask(
         .review_maintainability,
         review_round,
     ) catch |err| {
-        const feedback = try std.fmt.allocPrint(allocator, "maintainability review failed: {s}", .{@errorName(err)});
+        const err_name = @errorName(err);
+        ui.logError("task {s} maintainability review failed: error={s} round={d}", .{ task.task_id, err_name, review_round });
+        logTaskError(allocator, ts, task.task_id, run_id, "runReviewPhase.maintainability", err, @errorName(err));
+
+        const feedback = try std.fmt.allocPrint(allocator, "maintainability review failed: error={s}", .{err_name});
         defer allocator.free(feedback);
         const retry_result = try ts.markReviewChangesRequestedAndRequeue(
             task.task_id,
@@ -241,7 +296,13 @@ fn processClaimedTask(
         .reviewer_run_id = run_id,
     });
 
-    if (shouldRequestChanges(correctness.verdict, maintainability.verdict, maintainability.score)) {
+    if (shouldRequestChanges(
+        correctness.verdict,
+        maintainability.verdict,
+        maintainability.score,
+        correctness.suggestions_json,
+        maintainability.suggestions_json,
+    )) {
         const feedback = try aggregateReviewFeedback(allocator, correctness, maintainability);
         defer allocator.free(feedback);
         const retry_result = try ts.markReviewChangesRequestedAndRequeue(
@@ -250,7 +311,7 @@ fn processClaimedTask(
             run_id,
             review_round,
             feedback,
-            "review_failed",
+            "review_gate_blocked",
             cfg.pool_max_retries,
         );
         return failResultToOutcome(retry_result);
@@ -262,6 +323,7 @@ fn processClaimedTask(
     defer merge_result.deinit(allocator);
     if (!merge_result.success) {
         const feedback = merge_result.detail orelse "merge_failed";
+        ui.logError("task {s} merge failed: {s} round={d}", .{ task.task_id, feedback, review_round });
         const retry_result = try ts.markReviewChangesRequestedAndRequeue(
             task.task_id,
             run_id,
@@ -424,6 +486,38 @@ fn parseReviewJsonMeta(allocator: std.mem.Allocator, raw_json: []const u8) !Revi
     };
 }
 
+fn ensurePoolWorktree(allocator: std.mem.Allocator, repo_dir: []const u8, main_branch: []const u8) ![]u8 {
+    const worktree_dir = try std.fs.path.join(allocator, &[_][]const u8{ repo_dir, POOL_WORKTREE_REL });
+    errdefer allocator.free(worktree_dir);
+
+    const runtime_dir = try std.fs.path.join(allocator, &[_][]const u8{ repo_dir, ".techlead" });
+    defer allocator.free(runtime_dir);
+    try std.fs.cwd().makePath(runtime_dir);
+
+    if (utils.fileExists(worktree_dir)) {
+        if (!isGitWorktree(allocator, worktree_dir)) {
+            ui.logError("pool worktree 目录存在但不是有效 git worktree: {s}", .{worktree_dir});
+            return error.PoolWorktreeInvalid;
+        }
+    } else {
+        try runGitChecked(allocator, repo_dir, &[_][]const u8{ "worktree", "prune" });
+        try runGitChecked(allocator, repo_dir, &[_][]const u8{ "worktree", "add", "--force", "--detach", worktree_dir, main_branch });
+    }
+
+    try runGitChecked(allocator, worktree_dir, &[_][]const u8{ "checkout", "--detach", main_branch });
+    try prepareWorktreeForTask(allocator, worktree_dir);
+    return worktree_dir;
+}
+
+fn isGitWorktree(allocator: std.mem.Allocator, cwd: []const u8) bool {
+    const cap = runGitCapture(allocator, cwd, &[_][]const u8{ "rev-parse", "--is-inside-work-tree" }) catch return false;
+    defer allocator.free(cap.stdout);
+    defer allocator.free(cap.stderr);
+    if (!utils.isExitedZero(cap.term)) return false;
+    const out = std.mem.trim(u8, cap.stdout, " \t\r\n");
+    return std.mem.eql(u8, out, "true");
+}
+
 fn stringifyJsonValue(allocator: std.mem.Allocator, value: std.json.Value) ![]u8 {
     return std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(value, .{})});
 }
@@ -431,10 +525,12 @@ fn stringifyJsonValue(allocator: std.mem.Allocator, value: std.json.Value) ![]u8
 fn aggregateReviewFeedback(allocator: std.mem.Allocator, correctness: ReviewResult, maintainability: ReviewResult) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
-        "correctness verdict={s}\nsummary={s}\n\nmaintainability verdict={s}, score={any}\nsummary={s}\nblockers={s}\nsuggestions={s}",
+        "correctness verdict={s}\nsummary={s}\nblockers={s}\nsuggestions={s}\n\nmaintainability verdict={s}, score={any}\nsummary={s}\nblockers={s}\nsuggestions={s}",
         .{
             task_store.taskReviewVerdictToString(correctness.verdict),
             correctness.summary,
+            correctness.blockers_json,
+            correctness.suggestions_json,
             task_store.taskReviewVerdictToString(maintainability.verdict),
             maintainability.score,
             maintainability.summary,
@@ -463,7 +559,6 @@ fn sanitizeBranchComponent(allocator: std.mem.Allocator, raw: []const u8) ![]u8 
 }
 
 fn checkoutImplementationBranch(allocator: std.mem.Allocator, cwd: []const u8, base_branch: []const u8, head_branch: []const u8) !void {
-    try runGitChecked(allocator, cwd, &[_][]const u8{ "checkout", base_branch });
     try runGitChecked(allocator, cwd, &[_][]const u8{ "checkout", "-B", head_branch, base_branch });
 }
 
@@ -483,6 +578,40 @@ fn collectDiffSummary(allocator: std.mem.Allocator, cwd: []const u8, base_branch
     if (output.len <= 4000) return output;
     defer allocator.free(output);
     return std.fmt.allocPrint(allocator, "{s}\n...(truncated)", .{output[0..4000]});
+}
+
+fn ensureImplementationCommit(
+    allocator: std.mem.Allocator,
+    cwd: []const u8,
+    task_id: []const u8,
+    review_round: u32,
+) !void {
+    const status_output = try runGitStdout(allocator, cwd, &[_][]const u8{ "status", "--porcelain" });
+    defer allocator.free(status_output);
+    if (status_output.len == 0) return;
+
+    // Auto-stage all workspace changes except runtime metadata and dependency artifacts.
+    try runGitChecked(
+        allocator,
+        cwd,
+        &[_][]const u8{
+            "add",
+            "-A",
+            "--",
+            ".",
+            ":(exclude).techlead",
+            ":(exclude)node_modules",
+            ":(exclude,glob)**/node_modules/**",
+        },
+    );
+
+    const staged_output = try runGitStdout(allocator, cwd, &[_][]const u8{ "diff", "--cached", "--name-only" });
+    defer allocator.free(staged_output);
+    if (staged_output.len == 0) return;
+
+    const message = try std.fmt.allocPrint(allocator, "task({s}): implement round {d}", .{ task_id, review_round });
+    defer allocator.free(message);
+    try runGitChecked(allocator, cwd, &[_][]const u8{ "commit", "-m", message });
 }
 
 fn mergeWithLock(
@@ -516,7 +645,16 @@ fn mergeWithLock(
         break;
     }
 
-    try runGitChecked(allocator, cwd, &[_][]const u8{ "checkout", base_branch });
+    const base_sha_before = try gitRevParse(allocator, cwd, base_branch);
+    defer allocator.free(base_sha_before);
+
+    const merge_branch_component = try sanitizeBranchComponent(allocator, task_id);
+    defer allocator.free(merge_branch_component);
+    const merge_branch = try std.fmt.allocPrint(allocator, "pool/merge-{s}", .{merge_branch_component});
+    defer allocator.free(merge_branch);
+    runGitBestEffort(allocator, cwd, &[_][]const u8{ "branch", "-D", merge_branch });
+
+    try runGitChecked(allocator, cwd, &[_][]const u8{ "checkout", "-B", merge_branch, base_branch });
 
     const merge_message = try std.fmt.allocPrint(allocator, "task({s}): merge", .{task_id});
     defer allocator.free(merge_message);
@@ -526,7 +664,7 @@ fn mergeWithLock(
     defer allocator.free(merge_capture.stderr);
 
     if (!utils.isExitedZero(merge_capture.term)) {
-        _ = runGitCapture(allocator, cwd, &[_][]const u8{ "merge", "--abort" }) catch null;
+        runGitBestEffort(allocator, cwd, &[_][]const u8{ "merge", "--abort" });
 
         var detail = std.ArrayList(u8).empty;
         defer detail.deinit(allocator);
@@ -545,6 +683,13 @@ fn mergeWithLock(
     }
 
     const merge_commit = try gitRevParse(allocator, cwd, "HEAD");
+    errdefer allocator.free(merge_commit);
+
+    const base_ref = try std.fmt.allocPrint(allocator, "refs/heads/{s}", .{base_branch});
+    defer allocator.free(base_ref);
+    try runGitChecked(allocator, cwd, &[_][]const u8{ "update-ref", base_ref, merge_commit, base_sha_before });
+    runGitBestEffort(allocator, cwd, &[_][]const u8{ "checkout", "--detach", merge_commit });
+    runGitBestEffort(allocator, cwd, &[_][]const u8{ "branch", "-D", merge_branch });
     return .{ .success = true, .merge_commit = merge_commit };
 }
 
@@ -573,8 +718,61 @@ fn runGitChecked(allocator: std.mem.Allocator, cwd: []const u8, args: []const []
     defer allocator.free(cap.stdout);
     defer allocator.free(cap.stderr);
     if (!utils.isExitedZero(cap.term)) {
+        const cmd = try renderGitCommand(allocator, args);
+        defer allocator.free(cmd);
+        const stdout_snippet = try trimAndLimit(allocator, cap.stdout, MAX_GIT_LOG_SNIPPET);
+        defer allocator.free(stdout_snippet);
+        const stderr_snippet = try trimAndLimit(allocator, cap.stderr, MAX_GIT_LOG_SNIPPET);
+        defer allocator.free(stderr_snippet);
+
+        ui.logError("git command failed: cwd={s} cmd={s} term={any}", .{ cwd, cmd, cap.term });
+        if (stdout_snippet.len > 0) ui.logError("git stdout: {s}", .{stdout_snippet});
+        if (stderr_snippet.len > 0) ui.logError("git stderr: {s}", .{stderr_snippet});
         return error.GitCommandFailed;
     }
+}
+
+fn prepareWorktreeForTask(allocator: std.mem.Allocator, cwd: []const u8) !void {
+    try runGitChecked(allocator, cwd, &[_][]const u8{ "reset", "--hard", "HEAD" });
+    try runGitChecked(allocator, cwd, &[_][]const u8{ "clean", "-fd", "-e", ".techlead", "--", "." });
+}
+
+fn collectGitFailureContext(allocator: std.mem.Allocator, cwd: []const u8) ![]u8 {
+    const branch = runGitStdout(allocator, cwd, &[_][]const u8{ "branch", "--show-current" }) catch try allocator.dupe(u8, "(branch unavailable)");
+    defer allocator.free(branch);
+    const status = runGitStdout(allocator, cwd, &[_][]const u8{ "status", "--short", "--branch" }) catch try allocator.dupe(u8, "(status unavailable)");
+    defer allocator.free(status);
+    const staged = runGitStdout(allocator, cwd, &[_][]const u8{ "diff", "--cached", "--name-only" }) catch try allocator.dupe(u8, "(staged unavailable)");
+    defer allocator.free(staged);
+    const branch_snippet = try trimAndLimit(allocator, branch, 240);
+    defer allocator.free(branch_snippet);
+    const status_snippet = try trimAndLimit(allocator, status, 800);
+    defer allocator.free(status_snippet);
+    const staged_snippet = try trimAndLimit(allocator, staged, 800);
+    defer allocator.free(staged_snippet);
+    return std.fmt.allocPrint(
+        allocator,
+        "cwd={s}; branch={s}; status={s}; staged={s}",
+        .{ cwd, branch_snippet, status_snippet, staged_snippet },
+    );
+}
+
+fn renderGitCommand(allocator: std.mem.Allocator, args: []const []const u8) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    try out.appendSlice(allocator, "git");
+    for (args) |arg| {
+        try out.append(allocator, ' ');
+        try out.appendSlice(allocator, arg);
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn trimAndLimit(allocator: std.mem.Allocator, text: []const u8, max_len: usize) ![]u8 {
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    if (trimmed.len == 0) return allocator.dupe(u8, "");
+    if (trimmed.len <= max_len) return allocator.dupe(u8, trimmed);
+    return std.fmt.allocPrint(allocator, "{s}...(truncated)", .{trimmed[0..max_len]});
 }
 
 fn gitRevParse(allocator: std.mem.Allocator, cwd: []const u8, revision: []const u8) ![]u8 {
@@ -596,6 +794,12 @@ fn runGitCapture(allocator: std.mem.Allocator, cwd: []const u8, args: []const []
     try argv.append(allocator, "git");
     try argv.appendSlice(allocator, args);
     return utils.runCommandCapture(allocator, cwd, argv.items);
+}
+
+fn runGitBestEffort(allocator: std.mem.Allocator, cwd: []const u8, args: []const []const u8) void {
+    const cap = runGitCapture(allocator, cwd, args) catch return;
+    allocator.free(cap.stdout);
+    allocator.free(cap.stderr);
 }
 
 fn appendRunEvent(
@@ -623,9 +827,17 @@ fn shouldRequestChanges(
     correctness_verdict: task_store.TaskReviewVerdict,
     maintainability_verdict: task_store.TaskReviewVerdict,
     maintainability_score: ?i32,
+    correctness_suggestions_json: []const u8,
+    maintainability_suggestions_json: []const u8,
 ) bool {
     const score = maintainability_score orelse 0;
-    return correctness_verdict != .approve or maintainability_verdict != .approve or score < 3;
+    const has_suggestions = hasJsonArrayItems(correctness_suggestions_json) or hasJsonArrayItems(maintainability_suggestions_json);
+    return correctness_verdict != .approve or maintainability_verdict != .approve or score < 3 or has_suggestions;
+}
+
+fn hasJsonArrayItems(json_text: []const u8) bool {
+    const trimmed = std.mem.trim(u8, json_text, " \t\r\n");
+    return !std.mem.eql(u8, trimmed, "[]");
 }
 
 fn failResultToOutcome(result: task_store.FailResult) TaskOutcome {
@@ -633,18 +845,23 @@ fn failResultToOutcome(result: task_store.FailResult) TaskOutcome {
 }
 
 test "review gate approves when both approve and score >= 3" {
-    try std.testing.expect(!shouldRequestChanges(.approve, .approve, 3));
-    try std.testing.expect(!shouldRequestChanges(.approve, .approve, 5));
+    try std.testing.expect(!shouldRequestChanges(.approve, .approve, 3, "[]", "[]"));
+    try std.testing.expect(!shouldRequestChanges(.approve, .approve, 5, "[]", "[]"));
 }
 
 test "review gate requests changes when any verdict is not approve" {
-    try std.testing.expect(shouldRequestChanges(.request_changes, .approve, 5));
-    try std.testing.expect(shouldRequestChanges(.approve, .block, 5));
+    try std.testing.expect(shouldRequestChanges(.request_changes, .approve, 5, "[]", "[]"));
+    try std.testing.expect(shouldRequestChanges(.approve, .block, 5, "[]", "[]"));
 }
 
 test "review gate requests changes when maintainability score < 3" {
-    try std.testing.expect(shouldRequestChanges(.approve, .approve, 2));
-    try std.testing.expect(shouldRequestChanges(.approve, .approve, null));
+    try std.testing.expect(shouldRequestChanges(.approve, .approve, 2, "[]", "[]"));
+    try std.testing.expect(shouldRequestChanges(.approve, .approve, null, "[]", "[]"));
+}
+
+test "review gate requests changes when suggestions exist" {
+    try std.testing.expect(shouldRequestChanges(.approve, .approve, 5, "[\"improve naming\"]", "[]"));
+    try std.testing.expect(shouldRequestChanges(.approve, .approve, 5, "[]", "[\"extract helper\"]"));
 }
 
 test "parseReviewJsonMeta requires blockers suggestions confidence fields" {
@@ -688,15 +905,50 @@ test "parseReviewJsonMeta parses valid object" {
     try std.testing.expectApproxEqRel(@as(f64, 0.75), meta.confidence.?, 1e-9);
 }
 
+/// Log an error event to task_events table with detailed context
+fn logTaskError(
+    allocator: std.mem.Allocator,
+    ts: task_store.TaskStore,
+    task_id: []const u8,
+    run_id: []const u8,
+    phase: []const u8,
+    err: anyerror,
+    details: ?[]const u8,
+) void {
+    const err_msg = @errorName(err);
+    const detail_str = details orelse "";
+
+    const payload = std.fmt.allocPrint(
+        allocator,
+        "{{\"task_id\":{f},\"phase\":{f},\"error\":{f},\"error_type\":{f},\"details\":{f},\"timestamp\":{d}}}",
+        .{
+            std.json.fmt(task_id, .{}),
+            std.json.fmt(phase, .{}),
+            std.json.fmt(err_msg, .{}),
+            std.json.fmt(err_msg, .{}),
+            std.json.fmt(detail_str, .{}),
+            std.time.timestamp(),
+        },
+    ) catch null;
+    defer if (payload) |p| allocator.free(p);
+
+    ts.appendTaskEvent(task_id, run_id, "task.error", payload orelse "{\"status\":\"error\"}") catch |append_err| {
+        ui.logError("failed to append task error event: {s}", .{@errorName(append_err)});
+    };
+}
+
 const E2EScenario = enum {
     approve_and_merge,
+    approve_and_merge_without_commit,
     low_score_requeue,
+    suggestion_requeue_then_approve,
     merge_conflict_requeue,
 };
 
 const MockPoolProvider = struct {
     scenario: E2EScenario,
     base_diverged: bool = false,
+    maintainability_calls: u32 = 0,
 
     fn runPrompt(
         self: *MockPoolProvider,
@@ -709,8 +961,10 @@ const MockPoolProvider = struct {
 
         if (std.mem.endsWith(u8, log_label, "implement")) {
             try writeRepoFile(allocator, cfg.work_dir, "src.txt", "head-change\n");
-            try runGitChecked(allocator, cfg.work_dir, &[_][]const u8{ "add", "src.txt" });
-            try runGitChecked(allocator, cfg.work_dir, &[_][]const u8{ "commit", "-m", "implement commit" });
+            if (self.scenario != .approve_and_merge_without_commit) {
+                try runGitChecked(allocator, cfg.work_dir, &[_][]const u8{ "add", "src.txt" });
+                try runGitChecked(allocator, cfg.work_dir, &[_][]const u8{ "commit", "-m", "implement commit" });
+            }
             try writeMockLog(allocator, cfg, log_label, "RESULT_JSON: {\"role\":\"implementer\",\"status\":\"implemented\",\"summary\":\"implemented\"}\n");
             return .{ .success = true };
         }
@@ -734,10 +988,17 @@ const MockPoolProvider = struct {
             }
 
             const score: i32 = if (self.scenario == .low_score_requeue) 2 else 4;
+            const suggestions: []const u8 = blk: {
+                if (self.scenario == .suggestion_requeue_then_approve and self.maintainability_calls == 0) {
+                    break :blk "[\"please refine\"]";
+                }
+                break :blk "[]";
+            };
+            self.maintainability_calls += 1;
             const log_line = try std.fmt.allocPrint(
                 allocator,
-                "RESULT_JSON: {{\"role\":\"maintainability_reviewer\",\"verdict\":\"approve\",\"score\":{d},\"summary\":\"ok\",\"blockers\":[],\"suggestions\":[],\"confidence\":0.9}}\n",
-                .{score},
+                "RESULT_JSON: {{\"role\":\"maintainability_reviewer\",\"verdict\":\"approve\",\"score\":{d},\"summary\":\"ok\",\"blockers\":[],\"suggestions\":{s},\"confidence\":0.9}}\n",
+                .{ score, suggestions },
             );
             defer allocator.free(log_line);
             try writeMockLog(allocator, cfg, log_label, log_line);
@@ -762,6 +1023,20 @@ test "pool e2e: approve -> merge -> done" {
     try expectTaskState(detail_json, "done", "merged");
 }
 
+test "pool e2e: implement writes uncommitted changes -> auto-commit -> done" {
+    const allocator = std.testing.allocator;
+    var setup = try setupPoolE2E(allocator);
+    defer setup.deinit();
+
+    var mock = MockPoolProvider{ .scenario = .approve_and_merge_without_commit };
+    const outcome = try runSingleTaskForScenario(allocator, setup.cfg, setup.store.asTaskStore(), &mock);
+    try std.testing.expectEqual(TaskOutcome.done, outcome);
+
+    const detail_json = try setup.store.asTaskStore().getTaskDetailJson(allocator, "task-e2e");
+    defer allocator.free(detail_json);
+    try expectTaskState(detail_json, "done", "merged");
+}
+
 test "pool e2e: maintainability score=2 -> changes_requested -> queued" {
     const allocator = std.testing.allocator;
     var setup = try setupPoolE2E(allocator);
@@ -774,6 +1049,28 @@ test "pool e2e: maintainability score=2 -> changes_requested -> queued" {
     const detail_json = try setup.store.asTaskStore().getTaskDetailJson(allocator, "task-e2e");
     defer allocator.free(detail_json);
     try expectTaskState(detail_json, "queued", "changes_requested");
+}
+
+test "pool e2e: suggestion -> changes_requested -> second round done" {
+    const allocator = std.testing.allocator;
+    var setup = try setupPoolE2E(allocator);
+    defer setup.deinit();
+
+    var mock = MockPoolProvider{ .scenario = .suggestion_requeue_then_approve };
+    const first_outcome = try runSingleTaskForScenario(allocator, setup.cfg, setup.store.asTaskStore(), &mock);
+    try std.testing.expectEqual(TaskOutcome.requeued, first_outcome);
+
+    const first_detail_json = try setup.store.asTaskStore().getTaskDetailJson(allocator, "task-e2e");
+    defer allocator.free(first_detail_json);
+    try expectTaskState(first_detail_json, "queued", "changes_requested");
+    try expectEvent(first_detail_json, "task.review.changes_requested");
+
+    const second_outcome = try runSingleTaskForScenario(allocator, setup.cfg, setup.store.asTaskStore(), &mock);
+    try std.testing.expectEqual(TaskOutcome.done, second_outcome);
+
+    const second_detail_json = try setup.store.asTaskStore().getTaskDetailJson(allocator, "task-e2e");
+    defer allocator.free(second_detail_json);
+    try expectTaskState(second_detail_json, "done", "merged");
 }
 
 test "pool e2e: merge conflict -> changes_requested -> queued" {
