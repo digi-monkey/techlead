@@ -458,8 +458,12 @@ pub const SqliteTaskStore = struct {
         if (self.api.step(stmt) != SQLITE_ROW) return error.TaskNotClaimed;
         const current_retry: u32 = @intCast(self.api.column_int(stmt, 0));
         const max_retries: u32 = @intCast(self.api.column_int(stmt, 1));
-        const next_retry = current_retry + 1;
-        const next_status: task_store.TaskStatus = if (next_retry < max_retries) .queued else .failed;
+        const is_review_gate_blocked = std.mem.eql(u8, reason, "review_gate_blocked");
+        // If historical infra failures already exhausted retry budget, still allow
+        // one follow-up implementation round for first review gate blockage.
+        const allow_followup_round_once = is_review_gate_blocked and review_round == 1 and current_retry >= max_retries;
+        const next_retry = if (allow_followup_round_once) current_retry else current_retry + 1;
+        const next_status: task_store.TaskStatus = if (allow_followup_round_once or next_retry < max_retries) .queued else .failed;
         const status_q = try sqlQuote(self.allocator, task_store.taskStatusToString(next_status));
         defer self.allocator.free(status_q);
         const last_error_val = if (next_status == .failed)
