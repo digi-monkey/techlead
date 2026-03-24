@@ -18,6 +18,9 @@ pub const StoreError = error{
     ActionRejected,
     ForceMergeDisabled,
     OutOfMemory,
+    // Data parsing errors
+    InvalidTaskStatus,
+    InvalidReviewStage,
 };
 
 pub const Project = struct {

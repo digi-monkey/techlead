@@ -13,9 +13,37 @@ const SQLITE_OPEN_READWRITE: CInt = 0x00000002;
 const SQLITE_OPEN_CREATE: CInt = 0x00000004;
 const SQLITE_OPEN_FULLMUTEX: CInt = 0x00010000;
 const SQLITE_LIMIT_SQL_LENGTH: CInt = 1;
-const SCHEMA_VERSION: CInt = 2;
 const SQLITE_BUSY: CInt = 5;
 const SQLITE_CONSTRAINT: CInt = 19;
+const SCHEMA_VERSION: CInt = 3;
+
+const TASK_SELECT_COLUMNS =
+    "task_id,title,prompt,status,lease_owner,lease_until,retry_count,max_retries,priority,last_error,review_stage,review_round,base_branch,head_branch,head_sha,merge_commit,review_feedback,qa_force_reject_once,version,created_at,updated_at";
+
+const TaskReview = struct {
+    id: i64,
+    task_id: []u8,
+    review_round: u32,
+    role: []u8,
+    verdict: []u8,
+    score: ?i32,
+    summary: []u8,
+    blockers_json: []u8,
+    suggestions_json: []u8,
+    confidence: ?f64,
+    reviewer_run_id: ?[]u8,
+    created_at: i64,
+
+    fn deinit(self: *TaskReview, allocator: std.mem.Allocator) void {
+        allocator.free(self.task_id);
+        allocator.free(self.role);
+        allocator.free(self.verdict);
+        allocator.free(self.summary);
+        allocator.free(self.blockers_json);
+        allocator.free(self.suggestions_json);
+        if (self.reviewer_run_id) |v| allocator.free(v);
+    }
+};
 
 const SqliteApi = struct {
     open_v2: *const fn ([*:0]const u8, *?*sqlite3, CInt, ?[*:0]const u8) callconv(.c) CInt,
@@ -134,6 +162,12 @@ pub const SqliteControlPlaneStore = struct {
             try self.execSql("DROP TABLE IF EXISTS projects;");
         }
 
+        // Also clean up if coming from version 2 (need to recreate tables with foreign keys)
+        if (user_version == 2) {
+            try self.execSql("DROP TABLE IF EXISTS task_reviews;");
+            try self.execSql("DROP TABLE IF EXISTS task_events;");
+        }
+
         try self.execSql(
             \\CREATE TABLE IF NOT EXISTS projects (
             \\  project_id TEXT PRIMARY KEY,
@@ -180,6 +214,42 @@ pub const SqliteControlPlaneStore = struct {
 
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);");
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);");
+
+        try self.execSql(
+            \\CREATE TABLE IF NOT EXISTS task_events (
+            \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+            \\  task_id TEXT NOT NULL,
+            \\  run_id TEXT,
+            \\  event_type TEXT NOT NULL,
+            \\  payload TEXT NOT NULL,
+            \\  operator TEXT,
+            \\  source TEXT,
+            \\  request_id TEXT,
+            \\  created_at INTEGER NOT NULL,
+            \\  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+            \\);
+        );
+
+        try self.execSql(
+            \\CREATE TABLE IF NOT EXISTS task_reviews (
+            \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+            \\  task_id TEXT NOT NULL,
+            \\  review_round INTEGER NOT NULL,
+            \\  role TEXT NOT NULL,
+            \\  verdict TEXT NOT NULL,
+            \\  score INTEGER,
+            \\  summary TEXT NOT NULL,
+            \\  blockers_json TEXT NOT NULL,
+            \\  suggestions_json TEXT NOT NULL,
+            \\  confidence REAL,
+            \\  reviewer_run_id TEXT,
+            \\  created_at INTEGER NOT NULL,
+            \\  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+            \\);
+        );
+
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id, id DESC);");
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_task_reviews_task_round ON task_reviews(task_id, review_round);");
 
         try self.execSql(
             \\CREATE TABLE IF NOT EXISTS runs (
@@ -409,8 +479,56 @@ pub const SqliteControlPlaneStore = struct {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = options;
-        _ = allocator;
+
+        const now = std.time.timestamp();
+        const lease_until = now + @as(i64, @intCast(options.lease_seconds));
+
+        var retries: usize = 0;
+        while (retries < 16) : (retries += 1) {
+            // Build SELECT query with optional project filter
+            var select_sql: std.ArrayList(u8) = .empty;
+            defer select_sql.deinit(self.allocator);
+
+            try select_sql.appendSlice(self.allocator, "SELECT task_id,version FROM tasks WHERE status='queued'");
+            if (options.project_id) |pid| {
+                const pid_q = try sqlQuote(self.allocator, pid);
+                defer self.allocator.free(pid_q);
+                try std.fmt.format(select_sql.writer(self.allocator), " AND project_id='{s}'", .{pid_q});
+            }
+            try select_sql.appendSlice(self.allocator, " ORDER BY priority DESC, created_at ASC LIMIT 1;");
+
+            var selected_id: ?[]u8 = null;
+            defer if (selected_id) |v| self.allocator.free(v);
+            var selected_version: i64 = 0;
+
+            const stmt = try self.prepare(select_sql.items);
+            defer self.finalize(stmt);
+            if (self.api.step(stmt) == SQLITE_ROW) {
+                selected_id = try self.columnTextDup(stmt, 0, allocator);
+                selected_version = self.api.column_int64(stmt, 1);
+            } else {
+                return null;
+            }
+
+            const id_q = try sqlQuote(self.allocator, selected_id.?);
+            defer self.allocator.free(id_q);
+            const owner_q = try sqlQuote(self.allocator, options.owner);
+            defer self.allocator.free(owner_q);
+
+            const update_sql = try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='claimed', lease_owner='{s}', lease_until={d}, leased_at={d}, updated_at={d}, version=version+1 WHERE task_id='{s}' AND version={d};",
+                .{ owner_q, lease_until, now, now, id_q, selected_version },
+            );
+            defer self.allocator.free(update_sql);
+            try self.execSql(update_sql);
+            if (self.api.changes(self.db) != 1) continue;
+
+            const fetch_sql = try std.fmt.allocPrint(self.allocator, "SELECT {s} FROM tasks WHERE task_id='{s}' LIMIT 1;", .{ TASK_SELECT_COLUMNS, id_q });
+            defer self.allocator.free(fetch_sql);
+            return try self.getOneTask(fetch_sql, allocator);
+        }
+
         return null;
     }
 
@@ -418,17 +536,260 @@ pub const SqliteControlPlaneStore = struct {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = query;
-        return allocator.dupe(u8, "{\"tasks\":[],\"summary\":{},\"cursor\":0,\"next_cursor\":null,\"limit\":50,\"total\":0}");
+
+        const limit = @max(@as(usize, 1), @min(query.limit, 200));
+        var where_parts: std.ArrayList([]const u8) = .empty;
+        defer where_parts.deinit(self.allocator);
+        var owned_parts: std.ArrayList([]u8) = .empty;
+        defer {
+            for (owned_parts.items) |p| self.allocator.free(p);
+            owned_parts.deinit(self.allocator);
+        }
+
+        // Always filter by project_id
+        const project_q = try sqlQuote(self.allocator, query.project_id);
+        try owned_parts.append(self.allocator, project_q);
+        const project_clause = try std.fmt.allocPrint(self.allocator, "project_id='{s}'", .{project_q});
+        try owned_parts.append(self.allocator, project_clause);
+        try where_parts.append(self.allocator, project_clause);
+
+        if (query.status) |status| {
+            const status_q = try sqlQuote(self.allocator, task_store.taskStatusToString(status));
+            try owned_parts.append(self.allocator, status_q);
+            const clause = try std.fmt.allocPrint(self.allocator, "status='{s}'", .{status_q});
+            try owned_parts.append(self.allocator, clause);
+            try where_parts.append(self.allocator, clause);
+        }
+        if (query.q) |text| {
+            const q_q = try sqlQuote(self.allocator, text);
+            try owned_parts.append(self.allocator, q_q);
+            const clause = try std.fmt.allocPrint(self.allocator, "(title LIKE '%%{s}%%' OR prompt LIKE '%%{s}%%')", .{ q_q, q_q });
+            try owned_parts.append(self.allocator, clause);
+            try where_parts.append(self.allocator, clause);
+        }
+
+        var where_sql: []const u8 = "";
+        if (where_parts.items.len > 0) {
+            var join = std.ArrayList(u8).empty;
+            defer join.deinit(self.allocator);
+            try join.appendSlice(self.allocator, " WHERE ");
+            for (where_parts.items, 0..) |part, idx| {
+                if (idx > 0) try join.appendSlice(self.allocator, " AND ");
+                try join.appendSlice(self.allocator, part);
+            }
+            where_sql = try join.toOwnedSlice(self.allocator);
+            try owned_parts.append(self.allocator, @constCast(where_sql));
+        }
+
+        const count_sql = try std.fmt.allocPrint(self.allocator, "SELECT COUNT(*) FROM tasks{s};", .{where_sql});
+        defer self.allocator.free(count_sql);
+        const total = try self.queryCount(count_sql);
+
+        const list_sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT {s} FROM tasks{s} ORDER BY updated_at DESC, task_id ASC LIMIT {d} OFFSET {d};",
+            .{ TASK_SELECT_COLUMNS, where_sql, limit, query.cursor },
+        );
+        defer self.allocator.free(list_sql);
+
+        var rows = std.ArrayList(task_store.Task).empty;
+        defer {
+            for (rows.items) |*item| item.deinit(self.allocator);
+            rows.deinit(self.allocator);
+        }
+
+        const stmt = try self.prepare(list_sql);
+        defer self.finalize(stmt);
+        while (self.api.step(stmt) == SQLITE_ROW) {
+            try rows.append(self.allocator, try self.readTaskFromStmt(stmt, self.allocator));
+        }
+
+        var sums = [_]struct { status: []const u8, count: i64 }{
+            .{ .status = "queued", .count = 0 },
+            .{ .status = "claimed", .count = 0 },
+            .{ .status = "running", .count = 0 },
+            .{ .status = "review", .count = 0 },
+            .{ .status = "done", .count = 0 },
+            .{ .status = "failed", .count = 0 },
+            .{ .status = "canceled", .count = 0 },
+        };
+
+        // Get counts filtered by project_id only
+        const sum_sql = try std.fmt.allocPrint(self.allocator, "SELECT status, COUNT(*) FROM tasks WHERE project_id='{s}' GROUP BY status;", .{project_q});
+        defer self.allocator.free(sum_sql);
+        const sum_stmt = try self.prepare(sum_sql);
+        defer self.finalize(sum_stmt);
+        while (self.api.step(sum_stmt) == SQLITE_ROW) {
+            const status = (try self.columnTextDup(sum_stmt, 0, self.allocator));
+            defer self.allocator.free(status);
+            const cnt = self.api.column_int64(sum_stmt, 1);
+            for (&sums) |*s| {
+                if (std.mem.eql(u8, s.status, status)) {
+                    s.count = cnt;
+                    break;
+                }
+            }
+        }
+
+        const has_next = query.cursor + rows.items.len < @as(usize, @intCast(total));
+        const next_cursor: ?usize = if (has_next) query.cursor + rows.items.len else null;
+
+        var out = std.ArrayList(u8).empty;
+        defer out.deinit(allocator);
+        var w = out.writer(allocator);
+        try w.writeAll("{\"tasks\":[");
+        for (rows.items, 0..) |task, idx| {
+            if (idx > 0) try w.writeByte(',');
+            var latest_reviews = std.ArrayList(TaskReview).empty;
+            defer {
+                for (latest_reviews.items) |*item| item.deinit(self.allocator);
+                latest_reviews.deinit(self.allocator);
+            }
+            try self.collectLatestTaskReviews(task.task_id, &latest_reviews);
+            try writeTaskJsonWithLatestReviews(&w, task, latest_reviews.items);
+        }
+        try w.writeAll("],\"summary\":{");
+        for (sums, 0..) |s, idx| {
+            if (idx > 0) try w.writeByte(',');
+            try w.print("\"{s}\":{d}", .{ s.status, s.count });
+        }
+        try w.print("}},\"cursor\":{d},\"next_cursor\":", .{query.cursor});
+        if (next_cursor) |v| {
+            try w.print("{d}", .{v});
+        } else {
+            try w.writeAll("null");
+        }
+        try w.print(",\"limit\":{d},\"total\":{d}", .{ limit, total });
+        try w.writeByte('}');
+
+        return out.toOwnedSlice(allocator);
+    }
+
+    fn collectLatestTaskReviews(self: *SqliteControlPlaneStore, task_id: []const u8, out: *std.ArrayList(TaskReview)) controlplane_store.StoreError!void {
+        const review_roles = [_]task_store.TaskReviewRole{
+            .correctness_reviewer,
+            .maintainability_reviewer,
+        };
+        for (review_roles) |role| {
+            const review = try self.getLatestTaskReview(task_id, role);
+            if (review) |r| try out.append(self.allocator, r);
+        }
+    }
+
+    fn getLatestTaskReview(self: *SqliteControlPlaneStore, task_id: []const u8, role: task_store.TaskReviewRole) controlplane_store.StoreError!?TaskReview {
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const role_q = try sqlQuote(self.allocator, task_store.taskReviewRoleToString(role));
+        defer self.allocator.free(role_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT id,task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at FROM task_reviews WHERE task_id='{s}' AND role='{s}' ORDER BY created_at DESC, id DESC LIMIT 1;",
+            .{ task_q, role_q },
+        );
+        defer self.allocator.free(sql);
+
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+        if (self.api.step(stmt) != SQLITE_ROW) return null;
+        return try self.readTaskReviewFromStmt(stmt);
+    }
+
+    fn readTaskReviewFromStmt(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt) controlplane_store.StoreError!TaskReview {
+        return .{
+            .id = self.api.column_int64(stmt, 0),
+            .task_id = try self.columnTextDup(stmt, 1, self.allocator),
+            .review_round = @intCast(self.api.column_int(stmt, 2)),
+            .role = try self.columnTextDup(stmt, 3, self.allocator),
+            .verdict = try self.columnTextDup(stmt, 4, self.allocator),
+            .score = if (self.columnIsNull(stmt, 5)) null else self.api.column_int(stmt, 5),
+            .summary = try self.columnTextDup(stmt, 6, self.allocator),
+            .blockers_json = try self.columnTextDup(stmt, 7, self.allocator),
+            .suggestions_json = try self.columnTextDup(stmt, 8, self.allocator),
+            .confidence = if (self.columnIsNull(stmt, 9)) null else self.api.column_double(stmt, 9),
+            .reviewer_run_id = try self.columnOptionalTextDup(stmt, 10, self.allocator),
+            .created_at = self.api.column_int64(stmt, 11),
+        };
+    }
+
+    fn queryCount(self: *SqliteControlPlaneStore, sql: []const u8) controlplane_store.StoreError!i64 {
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+        if (self.api.step(stmt) != SQLITE_ROW) return 0;
+        return self.api.column_int64(stmt, 0);
     }
 
     fn getTaskDetail(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, allocator: std.mem.Allocator) controlplane_store.StoreError![]u8 {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        return allocator.dupe(u8, "{\"task\":null,\"reviews\":[],\"events\":[]}");
+
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const project_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(project_q);
+
+        // Fetch task with project_id filter
+        const task_sql = try std.fmt.allocPrint(self.allocator, "SELECT {s} FROM tasks WHERE task_id='{s}' AND project_id='{s}' LIMIT 1;", .{ TASK_SELECT_COLUMNS, task_q, project_q });
+        defer self.allocator.free(task_sql);
+
+        const maybe_task = try self.getOneTask(task_sql, self.allocator);
+        if (maybe_task == null) return error.TaskNotFound;
+        var task = maybe_task.?;
+        defer task.deinit(self.allocator);
+
+        // Fetch events
+        const event_sql = try std.fmt.allocPrint(self.allocator, "SELECT id,task_id,run_id,event_type,payload,operator,source,request_id,created_at FROM task_events WHERE task_id='{s}' ORDER BY id DESC LIMIT 50;", .{task_q});
+        defer self.allocator.free(event_sql);
+
+        var events = std.ArrayList(task_store.TaskEvent).empty;
+        defer {
+            for (events.items) |*item| item.deinit(self.allocator);
+            events.deinit(self.allocator);
+        }
+
+        const stmt = try self.prepare(event_sql);
+        defer self.finalize(stmt);
+        while (self.api.step(stmt) == SQLITE_ROW) {
+            try events.append(self.allocator, try self.readTaskEventFromStmt(stmt));
+        }
+
+        // Fetch reviews
+        var reviews = std.ArrayList(TaskReview).empty;
+        defer {
+            for (reviews.items) |*item| item.deinit(self.allocator);
+            reviews.deinit(self.allocator);
+        }
+
+        const review_sql = try std.fmt.allocPrint(self.allocator, "SELECT id,task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at FROM task_reviews WHERE task_id='{s}' ORDER BY created_at DESC, id DESC;", .{task_q});
+        defer self.allocator.free(review_sql);
+
+        const review_stmt = try self.prepare(review_sql);
+        defer self.finalize(review_stmt);
+        while (self.api.step(review_stmt) == SQLITE_ROW) {
+            try reviews.append(self.allocator, try self.readTaskReviewFromStmt(review_stmt));
+        }
+
+        // Build JSON output
+        var out = std.ArrayList(u8).empty;
+        defer out.deinit(allocator);
+        var w = out.writer(allocator);
+        try writeTaskDetailJson(&w, task, events.items, reviews.items);
+        return out.toOwnedSlice(allocator);
+    }
+
+    fn readTaskEventFromStmt(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt) controlplane_store.StoreError!task_store.TaskEvent {
+        return .{
+            .id = self.api.column_int64(stmt, 0),
+            .task_id = try self.columnTextDup(stmt, 1, self.allocator),
+            .run_id = try self.columnOptionalTextDup(stmt, 2, self.allocator),
+            .event_type = try self.columnTextDup(stmt, 3, self.allocator),
+            .payload = try self.columnTextDup(stmt, 4, self.allocator),
+            .operator = try self.columnOptionalTextDup(stmt, 5, self.allocator),
+            .source = try self.columnOptionalTextDup(stmt, 6, self.allocator),
+            .request_id = try self.columnOptionalTextDup(stmt, 7, self.allocator),
+            .created_at = self.api.column_int64(stmt, 8),
+        };
     }
 
     fn markRunning(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, lease_seconds: u64, run_id: []const u8) controlplane_store.StoreError!void {
@@ -732,6 +1093,50 @@ pub const SqliteControlPlaneStore = struct {
         _ = self.api.bind_text(stmt, index, text_z, @intCast(text.len), null);
     }
 
+    fn columnIsNull(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt, index: CInt) bool {
+        return @as(?[*:0]const u8, self.api.column_text(stmt, index)) == null;
+    }
+
+    fn getOneTask(self: *SqliteControlPlaneStore, sql: []const u8, allocator: std.mem.Allocator) controlplane_store.StoreError!?task_store.Task {
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+        if (self.api.step(stmt) != SQLITE_ROW) return null;
+        return try self.readTaskFromStmt(stmt, allocator);
+    }
+
+    fn readTaskFromStmt(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt, allocator: std.mem.Allocator) controlplane_store.StoreError!task_store.Task {
+        const status_text = try self.columnTextDup(stmt, 3, allocator);
+        defer self.allocator.free(status_text);
+        const parsed_status = try task_store.taskStatusFromString(status_text);
+        const review_stage_text = try self.columnTextDup(stmt, 10, allocator);
+        defer self.allocator.free(review_stage_text);
+        const parsed_review_stage = try task_store.reviewStageFromString(review_stage_text);
+
+        return .{
+            .task_id = try self.columnTextDup(stmt, 0, allocator),
+            .title = try self.columnTextDup(stmt, 1, allocator),
+            .prompt = try self.columnOptionalTextDup(stmt, 2, allocator),
+            .status = parsed_status,
+            .lease_owner = try self.columnOptionalTextDup(stmt, 4, allocator),
+            .lease_until = if (self.columnIsNull(stmt, 5)) null else self.api.column_int64(stmt, 5),
+            .retry_count = @intCast(self.api.column_int(stmt, 6)),
+            .max_retries = if (self.columnIsNull(stmt, 7)) null else @intCast(self.api.column_int(stmt, 7)),
+            .priority = self.api.column_int(stmt, 8),
+            .last_error = try self.columnOptionalTextDup(stmt, 9, allocator),
+            .review_stage = parsed_review_stage,
+            .review_round = @intCast(self.api.column_int(stmt, 11)),
+            .base_branch = try self.columnOptionalTextDup(stmt, 12, allocator),
+            .head_branch = try self.columnOptionalTextDup(stmt, 13, allocator),
+            .head_sha = try self.columnOptionalTextDup(stmt, 14, allocator),
+            .merge_commit = try self.columnOptionalTextDup(stmt, 15, allocator),
+            .review_feedback = try self.columnOptionalTextDup(stmt, 16, allocator),
+            .qa_force_reject_once = self.api.column_int(stmt, 17) != 0,
+            .version = self.api.column_int64(stmt, 18),
+            .created_at = self.api.column_int64(stmt, 19),
+            .updated_at = self.api.column_int64(stmt, 20),
+        };
+    }
+
     const vtable = controlplane_store.ControlPlaneStore.VTable{
         .registerProject = registerProject,
         .getProject = getProject,
@@ -770,6 +1175,244 @@ fn sqliteToStoreError(rc: CInt) controlplane_store.StoreError {
         SQLITE_CONSTRAINT => error.ConstraintViolation,
         else => error.DatabaseBusy,
     };
+}
+
+fn sqlQuote(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    for (text) |c| {
+        if (c == '\'') {
+            try out.append(allocator, '\'');
+            try out.append(allocator, '\'');
+        } else {
+            try out.append(allocator, c);
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn writeTaskJson(writer: anytype, task: task_store.Task) !void {
+    try writer.print("{{\"task_id\":{f},\"title\":{f},\"prompt\":", .{ std.json.fmt(task.task_id, .{}), std.json.fmt(task.title, .{}) });
+    if (task.prompt) |p| {
+        try writer.print("{f}", .{std.json.fmt(p, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"status\":{f},\"lease_owner\":", .{std.json.fmt(task_store.taskStatusToString(task.status), .{})});
+    if (task.lease_owner) |owner| {
+        try writer.print("{f}", .{std.json.fmt(owner, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"lease_until\":");
+    if (task.lease_until) |until| {
+        try writer.print("{d}", .{until});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"max_retries\":");
+    if (task.max_retries) |mr| {
+        try writer.print("{d}", .{mr});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"last_error\":");
+    if (task.last_error) |msg| {
+        try writer.print("{f}", .{std.json.fmt(msg, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"review_stage\":{f},\"review_round\":{d},\"base_branch\":", .{
+        std.json.fmt(task_store.reviewStageToString(task.review_stage), .{}),
+        task.review_round,
+    });
+    if (task.base_branch) |base_branch| {
+        try writer.print("{f}", .{std.json.fmt(base_branch, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"head_branch\":");
+    if (task.head_branch) |head_branch| {
+        try writer.print("{f}", .{std.json.fmt(head_branch, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"head_sha\":");
+    if (task.head_sha) |head_sha| {
+        try writer.print("{f}", .{std.json.fmt(head_sha, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"merge_commit\":");
+    if (task.merge_commit) |merge_commit| {
+        try writer.print("{f}", .{std.json.fmt(merge_commit, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"review_feedback\":");
+    if (task.review_feedback) |review_feedback| {
+        try writer.print("{f}", .{std.json.fmt(review_feedback, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"retry_count\":{d},\"priority\":{d},\"qa_force_reject_once\":{s},\"version\":{d},\"created_at\":{d},\"updated_at\":{d}}}", .{ task.retry_count, task.priority, if (task.qa_force_reject_once) "true" else "false", task.version, task.created_at, task.updated_at });
+}
+
+fn writeTaskEventJson(writer: anytype, evt: task_store.TaskEvent) !void {
+    try writer.print("{{\"id\":{d},\"task_id\":{f},\"run_id\":", .{ evt.id, std.json.fmt(evt.task_id, .{}) });
+    if (evt.run_id) |run_id| {
+        try writer.print("{f}", .{std.json.fmt(run_id, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"event_type\":{f},\"payload\":", .{std.json.fmt(evt.event_type, .{})});
+    try writer.print("{f}", .{std.json.fmt(evt.payload, .{})});
+    try writer.writeAll(",\"operator\":");
+    if (evt.operator) |op| {
+        try writer.print("{f}", .{std.json.fmt(op, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"source\":");
+    if (evt.source) |source| {
+        try writer.print("{f}", .{std.json.fmt(source, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"request_id\":");
+    if (evt.request_id) |rid| {
+        try writer.print("{f}", .{std.json.fmt(rid, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"created_at\":{d}}}", .{evt.created_at});
+}
+
+fn writeTaskDetailJson(
+    writer: anytype,
+    task: task_store.Task,
+    events: []const task_store.TaskEvent,
+    reviews: []const TaskReview,
+) !void {
+    try writer.writeAll("{\"task\":");
+    try writeTaskJson(writer, task);
+    try writer.writeAll(",\"reviews\":[");
+    for (reviews, 0..) |review, idx| {
+        if (idx > 0) try writer.writeByte(',');
+        try writeTaskReviewJson(writer, review);
+    }
+    try writer.writeAll("],\"events\":[");
+    for (events, 0..) |evt, idx| {
+        if (idx > 0) try writer.writeByte(',');
+        try writeTaskEventJson(writer, evt);
+    }
+    try writer.writeAll("]}");
+}
+
+fn writeTaskJsonWithLatestReviews(writer: anytype, task: task_store.Task, latest_reviews: []const TaskReview) !void {
+    try writer.print("{{\"task_id\":{f},\"title\":{f},\"prompt\":", .{ std.json.fmt(task.task_id, .{}), std.json.fmt(task.title, .{}) });
+    if (task.prompt) |p| {
+        try writer.print("{f}", .{std.json.fmt(p, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"status\":{f},\"lease_owner\":", .{std.json.fmt(task_store.taskStatusToString(task.status), .{})});
+    if (task.lease_owner) |owner| {
+        try writer.print("{f}", .{std.json.fmt(owner, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"lease_until\":");
+    if (task.lease_until) |until| {
+        try writer.print("{d}", .{until});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"max_retries\":");
+    if (task.max_retries) |mr| {
+        try writer.print("{d}", .{mr});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"last_error\":");
+    if (task.last_error) |msg| {
+        try writer.print("{f}", .{std.json.fmt(msg, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"review_stage\":{f},\"review_round\":{d},\"base_branch\":", .{
+        std.json.fmt(task_store.reviewStageToString(task.review_stage), .{}),
+        task.review_round,
+    });
+    if (task.base_branch) |base_branch| {
+        try writer.print("{f}", .{std.json.fmt(base_branch, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"head_branch\":");
+    if (task.head_branch) |head_branch| {
+        try writer.print("{f}", .{std.json.fmt(head_branch, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"head_sha\":");
+    if (task.head_sha) |head_sha| {
+        try writer.print("{f}", .{std.json.fmt(head_sha, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"merge_commit\":");
+    if (task.merge_commit) |merge_commit| {
+        try writer.print("{f}", .{std.json.fmt(merge_commit, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"review_feedback\":");
+    if (task.review_feedback) |review_feedback| {
+        try writer.print("{f}", .{std.json.fmt(review_feedback, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"retry_count\":{d},\"priority\":{d},\"qa_force_reject_once\":{s},\"version\":{d},\"created_at\":{d},\"updated_at\":{d}", .{ task.retry_count, task.priority, if (task.qa_force_reject_once) "true" else "false", task.version, task.created_at, task.updated_at });
+    try writer.writeAll(",\"latest_reviews\":[");
+    for (latest_reviews, 0..) |review, idx| {
+        if (idx > 0) try writer.writeByte(',');
+        try writeTaskReviewJson(writer, review);
+    }
+    try writer.writeByte(']');
+    try writer.writeByte('}');
+}
+
+fn writeTaskReviewJson(writer: anytype, review: TaskReview) !void {
+    try writer.print("{{\"id\":{d},\"task_id\":{f},\"review_round\":{d},\"role\":{f},\"verdict\":{f},\"score\":", .{
+        review.id,
+        std.json.fmt(review.task_id, .{}),
+        review.review_round,
+        std.json.fmt(review.role, .{}),
+        std.json.fmt(review.verdict, .{}),
+    });
+    if (review.score) |score| {
+        try writer.print("{d}", .{score});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"summary\":{f},\"blockers\":{s},\"suggestions\":{s},\"confidence\":", .{
+        std.json.fmt(review.summary, .{}),
+        review.blockers_json,
+        review.suggestions_json,
+    });
+    if (review.confidence) |confidence| {
+        try writer.print("{d}", .{confidence});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"reviewer_run_id\":");
+    if (review.reviewer_run_id) |run_id| {
+        try writer.print("{f}", .{std.json.fmt(run_id, .{})});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(",\"created_at\":{d}}}", .{review.created_at});
 }
 
 fn openSqliteDynLib() !std.DynLib {
