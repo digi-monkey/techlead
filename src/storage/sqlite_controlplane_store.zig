@@ -712,6 +712,52 @@ pub const SqliteControlPlaneStore = struct {
         };
     }
 
+    fn appendTaskEvent(self: *SqliteControlPlaneStore, task_id: []const u8, run_id: ?[]const u8, event_type: []const u8, payload: []const u8, operator: ?[]const u8, source: ?[]const u8, request_id: ?[]const u8) controlplane_store.StoreError!void {
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const event_q = try sqlQuote(self.allocator, event_type);
+        defer self.allocator.free(event_q);
+        const payload_q = try sqlQuote(self.allocator, payload);
+        defer self.allocator.free(payload_q);
+        const now = std.time.timestamp();
+
+        const run_val = if (run_id) |r| blk: {
+            const q = try sqlQuote(self.allocator, r);
+            defer self.allocator.free(q);
+            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
+        } else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(run_val);
+
+        const op_val = if (operator) |o| blk: {
+            const q = try sqlQuote(self.allocator, o);
+            defer self.allocator.free(q);
+            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
+        } else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(op_val);
+
+        const source_val = if (source) |s| blk: {
+            const q = try sqlQuote(self.allocator, s);
+            defer self.allocator.free(q);
+            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
+        } else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(source_val);
+
+        const req_val = if (request_id) |r| blk: {
+            const q = try sqlQuote(self.allocator, r);
+            defer self.allocator.free(q);
+            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
+        } else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(req_val);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO task_events(task_id,run_id,event_type,payload,operator,source,request_id,created_at) VALUES('{s}',{s},'{s}','{s}',{s},{s},{s},{d});",
+            .{ task_q, run_val, event_q, payload_q, op_val, source_val, req_val, now },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+    }
+
     fn queryCount(self: *SqliteControlPlaneStore, sql: []const u8) controlplane_store.StoreError!i64 {
         const stmt = try self.prepare(sql);
         defer self.finalize(stmt);
@@ -890,20 +936,97 @@ pub const SqliteControlPlaneStore = struct {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = after_id;
-        _ = limit;
-        return allocator.dupe(u8, "{\"events\":[],\"last_event_id\":0}");
+
+        const safe_limit = @max(@as(usize, 1), @min(limit, 200));
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+
+        const sql = try std.fmt.allocPrint(self.allocator, "SELECT e.id,e.task_id,e.run_id,e.event_type,e.payload,e.operator,e.source,e.request_id,e.created_at FROM task_events e INNER JOIN tasks t ON e.task_id=t.task_id WHERE t.project_id='{s}' AND e.id>{d} ORDER BY e.id ASC LIMIT {d};", .{ pid_q, after_id, safe_limit });
+        defer self.allocator.free(sql);
+
+        var rows = std.ArrayList(task_store.TaskEvent).empty;
+        defer {
+            for (rows.items) |*item| item.deinit(self.allocator);
+            rows.deinit(self.allocator);
+        }
+
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+        var last_id = after_id;
+        while (self.api.step(stmt) == SQLITE_ROW) {
+            const evt = try self.readTaskEventFromStmt(stmt);
+            if (evt.id > last_id) last_id = evt.id;
+            try rows.append(self.allocator, evt);
+        }
+
+        var out = std.ArrayList(u8).empty;
+        defer out.deinit(allocator);
+        var w = out.writer(allocator);
+        try w.writeAll("{\"events\":[");
+        for (rows.items, 0..) |evt, idx| {
+            if (idx > 0) try w.writeByte(',');
+            try writeTaskEventJson(&w, evt);
+        }
+        try w.print("],\"last_event_id\":{d}", .{last_id});
+        try w.writeByte('}');
+        return out.toOwnedSlice(allocator);
     }
 
     fn applyAction(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, action: task_store.Action, meta: task_store.OperatorMeta) controlplane_store.StoreError!void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = project_id;
-        _ = task_id;
-        _ = action;
-        _ = meta;
+
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const now = std.time.timestamp();
+
+        if (action == .force_merge) return error.ForceMergeDisabled;
+
+        const sql = switch (action) {
+            .requeue => try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND (status='failed' OR status='canceled' OR status='review');",
+                .{ now, pid_q, task_q },
+            ),
+            .cancel => try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='canceled', lease_owner=NULL, lease_until=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND status!='done';",
+                .{ now, pid_q, task_q },
+            ),
+            .@"resume" => try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND (status='failed' OR status='canceled' OR status='review');",
+                .{ now, pid_q, task_q },
+            ),
+            .force_fail => try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='failed', lease_owner=NULL, lease_until=NULL, last_error='forced_fail', updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND status!='done';",
+                .{ now, pid_q, task_q },
+            ),
+            .retry_review => try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND (status='review' OR status='queued') AND review_stage='changes_requested';",
+                .{ now, pid_q, task_q },
+            ),
+            .force_merge => unreachable,
+        };
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+        if (self.api.changes(self.db) != 1) return error.ActionRejected;
+
+        const event_type = switch (action) {
+            .requeue => "task.action.requeue",
+            .cancel => "task.action.cancel",
+            .@"resume" => "task.action.resume",
+            .force_fail => "task.action.force_fail",
+            .retry_review => "task.action.retry_review",
+            .force_merge => unreachable,
+        };
+
+        try self.appendTaskEvent(task_id, meta.run_id, event_type, "{}", meta.operator, meta.source, meta.request_id);
     }
 
     fn createRun(ctx: *anyopaque, run_id: []const u8, project_id: []const u8, mode: []const u8, worker_id: ?[]const u8) controlplane_store.StoreError!void {
