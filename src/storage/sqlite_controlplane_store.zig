@@ -264,7 +264,23 @@ pub const SqliteControlPlaneStore = struct {
             \\);
         );
 
-        try self.execSql("PRAGMA user_version=2;");
+        try self.execSql(
+            \\CREATE TABLE IF NOT EXISTS leases (
+            \\  lease_id TEXT PRIMARY KEY,
+            \\  task_id TEXT NOT NULL,
+            \\  project_id TEXT NOT NULL,
+            \\  owner TEXT NOT NULL,
+            \\  expires_at INTEGER NOT NULL,
+            \\  acquired_at INTEGER NOT NULL,
+            \\  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
+            \\  FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+            \\);
+        );
+
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_leases_task_id ON leases(task_id);");
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);");
+
+        try self.execSql("PRAGMA user_version=3;");
     }
 
     fn registerProject(ctx: *anyopaque, input: controlplane_store.RegisterProjectInput) controlplane_store.StoreError!void {
@@ -1280,28 +1296,146 @@ pub const SqliteControlPlaneStore = struct {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = lease_id;
-        _ = task_id;
-        _ = project_id;
-        _ = owner;
-        _ = expires_at;
+
+        const now = std.time.timestamp();
+        const lid_q = try sqlQuote(self.allocator, lease_id);
+        defer self.allocator.free(lid_q);
+        const tid_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(tid_q);
+        const pid_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(pid_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO leases(lease_id,task_id,project_id,owner,expires_at,acquired_at) VALUES('{s}','{s}','{s}','{s}',{d},{d});",
+            .{ lid_q, tid_q, pid_q, owner_q, expires_at, now },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
     }
 
     fn releaseLease(ctx: *anyopaque, lease_id: []const u8, owner: []const u8) controlplane_store.StoreError!void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = lease_id;
-        _ = owner;
+
+        const lid_q = try sqlQuote(self.allocator, lease_id);
+        defer self.allocator.free(lid_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "DELETE FROM leases WHERE lease_id='{s}' AND owner='{s}';",
+            .{ lid_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
     }
 
     fn getLease(ctx: *anyopaque, task_id: []const u8, allocator: std.mem.Allocator) controlplane_store.StoreError!?controlplane_store.Lease {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = task_id;
-        _ = allocator;
-        return null;
+
+        const tid_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(tid_q);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT lease_id,task_id,project_id,owner,expires_at,acquired_at FROM leases WHERE task_id='{s}' LIMIT 1;",
+            .{tid_q},
+        );
+        defer self.allocator.free(sql);
+
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        if (self.api.step(stmt) != SQLITE_ROW) return null;
+
+        return controlplane_store.Lease{
+            .lease_id = try self.columnTextDup(stmt, 0, allocator),
+            .task_id = try self.columnTextDup(stmt, 1, allocator),
+            .project_id = try self.columnTextDup(stmt, 2, allocator),
+            .owner = try self.columnTextDup(stmt, 3, allocator),
+            .expires_at = self.api.column_int64(stmt, 4),
+            .acquired_at = self.api.column_int64(stmt, 5),
+        };
+    }
+
+    // Task 5 & 6: Lease heartbeat and cleanup
+    fn updateLeaseHeartbeat(self: *SqliteControlPlaneStore, task_id: []const u8, owner: []const u8) controlplane_store.StoreError!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const now = std.time.timestamp();
+        const tid_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(tid_q);
+        const owner_q = try sqlQuote(self.allocator, owner);
+        defer self.allocator.free(owner_q);
+
+        // Update lease_heartbeat_at in tasks table
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET lease_heartbeat_at={d} WHERE task_id='{s}' AND lease_owner='{s}';",
+            .{ now, tid_q, owner_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+    }
+
+    fn cleanupExpiredLeases(self: *SqliteControlPlaneStore) controlplane_store.StoreError!u32 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const now = std.time.timestamp();
+
+        // Find expired leases in tasks table (lease_until < now)
+        const select_sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT task_id FROM tasks WHERE status='claimed' AND lease_until < {d};",
+            .{now},
+        );
+        defer self.allocator.free(select_sql);
+
+        var expired_tasks = std.ArrayList([]u8).empty;
+        defer {
+            for (expired_tasks.items) |t| self.allocator.free(t);
+            expired_tasks.deinit(self.allocator);
+        }
+
+        const stmt = try self.prepare(select_sql);
+        defer self.finalize(stmt);
+        while (self.api.step(stmt) == SQLITE_ROW) {
+            try expired_tasks.append(self.allocator, try self.columnTextDup(stmt, 0, self.allocator));
+        }
+
+        // Requeue expired tasks
+        for (expired_tasks.items) |task_id| {
+            const tid_q = try sqlQuote(self.allocator, task_id);
+            defer self.allocator.free(tid_q);
+
+            const update_sql = try std.fmt.allocPrint(
+                self.allocator,
+                "UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, lease_heartbeat_at=NULL, updated_at={d}, version=version+1 WHERE task_id='{s}';",
+                .{ now, tid_q },
+            );
+            defer self.allocator.free(update_sql);
+            try self.execSql(update_sql);
+
+            // Also delete from leases table if exists
+            const delete_sql = try std.fmt.allocPrint(
+                self.allocator,
+                "DELETE FROM leases WHERE task_id='{s}';",
+                .{tid_q},
+            );
+            defer self.allocator.free(delete_sql);
+            try self.execSql(delete_sql);
+        }
+
+        return @intCast(expired_tasks.items.len);
     }
 
     fn close(ctx: *anyopaque) void {
