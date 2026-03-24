@@ -914,7 +914,6 @@ test "parseReviewJsonMeta parses valid object" {
     try std.testing.expectApproxEqRel(@as(f64, 0.75), meta.confidence.?, 1e-9);
 }
 
-/// Log an error event to task_events table with detailed context
 fn logTaskError(
     allocator: std.mem.Allocator,
     ts: task_store.TaskStore,
@@ -924,26 +923,15 @@ fn logTaskError(
     err: anyerror,
     details: ?[]const u8,
 ) void {
+    _ = allocator;
+    _ = ts;
+    _ = run_id;
     const err_msg = @errorName(err);
     const detail_str = details orelse "";
-
-    const payload = std.fmt.allocPrint(
-        allocator,
-        "{{\"task_id\":{f},\"phase\":{f},\"error\":{f},\"error_type\":{f},\"details\":{f},\"timestamp\":{d}}}",
-        .{
-            std.json.fmt(task_id, .{}),
-            std.json.fmt(phase, .{}),
-            std.json.fmt(err_msg, .{}),
-            std.json.fmt(err_msg, .{}),
-            std.json.fmt(detail_str, .{}),
-            std.time.timestamp(),
-        },
-    ) catch null;
-    defer if (payload) |p| allocator.free(p);
-
-    ts.appendTaskEvent(task_id, run_id, "task.error", payload orelse "{\"status\":\"error\"}") catch |append_err| {
-        ui.logError("failed to append task error event: {s}", .{@errorName(append_err)});
-    };
+    ui.logError(
+        "task error: task_id={s} phase={s} error={s} details={s}",
+        .{ task_id, phase, err_msg, detail_str },
+    );
 }
 
 const E2EScenario = enum {
