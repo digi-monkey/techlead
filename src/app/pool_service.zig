@@ -590,20 +590,9 @@ fn ensureImplementationCommit(
     defer allocator.free(status_output);
     if (status_output.len == 0) return;
 
-    // Auto-stage all workspace changes except runtime metadata and dependency artifacts.
-    try runGitChecked(
-        allocator,
-        cwd,
-        &[_][]const u8{
-            "add",
-            "-A",
-            "--",
-            ".",
-            ":(exclude).techlead",
-            ":(exclude)node_modules",
-            ":(exclude,glob)**/node_modules/**",
-        },
-    );
+    // Stage changed tracked/untracked/deleted files one-by-one to avoid
+    // `git add .` failures caused by ignored runtime dirs (e.g. `.techlead`).
+    try stageEligibleWorkspaceChanges(allocator, cwd);
 
     const staged_output = try runGitStdout(allocator, cwd, &[_][]const u8{ "diff", "--cached", "--name-only" });
     defer allocator.free(staged_output);
@@ -612,6 +601,26 @@ fn ensureImplementationCommit(
     const message = try std.fmt.allocPrint(allocator, "task({s}): implement round {d}", .{ task_id, review_round });
     defer allocator.free(message);
     try runGitChecked(allocator, cwd, &[_][]const u8{ "commit", "-m", message });
+}
+
+fn stageEligibleWorkspaceChanges(allocator: std.mem.Allocator, cwd: []const u8) !void {
+    const changed = try runGitStdout(allocator, cwd, &[_][]const u8{ "ls-files", "-m", "-o", "-d", "--exclude-standard" });
+    defer allocator.free(changed);
+    if (changed.len == 0) return;
+
+    var it = std.mem.splitScalar(u8, changed, '\n');
+    while (it.next()) |line_raw| {
+        const path = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (path.len == 0) continue;
+        if (shouldSkipAutoStage(path)) continue;
+        try runGitChecked(allocator, cwd, &[_][]const u8{ "add", "--", path });
+    }
+}
+
+fn shouldSkipAutoStage(path: []const u8) bool {
+    if (std.mem.eql(u8, path, ".techlead") or std.mem.startsWith(u8, path, ".techlead/")) return true;
+    if (std.mem.eql(u8, path, "node_modules") or std.mem.startsWith(u8, path, "node_modules/")) return true;
+    return std.mem.indexOf(u8, path, "/node_modules/") != null;
 }
 
 fn mergeWithLock(
