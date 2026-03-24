@@ -5,6 +5,9 @@ import type { PendingOutboxCommand } from '../hooks/useSessionOutbox'
 import type { SessionSyncState } from '../hooks/useSessionPolling'
 import type { JsonValue, SessionMessage } from '../types'
 
+const MAX_VISIBLE_MESSAGES = 15
+const SCROLL_THRESHOLD_PX = 100
+
 export type PendingCommand = PendingOutboxCommand
 type SessionProvider = 'codex' | 'opencode'
 
@@ -66,7 +69,7 @@ export function SessionView(props: SessionViewProps) {
     const items: ChatItem[] = []
     const seenRequestIds = new Set<string>()
 
-    for (const m of sessionMessages.slice(-120)) {
+    for (const m of sessionMessages.slice(-MAX_VISIBLE_MESSAGES)) {
       const key = String(m.id ?? `${m.ts}-${m.role}`)
       items.push({ type: 'message', data: m, key })
       if (typeof m.request_id === 'string') {
@@ -86,15 +89,13 @@ export function SessionView(props: SessionViewProps) {
   useEffect(() => {
     const el = listRef.current
     if (!el) return
-    // Only auto-scroll if user is already near the bottom (within 100px)
+    // Only auto-scroll if user is already near the bottom (within SCROLL_THRESHOLD_PX)
     // This prevents aggressive scrolling during typing while preserving auto-scroll for new messages
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD_PX
     if (isNearBottom) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight
-      })
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     }
-  }, [sessionMessages.length])
+  }, [sessionMessages.length, pendingCommands.length])
 
   const handleRetry = useCallback((requestId: string) => {
     onRetryCommand(requestId)
