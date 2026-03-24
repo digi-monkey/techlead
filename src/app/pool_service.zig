@@ -14,6 +14,17 @@ const REVIEW_MAINTAINABILITY_TEMPLATE = @embedFile("../pool/prompts/review_maint
 const POOL_WORKTREE_REL = ".techlead/pool-worktree";
 const MAX_GIT_LOG_SNIPPET: usize = 1024;
 
+// Gate command execution result
+const GateResult = struct {
+    success: bool,
+    output: ?[]u8 = null,
+    command: []const u8,
+
+    fn deinit(self: *GateResult, allocator: std.mem.Allocator) void {
+        if (self.output) |o| allocator.free(o);
+    }
+};
+
 const TaskOutcome = enum {
     done,
     requeued,
@@ -69,6 +80,8 @@ pub fn run(
     primary_es: event_store.EventStore,
     mirror_es: ?event_store.EventStore,
     run_id: []const u8,
+    project_test_cmd: ?[]const u8,
+    project_lint_cmd: ?[]const u8,
 ) !void {
     const pool_work_dir = try ensurePoolWorktree(allocator, cfg.work_dir, cfg.main_branch);
     defer allocator.free(pool_work_dir);
@@ -103,7 +116,7 @@ pub fn run(
         ) catch "{\"status\":\"claimed\"}";
         appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.claimed", claim_payload);
 
-        const outcome = processClaimedTask(pool_cfg, allocator, provider, provider_name, run_id, ts, &task) catch |err| blk: {
+        const outcome = processClaimedTask(pool_cfg, allocator, provider, provider_name, run_id, ts, &task, project_test_cmd, project_lint_cmd) catch |err| blk: {
             const err_msg = @errorName(err);
             const git_context = if (err == error.GitCommandFailed)
                 collectGitFailureContext(allocator, pool_cfg.work_dir) catch try allocator.dupe(u8, "(git context unavailable)")
@@ -173,6 +186,8 @@ fn processClaimedTask(
     run_id: []const u8,
     ts: task_store.TaskStore,
     task: *task_store.Task,
+    project_test_cmd: ?[]const u8,
+    project_lint_cmd: ?[]const u8,
 ) !TaskOutcome {
     try ts.markRunning(task.task_id, run_id, cfg.pool_lease_seconds, run_id);
     try prepareWorktreeForTask(allocator, cfg.work_dir);
@@ -204,6 +219,47 @@ fn processClaimedTask(
     }
 
     try ts.markReviewOpen(task.task_id, run_id, run_id, review_round, base_branch, head_branch, head_sha);
+
+    // Run gate commands (test_cmd and lint_cmd) before review
+    if (project_test_cmd) |test_cmd| {
+        ui.logInfo("task {s} running test_cmd: {s}", .{ task.task_id, test_cmd });
+        var gate_result = try runGateCommand(allocator, cfg.work_dir, test_cmd);
+        defer gate_result.deinit(allocator);
+        if (!gate_result.success) {
+            const feedback = gate_result.output orelse "test_cmd failed";
+            ui.logError("task {s} test_cmd failed: {s}", .{ task.task_id, feedback });
+            const retry_result = try ts.markReviewChangesRequestedAndRequeue(
+                task.task_id,
+                run_id,
+                run_id,
+                review_round,
+                feedback,
+                "test_gate_blocked",
+                cfg.pool_max_retries,
+            );
+            return failResultToOutcome(retry_result);
+        }
+    }
+
+    if (project_lint_cmd) |lint_cmd| {
+        ui.logInfo("task {s} running lint_cmd: {s}", .{ task.task_id, lint_cmd });
+        var gate_result = try runGateCommand(allocator, cfg.work_dir, lint_cmd);
+        defer gate_result.deinit(allocator);
+        if (!gate_result.success) {
+            const feedback = gate_result.output orelse "lint_cmd failed";
+            ui.logError("task {s} lint_cmd failed: {s}", .{ task.task_id, feedback });
+            const retry_result = try ts.markReviewChangesRequestedAndRequeue(
+                task.task_id,
+                run_id,
+                run_id,
+                review_round,
+                feedback,
+                "lint_gate_blocked",
+                cfg.pool_max_retries,
+            );
+            return failResultToOutcome(retry_result);
+        }
+    }
 
     const diff_summary = try collectDiffSummary(allocator, cfg.work_dir, base_branch, head_branch);
     defer allocator.free(diff_summary);
@@ -296,6 +352,22 @@ fn processClaimedTask(
         .reviewer_run_id = run_id,
     });
 
+    // Check qa_force_reject_once: first round always returns changes_requested
+    if (task.qa_force_reject_once and review_round == 1) {
+        ui.logInfo("task {s} qa_force_reject_once triggered: forcing changes_requested for round 1", .{task.task_id});
+        const feedback = "qa_force_reject_once: automatic changes requested for testing purposes";
+        const retry_result = try ts.markReviewChangesRequestedAndRequeue(
+            task.task_id,
+            run_id,
+            run_id,
+            review_round,
+            feedback,
+            "qa_force_reject_once",
+            cfg.pool_max_retries,
+        );
+        return failResultToOutcome(retry_result);
+    }
+
     if (shouldRequestChanges(
         correctness.verdict,
         maintainability.verdict,
@@ -375,6 +447,33 @@ fn runImplementPhase(
     return .{
         .summary = try allocator.dupe(u8, parsed.summary),
         .status = parsed.status orelse .blocked,
+    };
+}
+
+// Run a gate command (test_cmd or lint_cmd) and return the result
+fn runGateCommand(allocator: std.mem.Allocator, cwd: []const u8, cmd: []const u8) !GateResult {
+    // Split command by shell
+    const argv = &[_][]const u8{ "sh", "-c", cmd };
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = argv,
+        .cwd = cwd,
+        .max_output_bytes = 1024 * 1024, // 1MB max output
+    });
+
+    const success = result.term.Exited == 0;
+    const output = if (result.stdout.len > 0 or result.stderr.len > 0)
+        try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ result.stdout, result.stderr })
+    else
+        null;
+
+    allocator.free(result.stdout);
+    allocator.free(result.stderr);
+
+    return GateResult{
+        .success = success,
+        .output = output,
+        .command = cmd,
     };
 }
 
@@ -1164,7 +1263,7 @@ fn runSingleTaskForScenario(
     })) orelse return error.TaskNotFound;
     var task = claimed;
     defer task.deinit(allocator);
-    return processClaimedTask(cfg, allocator, mock, "mock", "runner-e2e", ts, &task);
+    return processClaimedTask(cfg, allocator, mock, "mock", "runner-e2e", ts, &task, null, null);
 }
 
 fn writeRepoFile(allocator: std.mem.Allocator, cwd: []const u8, rel_path: []const u8, content: []const u8) !void {

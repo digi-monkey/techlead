@@ -6,14 +6,17 @@ import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
 import { useSessionPolling } from './hooks/useSessionPolling'
+import { ProjectDetail } from './views/ProjectDetail'
+import { ProjectList } from './views/ProjectList'
 import { SessionView } from './views/SessionView'
 import { TaskPoolView } from './views/TaskPoolView'
 import type { JsonValue } from './types'
 
 type SessionProvider = 'codex' | 'opencode'
-type MainView = 'session' | 'task-pool'
+type MainView = 'session' | 'task-pool' | 'projects' | 'project-detail'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 const MAIN_VIEW_STORAGE_KEY = 'techlead.observe.main.view'
+const PROJECT_ID_STORAGE_KEY = 'techlead.observe.project.id'
 const AUTH_COOKIE_OBSERVE = 'tl_observe'
 const AUTH_COOKIE_CONTROL = 'tl_control'
 
@@ -40,7 +43,13 @@ export default function App() {
   const [isEndingSession, setIsEndingSession] = useState(false)
   const [mainView, setMainView] = useState<MainView>(() => {
     const raw = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)
-    return raw === 'task-pool' ? 'task-pool' : 'session'
+    if (raw === 'task-pool') return 'task-pool'
+    if (raw === 'projects') return 'projects'
+    if (raw === 'project-detail') return 'project-detail'
+    return 'session'
+  })
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
+    return window.localStorage.getItem(PROJECT_ID_STORAGE_KEY)
   })
   const [sessionProvider, setSessionProvider] = useState<SessionProvider>(() => {
     const raw = window.localStorage.getItem(SESSION_PROVIDER_STORAGE_KEY)
@@ -61,6 +70,24 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, mainView)
   }, [mainView])
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      window.localStorage.setItem(PROJECT_ID_STORAGE_KEY, selectedProjectId)
+    } else {
+      window.localStorage.removeItem(PROJECT_ID_STORAGE_KEY)
+    }
+  }, [selectedProjectId])
+
+  const handleViewProject = useCallback((projectId: string) => {
+    setSelectedProjectId(projectId)
+    setMainView('project-detail')
+  }, [])
+
+  const handleBackFromProject = useCallback(() => {
+    setSelectedProjectId(null)
+    setMainView('projects')
+  }, [])
 
   const {
     outboxRef,
@@ -217,7 +244,7 @@ export default function App() {
     updateOutbox,
   })
 
-  const maxWidthClass = mainView === 'task-pool' ? 'max-w-[1700px]' : 'max-w-4xl'
+  const maxWidthClass = mainView === 'task-pool' || mainView === 'projects' || mainView === 'project-detail' ? 'max-w-[1700px]' : 'max-w-4xl'
 
   return (
     <div className={`mx-auto flex h-full max-h-dvh w-full ${maxWidthClass} flex-col`}>
@@ -243,6 +270,15 @@ export default function App() {
                 }`}
               >
                 Task Pool
+              </button>
+              <button
+                type="button"
+                onClick={() => setMainView('projects')}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  mainView === 'projects' || mainView === 'project-detail' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                Projects
               </button>
             </nav>
           </div>
@@ -329,7 +365,7 @@ export default function App() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
-        {mainView === 'session' ? (
+        {mainView === 'session' && (
           <SessionView
             sessionState={sessionState}
             sessionMessages={sessionMessages}
@@ -347,8 +383,31 @@ export default function App() {
             onSendMessage={sendSessionMessage}
             onRetryCommand={handleRetryCommand}
           />
-        ) : (
-          <TaskPoolView observeAuth={observeAuth} controlAuth={controlAuth} />
+        )}
+        {mainView === 'task-pool' && <TaskPoolView observeAuth={observeAuth} controlAuth={controlAuth} />}
+        {mainView === 'projects' && (
+          <ProjectList observeAuth={observeAuth} onViewProject={handleViewProject} />
+        )}
+        {mainView === 'project-detail' && selectedProjectId && (
+          <ProjectDetail
+            projectId={selectedProjectId}
+            observeAuth={observeAuth}
+            onBack={handleBackFromProject}
+          />
+        )}
+        {mainView === 'project-detail' && !selectedProjectId && (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <p className="text-sm text-slate-500">No project selected</p>
+              <button
+                type="button"
+                onClick={() => setMainView('projects')}
+                className="mt-2 text-sm text-slate-600 hover:text-slate-800"
+              >
+                View all projects
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

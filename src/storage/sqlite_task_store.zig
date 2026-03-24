@@ -12,9 +12,9 @@ const SQLITE_OPEN_READWRITE: CInt = 0x00000002;
 const SQLITE_OPEN_CREATE: CInt = 0x00000004;
 const SQLITE_OPEN_FULLMUTEX: CInt = 0x00010000;
 const SQLITE_LIMIT_SQL_LENGTH: CInt = 1;
-const SCHEMA_VERSION: CInt = 2;
+const SCHEMA_VERSION: CInt = 3;
 const TASK_SELECT_COLUMNS =
-    "task_id,title,prompt,status,lease_owner,lease_until,retry_count,max_retries,priority,last_error,review_stage,review_round,base_branch,head_branch,head_sha,merge_commit,review_feedback,version,created_at,updated_at";
+    "task_id,title,prompt,status,lease_owner,lease_until,retry_count,max_retries,priority,last_error,review_stage,review_round,base_branch,head_branch,head_sha,merge_commit,review_feedback,qa_force_reject_once,version,created_at,updated_at";
 
 const TaskReview = struct {
     id: i64,
@@ -157,6 +157,7 @@ pub const SqliteTaskStore = struct {
             \\  head_sha TEXT,
             \\  merge_commit TEXT,
             \\  review_feedback TEXT,
+            \\  qa_force_reject_once INTEGER NOT NULL DEFAULT 0,
             \\  version INTEGER NOT NULL DEFAULT 1,
             \\  created_at INTEGER NOT NULL,
             \\  updated_at INTEGER NOT NULL
@@ -197,7 +198,7 @@ pub const SqliteTaskStore = struct {
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_task_events_id ON task_events(id);");
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_task_reviews_task_round ON task_reviews(task_id, review_round);");
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_task_reviews_role ON task_reviews(role, created_at DESC);");
-        try self.execSql("PRAGMA user_version=2;");
+        try self.execSql("PRAGMA user_version=3;");
     }
 
     fn claimNext(ctx: *anyopaque, options: task_store.ClaimOptions) !?task_store.Task {
@@ -769,10 +770,12 @@ pub const SqliteTaskStore = struct {
             try self.allocator.dupe(u8, "NULL");
         defer self.allocator.free(max_retries_val);
 
+        const qa_force_reject_once_val = if (input.qa_force_reject_once) "1" else "0";
+
         const sql = try std.fmt.allocPrint(
             self.allocator,
-            "INSERT INTO tasks(task_id,title,prompt,status,lease_owner,lease_until,retry_count,max_retries,priority,last_error,version,created_at,updated_at) VALUES('{s}','{s}',{s},'queued',NULL,NULL,0,{s},{d},NULL,1,{d},{d});",
-            .{ id_q, title_q, prompt_val, max_retries_val, input.priority, now, now },
+            "INSERT INTO tasks(task_id,title,prompt,status,lease_owner,lease_until,retry_count,max_retries,priority,last_error,version,qa_force_reject_once,created_at,updated_at) VALUES('{s}','{s}',{s},'queued',NULL,NULL,0,{s},{d},NULL,1,{s},{d},{d});",
+            .{ id_q, title_q, prompt_val, max_retries_val, input.priority, qa_force_reject_once_val, now, now },
         );
         defer self.allocator.free(sql);
         try self.execSql(sql);
@@ -1045,9 +1048,10 @@ pub const SqliteTaskStore = struct {
             .head_sha = try self.columnOptionalTextDup(stmt, 14),
             .merge_commit = try self.columnOptionalTextDup(stmt, 15),
             .review_feedback = try self.columnOptionalTextDup(stmt, 16),
-            .version = self.api.column_int64(stmt, 17),
-            .created_at = self.api.column_int64(stmt, 18),
-            .updated_at = self.api.column_int64(stmt, 19),
+            .qa_force_reject_once = self.api.column_int(stmt, 17) != 0,
+            .version = self.api.column_int64(stmt, 18),
+            .created_at = self.api.column_int64(stmt, 19),
+            .updated_at = self.api.column_int64(stmt, 20),
         };
     }
 
@@ -1254,7 +1258,7 @@ fn writeTaskJsonInternal(writer: anytype, task: task_store.Task, latest_reviews:
     } else {
         try writer.writeAll("null");
     }
-    try writer.print(",\"retry_count\":{d},\"priority\":{d},\"version\":{d},\"created_at\":{d},\"updated_at\":{d}", .{ task.retry_count, task.priority, task.version, task.created_at, task.updated_at });
+    try writer.print(",\"retry_count\":{d},\"priority\":{d},\"qa_force_reject_once\":{s},\"version\":{d},\"created_at\":{d},\"updated_at\":{d}", .{ task.retry_count, task.priority, if (task.qa_force_reject_once) "true" else "false", task.version, task.created_at, task.updated_at });
     if (latest_reviews) |reviews| {
         try writer.writeAll(",\"latest_reviews\":[");
         for (reviews, 0..) |review, idx| {
@@ -1381,6 +1385,7 @@ test "writeTaskJson serializes review fields and parseFromSlice deserializes the
         .head_sha = try allocator.dupe(u8, "abc123"),
         .merge_commit = try allocator.dupe(u8, "def456"),
         .review_feedback = try allocator.dupe(u8, "need more tests"),
+        .qa_force_reject_once = false,
         .version = 7,
         .created_at = 11,
         .updated_at = 12,
@@ -1424,6 +1429,7 @@ test "writeTaskJsonWithLatestReviews keeps empty array (not null)" {
         .head_sha = null,
         .merge_commit = null,
         .review_feedback = null,
+        .qa_force_reject_once = false,
         .version = 1,
         .created_at = 1,
         .updated_at = 1,
@@ -1462,6 +1468,7 @@ test "writeTaskDetailJson keeps latest_reviews as empty array (not null)" {
         .head_sha = null,
         .merge_commit = null,
         .review_feedback = null,
+        .qa_force_reject_once = false,
         .version = 1,
         .created_at = 1,
         .updated_at = 1,

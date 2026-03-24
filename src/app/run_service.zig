@@ -76,7 +76,7 @@ pub fn executeWithProvider(
     writeRunState(allocator, cfg, run_id, mode, "running");
 
     if (mode == .pool) {
-        try pool_service.run(cfg, allocator, provider, provider_name, primary_es, mirror_es, run_id);
+        try pool_service.run(cfg, allocator, provider, provider_name, primary_es, mirror_es, run_id, cfg.project_test_cmd, cfg.project_lint_cmd);
         appendRunEvent(primary_es, mirror_es, run_id, .system, "run.completed", "{\"status\":\"completed\"}");
         writeRunState(allocator, cfg, run_id, mode, "completed");
         ui.logSuccess("pool 模式完成", .{});

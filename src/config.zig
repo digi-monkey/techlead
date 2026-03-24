@@ -82,6 +82,8 @@ pub const Config = struct {
     max_branches: usize,
     pool_lease_seconds: u64,
     pool_max_retries: u32,
+    project_test_cmd: ?[]u8 = null,
+    project_lint_cmd: ?[]u8 = null,
 };
 
 /// Free all memory owned by a Config struct.
@@ -95,6 +97,8 @@ pub fn deinitConfig(allocator: Allocator, config: *const Config) void {
     allocator.free(config.agent);
     allocator.free(config.provider);
     allocator.free(config.main_branch);
+    if (config.project_test_cmd) |cmd| allocator.free(cmd);
+    if (config.project_lint_cmd) |cmd| allocator.free(cmd);
 }
 
 /// Resolve the config file path, checking both new (.techlead/techlead.json)

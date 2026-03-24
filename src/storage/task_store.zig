@@ -64,6 +64,7 @@ pub const Task = struct {
     head_sha: ?[]u8,
     merge_commit: ?[]u8,
     review_feedback: ?[]u8,
+    qa_force_reject_once: bool,
     version: i64,
     created_at: i64,
     updated_at: i64,
@@ -149,6 +150,7 @@ pub const CreateTaskInput = struct {
     prompt: ?[]const u8,
     priority: i32,
     max_retries: ?u32,
+    qa_force_reject_once: bool = false,
 };
 
 pub const PatchTaskInput = struct {

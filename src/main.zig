@@ -286,7 +286,7 @@ pub fn main() !void {
             return;
         }
         const observe_sub = args[2];
-        var target_dir: []const u8 = ".";
+        var target_dir: ?[]const u8 = null;
         var host: []const u8 = "127.0.0.1";
         var port: u16 = 7788;
         var i: usize = 3;
@@ -332,7 +332,7 @@ pub fn main() !void {
             return;
         }
         if (std.mem.eql(u8, observe_sub, "rotate-tokens")) {
-            observe.runObserveRotateTokensCommand(allocator, target_dir) catch |err| {
+            observe.runObserveRotateTokensCommand(allocator) catch |err| {
                 ui.logError("token 轮换失败: {any}", .{err});
             };
             return;
