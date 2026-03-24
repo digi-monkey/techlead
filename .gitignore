@@ -7,3 +7,4 @@ techlead.json
 .zig-cache/
 zig-out/
 main
+node_modules/
