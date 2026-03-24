@@ -1115,7 +1115,70 @@ pub const SqliteControlPlaneStore = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         _ = project_id;
-        _ = input;
+
+        const now = std.time.timestamp();
+        const task_q = try sqlQuote(self.allocator, input.task_id);
+        defer self.allocator.free(task_q);
+        const role_q = try sqlQuote(self.allocator, task_store.taskReviewRoleToString(input.role));
+        defer self.allocator.free(role_q);
+        const verdict_q = try sqlQuote(self.allocator, task_store.taskReviewVerdictToString(input.verdict));
+        defer self.allocator.free(verdict_q);
+        const summary_q = try sqlQuote(self.allocator, input.summary);
+        defer self.allocator.free(summary_q);
+        const blockers_q = try sqlQuote(self.allocator, input.blockers_json);
+        defer self.allocator.free(blockers_q);
+        const suggestions_q = try sqlQuote(self.allocator, input.suggestions_json);
+        defer self.allocator.free(suggestions_q);
+
+        const score_val = if (input.score) |score|
+            try std.fmt.allocPrint(self.allocator, "{d}", .{score})
+        else
+            try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(score_val);
+
+        const confidence_val = if (input.confidence) |confidence|
+            try std.fmt.allocPrint(self.allocator, "{d}", .{confidence})
+        else
+            try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(confidence_val);
+
+        const reviewer_run_val = if (input.reviewer_run_id) |r| blk: {
+            const q = try sqlQuote(self.allocator, r);
+            defer self.allocator.free(q);
+            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
+        } else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(reviewer_run_val);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO task_reviews(task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at) VALUES('{s}',{d},'{s}','{s}',{s},'{s}','{s}','{s}',{s},{s},{d});",
+            .{ task_q, input.review_round, role_q, verdict_q, score_val, summary_q, blockers_q, suggestions_q, confidence_val, reviewer_run_val, now },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+
+        const event_type = switch (input.role) {
+            .correctness_reviewer => "task.review.correctness.completed",
+            .maintainability_reviewer => "task.review.maintainability.completed",
+        };
+        const score_json = if (input.score) |score|
+            try std.fmt.allocPrint(self.allocator, "{d}", .{score})
+        else
+            try self.allocator.dupe(u8, "null");
+        defer self.allocator.free(score_json);
+        const payload = try std.fmt.allocPrint(
+            self.allocator,
+            "{{\"task_id\":{f},\"review_round\":{d},\"role\":{f},\"verdict\":{f},\"score\":{s}}}",
+            .{
+                std.json.fmt(input.task_id, .{}),
+                input.review_round,
+                std.json.fmt(task_store.taskReviewRoleToString(input.role), .{}),
+                std.json.fmt(task_store.taskReviewVerdictToString(input.verdict), .{}),
+                score_json,
+            },
+        );
+        defer self.allocator.free(payload);
+        try self.appendTaskEvent(input.task_id, input.reviewer_run_id, event_type, payload, null, null, null);
     }
 
     fn getTaskEvents(ctx: *anyopaque, project_id: []const u8, after_id: i64, limit: usize, allocator: std.mem.Allocator) controlplane_store.StoreError![]u8 {
@@ -1244,9 +1307,25 @@ pub const SqliteControlPlaneStore = struct {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = run_id;
-        _ = status;
-        _ = ended_at;
+
+        const rid_q = try sqlQuote(self.allocator, run_id);
+        defer self.allocator.free(rid_q);
+        const status_q = try sqlQuote(self.allocator, status);
+        defer self.allocator.free(status_q);
+
+        const ended_at_val = if (ended_at) |t|
+            try std.fmt.allocPrint(self.allocator, "{d}", .{t})
+        else
+            try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(ended_at_val);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE runs SET status='{s}', ended_at={s} WHERE run_id='{s}';",
+            .{ status_q, ended_at_val, rid_q },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
     }
 
     fn getRun(ctx: *anyopaque, run_id: []const u8, allocator: std.mem.Allocator) controlplane_store.StoreError!?controlplane_store.Run {
