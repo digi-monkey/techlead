@@ -26,7 +26,7 @@ pub const MultiPoolService = struct {
     stats: Stats = .{},
 
     /// Information about an active run
-    const RunInfo = struct {
+    pub const RunInfo = struct {
         run_id: []u8, // owned
         project_id: []u8, // owned
         worker_id: []u8, // owned
@@ -114,7 +114,7 @@ pub const MultiPoolService = struct {
             .scheduler = scheduler,
             .store = store,
             .active_project_ids = std.StringHashMap(void).init(allocator),
-            .active_runs = std.StringHashMap(RunInfo).init(allocator),
+            .active_runs = std.StringHashMap(MultiPoolService.RunInfo).init(allocator),
             .worker_pool = .{ .max_workers = 4 },
         };
     }
@@ -530,7 +530,46 @@ pub const Error = error{
 };
 
 // Tests
-test "MultiPoolService - basic lifecycle" {
-    // Full integration tests require a store
-    // Unit tests would be added here
+test "MultiPoolService - initialization" {
+    const allocator = std.testing.allocator;
+
+    // Create a minimal MultiPoolService for testing
+    var multi_pool = MultiPoolService{
+        .allocator = allocator,
+        .project_svc = undefined, // Would need real initialization
+        .scheduler = undefined,
+        .store = undefined,
+        .active_project_ids = std.StringHashMap(void).init(allocator),
+        .active_runs = std.StringHashMap(MultiPoolService.RunInfo).init(allocator),
+        .worker_pool = .{ .max_workers = 4 },
+    };
+
+    // Verify initial state
+    try std.testing.expectEqual(@as(u32, 4), multi_pool.worker_pool.max_workers);
+    try std.testing.expectEqual(@as(u32, 0), multi_pool.worker_pool.active_workers);
+    try std.testing.expect(!multi_pool.running);
+    try std.testing.expect(!multi_pool.stop_requested);
+    try std.testing.expectEqual(@as(u64, 0), multi_pool.stats.total_tasks_claimed);
+    try std.testing.expectEqual(@as(u64, 0), multi_pool.stats.total_tasks_completed);
+    try std.testing.expectEqual(@as(u64, 0), multi_pool.stats.total_tasks_failed);
+
+    multi_pool.active_project_ids.deinit();
+    multi_pool.active_runs.deinit();
+}
+
+test "MultiPoolService - worker pool config" {
+    const WorkerPool = MultiPoolService.WorkerPool;
+
+    const pool = WorkerPool{ .max_workers = 10 };
+    try std.testing.expectEqual(@as(u32, 10), pool.max_workers);
+    try std.testing.expectEqual(@as(u32, 0), pool.active_workers);
+}
+
+test "MultiPoolService - stats tracking" {
+    const Stats = MultiPoolService.Stats;
+
+    const stats: Stats = .{};
+    try std.testing.expectEqual(@as(u64, 0), stats.total_tasks_claimed);
+    try std.testing.expectEqual(@as(u64, 0), stats.total_tasks_completed);
+    try std.testing.expectEqual(@as(u64, 0), stats.total_tasks_failed);
 }

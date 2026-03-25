@@ -17,7 +17,7 @@ pub const SchedulerService = struct {
     config: SchedulerConfig = .{},
 
     /// Weight state for a single project
-    const ProjectWeightState = struct {
+    pub const ProjectWeightState = struct {
         project_id: []u8, // owned copy
         base_weight: u32,
         current_weight: i32,
@@ -419,7 +419,147 @@ pub const Error = error{
 };
 
 // Tests
-test "SchedulerService - WRR project selection" {
-    // Full integration tests require a store
-    // Unit tests for the algorithm would be added here
+test "SchedulerService - WRR basic project selection" {
+    const allocator = std.testing.allocator;
+
+    // Create mock store (we can't easily mock, so we'll test the algorithm directly)
+    // Create scheduler with a dummy store
+    var scheduler = SchedulerService{
+        .allocator = allocator,
+        .store = undefined, // Won't be used in this test
+        .project_weights = std.StringHashMap(SchedulerService.ProjectWeightState).init(allocator),
+        .config = .{
+            .wrr_enabled = true,
+            .aging_enabled = false, // Disable aging for basic test
+            .per_project_max_workers = 2,
+        },
+    };
+    defer {
+        var it = scheduler.project_weights.iterator();
+        while (it.next()) |entry| allocator.free(entry.key_ptr.*);
+        scheduler.project_weights.deinit();
+    }
+
+    // Create test projects with different weights
+    const proj_a = try allocator.dupe(u8, "project-a");
+    defer allocator.free(proj_a);
+    const proj_b = try allocator.dupe(u8, "project-b");
+    defer allocator.free(proj_b);
+
+    const projects = [_]controlplane_store.Project{
+        .{ .project_id = proj_a, .work_dir = try allocator.dupe(u8, "/tmp/a"), .enabled = true, .max_workers = 2, .created_at = 0, .updated_at = 0 },
+        .{ .project_id = proj_b, .work_dir = try allocator.dupe(u8, "/tmp/b"), .enabled = true, .max_workers = 1, .created_at = 0, .updated_at = 0 },
+    };
+    defer {
+        for (projects) |p| {
+            allocator.free(p.project_id);
+            allocator.free(p.work_dir);
+        }
+    }
+
+    // First selection - should pick project-a (higher base weight)
+    const first = scheduler.selectProjectWRR(&projects);
+    try std.testing.expect(first != null);
+    try std.testing.expect(std.mem.eql(u8, first.?, "project-a"));
+
+    // Update weight after scheduling
+    scheduler.updateWeightStateAfterSchedule("project-a");
+
+    // Second selection - project-a weight decreased, project-b should win
+    const second = scheduler.selectProjectWRR(&projects);
+    try std.testing.expect(second != null);
+    try std.testing.expect(std.mem.eql(u8, second.?, "project-b"));
+
+    // Update weight after scheduling
+    scheduler.updateWeightStateAfterSchedule("project-b");
+
+    // Third selection - both have decreased weights, project-a has higher remaining
+    const third = scheduler.selectProjectWRR(&projects);
+    try std.testing.expect(third != null);
+    try std.testing.expect(std.mem.eql(u8, third.?, "project-a"));
+}
+
+test "SchedulerService - WRR respects capacity limit" {
+    const allocator = std.testing.allocator;
+
+    var scheduler = SchedulerService{
+        .allocator = allocator,
+        .store = undefined,
+        .project_weights = std.StringHashMap(SchedulerService.ProjectWeightState).init(allocator),
+        .config = .{
+            .wrr_enabled = true,
+            .aging_enabled = false,
+            .per_project_max_workers = 1, // Only 1 task per project
+        },
+    };
+    defer {
+        var it = scheduler.project_weights.iterator();
+        while (it.next()) |entry| allocator.free(entry.key_ptr.*);
+        scheduler.project_weights.deinit();
+    }
+
+    const proj_a = try allocator.dupe(u8, "project-a");
+    defer allocator.free(proj_a);
+
+    const projects = [_]controlplane_store.Project{
+        .{ .project_id = proj_a, .work_dir = try allocator.dupe(u8, "/tmp/a"), .enabled = true, .max_workers = 1, .created_at = 0, .updated_at = 0 },
+    };
+    defer {
+        for (projects) |p| {
+            allocator.free(p.project_id);
+            allocator.free(p.work_dir);
+        }
+    }
+
+    // First selection should work
+    const first = scheduler.selectProjectWRR(&projects);
+    try std.testing.expect(first != null);
+
+    // Mark as running
+    scheduler.updateWeightStateAfterSchedule("project-a");
+
+    // Second selection should return null (at capacity)
+    const second = scheduler.selectProjectWRR(&projects);
+    try std.testing.expect(second == null);
+}
+
+test "SchedulerService - weight state initialization" {
+    const allocator = std.testing.allocator;
+
+    var scheduler = SchedulerService{
+        .allocator = allocator,
+        .store = undefined,
+        .project_weights = std.StringHashMap(SchedulerService.ProjectWeightState).init(allocator),
+        .config = .{
+            .wrr_enabled = true,
+            .aging_enabled = false,
+        },
+    };
+    defer {
+        var it = scheduler.project_weights.iterator();
+        while (it.next()) |entry| allocator.free(entry.key_ptr.*);
+        scheduler.project_weights.deinit();
+    }
+
+    const proj = try allocator.dupe(u8, "test-project");
+    defer allocator.free(proj);
+
+    const projects = [_]controlplane_store.Project{
+        .{ .project_id = proj, .work_dir = try allocator.dupe(u8, "/tmp/test"), .enabled = true, .max_workers = 5, .created_at = 0, .updated_at = 0 },
+    };
+    defer {
+        for (projects) |p| {
+            allocator.free(p.project_id);
+            allocator.free(p.work_dir);
+        }
+    }
+
+    // Trigger weight initialization via selection
+    _ = scheduler.selectProjectWRR(&projects);
+
+    // Verify weight state was created
+    const state = scheduler.project_weights.get("test-project");
+    try std.testing.expect(state != null);
+    try std.testing.expectEqual(@as(u32, 5), state.?.base_weight);
+    try std.testing.expectEqual(@as(i32, 5), state.?.current_weight);
 }
