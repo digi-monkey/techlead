@@ -190,8 +190,8 @@ fn processClaimedTask(
     project_test_cmd: ?[]const u8,
     project_lint_cmd: ?[]const u8,
 ) !TaskOutcome {
-    // Use work_dir as project_id for legacy single-project mode
-    const project_id = cfg.work_dir;
+    // Extract project_id from work_dir (basename) for controlplane store
+    const project_id = std.fs.path.basename(cfg.work_dir);
     try cps.markRunning(project_id, task.task_id, run_id, cfg.pool_lease_seconds, run_id);
     try prepareWorktreeForTask(allocator, cfg.work_dir);
 

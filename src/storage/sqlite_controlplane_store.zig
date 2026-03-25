@@ -17,6 +17,10 @@ const SQLITE_BUSY: CInt = 5;
 const SQLITE_CONSTRAINT: CInt = 19;
 const SCHEMA_VERSION: CInt = 3;
 
+// SQLITE_TRANSIENT = -1 (all bits set) tells SQLite to make a copy
+// We use ~@as(usize, 0) which equals -1 in two's complement
+const SQLITE_TRANSIENT: ?*anyopaque = @ptrFromInt(~@as(usize, 0));
+
 const TASK_SELECT_COLUMNS =
     "task_id,title,prompt,status,lease_owner,lease_until,retry_count,max_retries,priority,last_error,review_stage,review_round,base_branch,head_branch,head_sha,merge_commit,review_feedback,qa_force_reject_once,version,created_at,updated_at";
 
@@ -1700,8 +1704,11 @@ pub const SqliteControlPlaneStore = struct {
 
     fn bindText(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt, index: CInt, text: []const u8) controlplane_store.StoreError!void {
         const text_z = try self.allocator.dupeZ(u8, text);
-        defer self.allocator.free(text_z);
-        _ = self.api.bind_text(stmt, index, text_z, @intCast(text.len), null);
+        // Use SQLITE_TRANSIENT (-1) which tells SQLite to make its own copy
+        // and manage the memory. This avoids use-after-free issues.
+        _ = self.api.bind_text(stmt, index, text_z, @intCast(text.len), SQLITE_TRANSIENT);
+        // SQLite makes a copy when SQLITE_TRANSIENT is used, so we can free our copy
+        self.allocator.free(text_z);
     }
 
     fn columnIsNull(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt, index: CInt) bool {
