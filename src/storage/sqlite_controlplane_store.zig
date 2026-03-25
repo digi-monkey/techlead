@@ -280,6 +280,15 @@ pub const SqliteControlPlaneStore = struct {
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_leases_task_id ON leases(task_id);");
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);");
 
+        // Tokens table for API authentication
+        try self.execSql(
+            \\ CREATE TABLE IF NOT EXISTS tokens (
+            \\     name TEXT PRIMARY KEY,
+            \\     value TEXT NOT NULL,
+            \\     created_at INTEGER NOT NULL
+            \\ );
+        );
+
         try self.execSql("PRAGMA user_version=3;");
     }
 
@@ -1573,6 +1582,46 @@ pub const SqliteControlPlaneStore = struct {
         return @intCast(expired_tasks.items.len);
     }
 
+    fn getToken(ctx: *anyopaque, name: []const u8, allocator: std.mem.Allocator) controlplane_store.StoreError!?[]u8 {
+        const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const name_q = try sqlQuote(self.allocator, name);
+        defer self.allocator.free(name_q);
+
+        const sql = try std.fmt.allocPrint(self.allocator, "SELECT value FROM tokens WHERE name='{s}';", .{name_q});
+        defer self.allocator.free(sql);
+
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        if (self.api.step(stmt) != SQLITE_ROW) return null;
+
+        const value = self.api.column_text(stmt, 0) orelse return null;
+        return try allocator.dupe(u8, std.mem.sliceTo(value, 0));
+    }
+
+    fn setToken(ctx: *anyopaque, name: []const u8, value: []const u8) controlplane_store.StoreError!void {
+        const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const name_q = try sqlQuote(self.allocator, name);
+        defer self.allocator.free(name_q);
+        const value_q = try sqlQuote(self.allocator, value);
+        defer self.allocator.free(value_q);
+
+        const now = std.time.timestamp();
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO tokens(name, value, created_at) VALUES('{s}', '{s}', {d}) ON CONFLICT(name) DO UPDATE SET value='{s}', created_at={d};",
+            .{ name_q, value_q, now, value_q, now },
+        );
+        defer self.allocator.free(sql);
+        try self.execSql(sql);
+    }
+
     fn close(ctx: *anyopaque) void {
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.deinit();
@@ -1728,6 +1777,8 @@ pub const SqliteControlPlaneStore = struct {
         .releaseLease = releaseLease,
         .getLease = getLease,
         .cleanupExpiredLeases = cleanupExpiredLeases,
+        .getToken = getToken,
+        .setToken = setToken,
         .close = close,
     };
 };

@@ -1745,24 +1745,44 @@ fn ensureTokens(allocator: Allocator, store: *controlplane_store.ControlPlaneSto
 }
 
 fn ensureTokensInternal(allocator: Allocator, store: *controlplane_store.ControlPlaneStore, force_rotate: bool) !TokenFile {
-    // For now, generate new tokens each time (store doesn't persist tokens yet)
-    _ = force_rotate;
-    _ = store;
+    const now = std.time.timestamp();
 
+    // Try to get existing tokens from database (unless force_rotate)
+    if (!force_rotate) {
+        if (store.getToken("observe", allocator) catch null) |observe_existing| {
+            defer allocator.free(observe_existing);
+            if (store.getToken("control", allocator) catch null) |control_existing| {
+                defer allocator.free(control_existing);
+                // Both tokens exist, return them
+                return .{
+                    .observe_token = try allocator.dupe(u8, observe_existing),
+                    .control_token = try allocator.dupe(u8, control_existing),
+                    .observe_expires_at = now + TOKEN_TTL_SECONDS,
+                    .control_expires_at = now + TOKEN_TTL_SECONDS,
+                };
+            }
+        }
+    }
+
+    // Generate new tokens
     const observe = try generateToken(allocator);
     defer allocator.free(observe);
     const control = try generateToken(allocator);
     defer allocator.free(control);
 
-    const now = std.time.timestamp();
-    const observe_expires_at = now + TOKEN_TTL_SECONDS;
-    const control_expires_at = now + TOKEN_TTL_SECONDS;
+    // Persist tokens to database
+    store.setToken("observe", observe) catch |err| {
+        ui.logWarn("Failed to persist observe token: {any}", .{err});
+    };
+    store.setToken("control", control) catch |err| {
+        ui.logWarn("Failed to persist control token: {any}", .{err});
+    };
 
     return .{
         .observe_token = try allocator.dupe(u8, observe),
         .control_token = try allocator.dupe(u8, control),
-        .observe_expires_at = observe_expires_at,
-        .control_expires_at = control_expires_at,
+        .observe_expires_at = now + TOKEN_TTL_SECONDS,
+        .control_expires_at = now + TOKEN_TTL_SECONDS,
     };
 }
 

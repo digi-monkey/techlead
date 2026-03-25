@@ -164,6 +164,10 @@ pub const ControlPlaneStore = struct {
         getLease: *const fn (ctx: *anyopaque, task_id: []const u8, allocator: std.mem.Allocator) StoreError!?Lease,
         cleanupExpiredLeases: *const fn (ctx: *anyopaque) StoreError!u32,
 
+        // Token management
+        getToken: *const fn (ctx: *anyopaque, name: []const u8, allocator: std.mem.Allocator) StoreError!?[]u8,
+        setToken: *const fn (ctx: *anyopaque, name: []const u8, value: []const u8) StoreError!void,
+
         close: *const fn (ctx: *anyopaque) void,
     };
 
@@ -283,6 +287,14 @@ pub const ControlPlaneStore = struct {
 
     pub fn cleanupExpiredLeases(self: ControlPlaneStore) StoreError!u32 {
         return self.vtable.cleanupExpiredLeases(self.ctx);
+    }
+
+    pub fn getToken(self: ControlPlaneStore, name: []const u8, allocator: std.mem.Allocator) StoreError!?[]u8 {
+        return self.vtable.getToken(self.ctx, name, allocator);
+    }
+
+    pub fn setToken(self: ControlPlaneStore, name: []const u8, value: []const u8) StoreError!void {
+        return self.vtable.setToken(self.ctx, name, value);
     }
 
     pub fn close(self: ControlPlaneStore) void {
