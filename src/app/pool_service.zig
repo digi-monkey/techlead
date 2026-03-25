@@ -91,6 +91,12 @@ pub fn run(
     pool_cfg.work_dir = pool_work_dir;
     ui.logInfo("pool 使用 git worktree: {s}", .{pool_cfg.work_dir});
 
+    // Extract project_id from original work_dir for controlplane store operations
+    // cfg.work_dir here is the original project directory (e.g., /tmp/test-repos/p-limit)
+    // NOT the pool worktree (that's pool_cfg.work_dir)
+    const project_id = std.fs.path.basename(cfg.work_dir);
+    ui.logInfo("pool project_id: {s}", .{project_id});
+
     var sqlite = try sqlite_controlplane_store.SqliteControlPlaneStore.init(allocator);
     defer sqlite.deinit();
     const cps = sqlite.asControlPlaneStore();
@@ -117,7 +123,7 @@ pub fn run(
         ) catch "{\"status\":\"claimed\"}";
         appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.claimed", claim_payload);
 
-        const outcome = processClaimedTask(pool_cfg, allocator, provider, provider_name, run_id, cps, &task, project_test_cmd, project_lint_cmd) catch |err| blk: {
+        const outcome = processClaimedTask(pool_cfg, allocator, provider, provider_name, run_id, cps, &task, project_test_cmd, project_lint_cmd, project_id) catch |err| blk: {
             const err_msg = @errorName(err);
             const git_context = if (err == error.GitCommandFailed)
                 collectGitFailureContext(allocator, pool_cfg.work_dir) catch try allocator.dupe(u8, "(git context unavailable)")
@@ -153,7 +159,7 @@ pub fn run(
             ) catch "{\"status\":\"error\"}";
             appendRunEvent(primary_es, mirror_es, run_id, .scheduler, "task.error", error_payload);
 
-            _ = try cps.markFailedOrRequeue(cfg.work_dir, task.task_id, run_id, run_id, detailed_msg, cfg.pool_max_retries);
+            _ = try cps.markFailedOrRequeue(project_id, task.task_id, run_id, run_id, detailed_msg, cfg.pool_max_retries);
             break :blk null;
         };
 
@@ -189,9 +195,8 @@ fn processClaimedTask(
     task: *task_store.Task,
     project_test_cmd: ?[]const u8,
     project_lint_cmd: ?[]const u8,
+    project_id: []const u8,
 ) !TaskOutcome {
-    // Extract project_id from work_dir (basename) for controlplane store
-    const project_id = std.fs.path.basename(cfg.work_dir);
     try cps.markRunning(project_id, task.task_id, run_id, cfg.pool_lease_seconds, run_id);
     try prepareWorktreeForTask(allocator, cfg.work_dir);
 
@@ -1279,7 +1284,8 @@ fn runSingleTaskForScenario(
     }, allocator)) orelse return error.TaskNotFound;
     var task = claimed;
     defer task.deinit(allocator);
-    return processClaimedTask(cfg, allocator, mock, "mock", "runner-e2e", cps, &task, null, null);
+    const project_id = std.fs.path.basename(cfg.work_dir);
+    return processClaimedTask(cfg, allocator, mock, "mock", "runner-e2e", cps, &task, null, null, project_id);
 }
 
 fn writeRepoFile(allocator: std.mem.Allocator, cwd: []const u8, rel_path: []const u8, content: []const u8) !void {
