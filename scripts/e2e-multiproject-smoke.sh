@@ -254,8 +254,9 @@ main() {
     log_info "Step 4: Starting observe service on port $OBSERVE_PORT"
     
     ./zig-out/bin/techlead observe start \
+        --dir "$WORK_ROOT" \
         --host "$OBSERVE_HOST" \
-        --port "$OBSERVE_PORT" \&
+        --port "$OBSERVE_PORT" &
     OBSERVE_PID=$!
     
     wait_for_observe
