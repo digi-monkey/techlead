@@ -467,11 +467,16 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
     // === Legacy API (Backward Compatibility) ===
     // These endpoints use the default_project_id if available
 
-    if (std.mem.startsWith(u8, target, "/events")) {
+    if (std.mem.eql(u8, target_path, "/events")) {
+        // Support ?project_id=xxx query parameter
+        if (queryValue(target, "project_id")) |pid| {
+            return handleProjectEvents(ctx, req, target, pid);
+        }
+        // Fall back to default_project_id for backward compatibility
         if (ctx.default_project_id) |pid| {
             return handleProjectEvents(ctx, req, target, pid);
         }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
+        return respondJson(req, .not_found, "{\"error\":\"project_id_required\"}");
     }
 
     if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/events/stream")) {
