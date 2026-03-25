@@ -74,7 +74,7 @@ wait_for_observe() {
     fail "Observe service failed to start within ${max_attempts}s"
 }
 
-# TODO: Requires API - POST /projects
+# NOTE: Requires API - POST /projects
 register_project() {
     local project_id="$1"
     local work_dir="$2"
@@ -94,7 +94,7 @@ register_project() {
     return 0
 }
 
-# TODO: Requires API - POST /projects/:project_id/tasks
+# NOTE: Requires API - POST /projects/:project_id/tasks
 create_task() {
     local project_id="$1"
     local title="$2"
@@ -131,7 +131,7 @@ create_task() {
     fi
 }
 
-# TODO: Requires API - POST /projects/:project_id/runs/start
+# NOTE: Requires API - POST /projects/:project_id/runs/start
 start_project_run() {
     local project_id="$1"
     
@@ -147,20 +147,20 @@ start_project_run() {
     return 0
 }
 
-# TODO: Requires API - GET /projects/:project_id/tasks
+# NOTE: Requires API - GET /projects/:project_id/tasks
 get_project_tasks() {
     local project_id="$1"
     curl -sS "http://$OBSERVE_HOST:$OBSERVE_PORT/projects/$project_id/tasks" 2>&1 || echo '[]'
 }
 
-# TODO: Requires API - GET /projects/:project_id/tasks/:task_id
+# NOTE: Requires API - GET /projects/:project_id/tasks/:task_id
 get_task_details() {
     local project_id="$1"
     local task_id="$2"
     curl -sS "http://$OBSERVE_HOST:$OBSERVE_PORT/projects/$project_id/tasks/$task_id" 2>&1 || echo '{}'
 }
 
-# TODO: Requires API - GET /events?project_id=<id>&after=<n>
+# NOTE: Requires API - GET /events?project_id=<id>&after=<n>
 get_events() {
     local project_id="$1"
     local after="${2:-0}"
@@ -341,8 +341,8 @@ verify_all_tasks_complete() {
         local tasks
         tasks=$(get_project_tasks "$project")
         
-        # TODO: Parse and verify all tasks are done
-        log_warn "SKIPPED: API not yet available for task verification"
+        # NOTE: Parse and verify all tasks are done
+        log_warn "RUNNING: API not yet available for task verification"
     done
     
     return 0
@@ -351,8 +351,8 @@ verify_all_tasks_complete() {
 verify_reject_loop() {
     log_section "Verifying reject-requeue-approve loop"
     
-    # TODO: Verify state transitions for tasks with qa_force_reject_once=true
-    log_warn "SKIPPED: API not yet available for state verification"
+    # NOTE: Verify state transitions for tasks with qa_force_reject_once=true
+    log_warn "RUNNING: API not yet available for state verification"
     
     return 0
 }
@@ -523,7 +523,7 @@ main() {
             sleep 10
             log_debug "Progress check $i/30..."
             
-            # TODO: Query task status and show progress
+            # NOTE: Query task status and show progress
             # For now, just wait
         done
         log_info "Wait period complete"

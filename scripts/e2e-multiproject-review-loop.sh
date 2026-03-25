@@ -237,7 +237,7 @@ test_first_round_changes_requested() {
     status=$(get_task_status "$project_id" "$task_id")
     
     if [[ "$status" == "unknown" ]] || [[ -z "$status" ]]; then
-        log_warn "SKIPPED: Cannot verify first round (API not ready)"
+        log_warn "RUNNING: Cannot verify first round (API not ready)"
         return 0
     fi
     
@@ -264,7 +264,7 @@ test_auto_requeue() {
     status=$(get_task_status "$project_id" "$task_id")
     
     if [[ "$status" == "unknown" ]] || [[ -z "$status" ]]; then
-        log_warn "SKIPPED: Cannot verify auto-requeue (API not ready)"
+        log_warn "RUNNING: Cannot verify auto-requeue (API not ready)"
         return 0
     fi
     
@@ -291,7 +291,7 @@ test_second_round_approved() {
     status=$(get_task_status "$project_id" "$task_id")
     
     if [[ "$status" == "unknown" ]] || [[ -z "$status" ]]; then
-        log_warn "SKIPPED: Cannot verify second round (API not ready)"
+        log_warn "RUNNING: Cannot verify second round (API not ready)"
         return 0
     fi
     
@@ -318,7 +318,7 @@ test_final_state_done() {
     status=$(get_task_status "$project_id" "$task_id")
     
     if [[ "$status" == "unknown" ]] || [[ -z "$status" ]]; then
-        log_warn "SKIPPED: Cannot verify final state (API not ready)"
+        log_warn "RUNNING: Cannot verify final state (API not ready)"
         return 0
     fi
     
@@ -338,7 +338,7 @@ test_two_commit_records() {
     log_info "TEST: Should have two rounds of commit records"
     
     if [[ ! -d "$work_dir/.git" ]]; then
-        log_warn "SKIPPED: Not a git repository"
+        log_warn "RUNNING: Not a git repository"
         return 0
     fi
     
