@@ -840,6 +840,61 @@ pub const SqliteControlPlaneStore = struct {
         return out.toOwnedSlice(allocator);
     }
 
+    fn patchTask(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, input: task_store.PatchTaskInput, meta: task_store.OperatorMeta) controlplane_store.StoreError!void {
+        const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var sets = std.ArrayList(u8).empty;
+        defer sets.deinit(self.allocator);
+        var w = sets.writer(self.allocator);
+
+        var changed_fields: usize = 0;
+        if (input.title) |title| {
+            const title_q = try sqlQuote(self.allocator, title);
+            defer self.allocator.free(title_q);
+            try w.print("title='{s}'", .{title_q});
+            changed_fields += 1;
+        }
+        if (input.prompt) |prompt| {
+            if (changed_fields > 0) try w.writeAll(",");
+            const prompt_q = try sqlQuote(self.allocator, prompt);
+            defer self.allocator.free(prompt_q);
+            try w.print("prompt='{s}'", .{prompt_q});
+            changed_fields += 1;
+        }
+        if (input.priority) |priority| {
+            if (changed_fields > 0) try w.writeAll(",");
+            try w.print("priority={d}", .{priority});
+            changed_fields += 1;
+        }
+        if (input.max_retries) |mr| {
+            if (changed_fields > 0) try w.writeAll(",");
+            try w.print("max_retries={d}", .{mr});
+            changed_fields += 1;
+        }
+        if (changed_fields == 0) return;
+
+        const task_q = try sqlQuote(self.allocator, task_id);
+        defer self.allocator.free(task_q);
+        const project_q = try sqlQuote(self.allocator, project_id);
+        defer self.allocator.free(project_q);
+
+        const now = std.time.timestamp();
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "UPDATE tasks SET {s}, updated_at={d}, version=version+1 WHERE task_id='{s}' AND project_id='{s}' AND version={d};",
+            .{ sets.items, now, task_q, project_q, input.version },
+        );
+        defer self.allocator.free(sql);
+
+        self.execSql(sql) catch return error.SqliteExecFailed;
+        if (self.api.changes(self.db) != 1) return error.VersionConflict;
+
+        // Append task event for audit
+        try self.appendTaskEvent(task_id, meta.run_id, "task.updated", "{}", meta.operator, meta.source, meta.request_id);
+    }
+
     fn readTaskEventFromStmt(self: *SqliteControlPlaneStore, stmt: *sqlite3_stmt) controlplane_store.StoreError!task_store.TaskEvent {
         return .{
             .id = self.api.column_int64(stmt, 0),
@@ -1664,6 +1719,7 @@ pub const SqliteControlPlaneStore = struct {
         .createTaskReview = createTaskReview,
         .getTaskEvents = getTaskEvents,
         .applyAction = applyAction,
+        .patchTask = patchTask,
         .createRun = createRun,
         .updateRunStatus = updateRunStatus,
         .getRun = getRun,

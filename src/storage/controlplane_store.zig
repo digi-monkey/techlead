@@ -23,6 +23,8 @@ pub const StoreError = error{
     InvalidReviewStage,
     // Concurrency errors
     TaskNotClaimed,
+    // Optimistic locking errors
+    VersionConflict,
 };
 
 pub const Project = struct {
@@ -148,6 +150,7 @@ pub const ControlPlaneStore = struct {
         createTaskReview: *const fn (ctx: *anyopaque, project_id: []const u8, input: task_store.CreateTaskReviewInput) StoreError!void,
         getTaskEvents: *const fn (ctx: *anyopaque, project_id: []const u8, after_id: i64, limit: usize, allocator: std.mem.Allocator) StoreError![]u8,
         applyAction: *const fn (ctx: *anyopaque, project_id: []const u8, task_id: []const u8, action: task_store.Action, meta: task_store.OperatorMeta) StoreError!void,
+        patchTask: *const fn (ctx: *anyopaque, project_id: []const u8, task_id: []const u8, input: task_store.PatchTaskInput, meta: task_store.OperatorMeta) StoreError!void,
 
         // Run management
         createRun: *const fn (ctx: *anyopaque, run_id: []const u8, project_id: []const u8, mode: []const u8, worker_id: ?[]const u8) StoreError!void,
@@ -242,6 +245,10 @@ pub const ControlPlaneStore = struct {
 
     pub fn applyAction(self: ControlPlaneStore, project_id: []const u8, task_id: []const u8, action: task_store.Action, meta: task_store.OperatorMeta) StoreError!void {
         return self.vtable.applyAction(self.ctx, project_id, task_id, action, meta);
+    }
+
+    pub fn patchTask(self: ControlPlaneStore, project_id: []const u8, task_id: []const u8, input: task_store.PatchTaskInput, meta: task_store.OperatorMeta) StoreError!void {
+        return self.vtable.patchTask(self.ctx, project_id, task_id, input, meta);
     }
 
     // Run management

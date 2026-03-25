@@ -1112,13 +1112,34 @@ fn handlePatchTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
         if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
 
-    // Note: The controlplane_store doesn't have a direct patchTask method
-    // We'll need to use applyAction or extend the store interface
-    // For now, return success as the actual patch would need store changes
-    _ = project_id;
-    _ = task_id;
+    // Validate version is provided
+    const version = body.version orelse return respondJson(req, .bad_request, "{\"error\":\"version_required\"}");
 
-    return respondJson(req, .ok, "{\"ok\":true}");
+    const input = task_store.PatchTaskInput{
+        .title = body.title,
+        .prompt = body.prompt,
+        .priority = body.priority,
+        .max_retries = body.max_retries,
+        .version = version,
+    };
+
+    ctx.store.patchTask(project_id, task_id, input, .{
+        .operator = "observe-user",
+        .source = "observe-api",
+        .request_id = request_id,
+    }) catch |err| switch (err) {
+        error.TaskNotFound => return respondJson(req, .not_found, "{\"error\":\"task_not_found\"}"),
+        error.VersionConflict => return respondJson(req, .conflict, "{\"error\":\"version_conflict\"}"),
+        else => return respondJson(req, .bad_request, "{\"error\":\"patch_failed\"}"),
+    };
+
+    // Return updated task data
+    const out = ctx.store.getTaskDetail(project_id, task_id, ctx.allocator) catch |err| switch (err) {
+        error.TaskNotFound => return respondJson(req, .not_found, "{\"error\":\"task_not_found\"}"),
+        else => return respondJson(req, .bad_request, "{\"error\":\"detail_failed\"}"),
+    };
+    defer ctx.allocator.free(out);
+    return respondJson(req, .ok, out);
 }
 
 fn handleTaskAction(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8, task_id: []const u8) !void {
