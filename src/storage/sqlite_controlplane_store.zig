@@ -1465,7 +1465,8 @@ pub const SqliteControlPlaneStore = struct {
         try self.execSql(sql);
     }
 
-    fn cleanupExpiredLeases(self: *SqliteControlPlaneStore) controlplane_store.StoreError!u32 {
+    fn cleanupExpiredLeases(ctx: *anyopaque) controlplane_store.StoreError!u32 {
+        const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -1670,6 +1671,7 @@ pub const SqliteControlPlaneStore = struct {
         .acquireLease = acquireLease,
         .releaseLease = releaseLease,
         .getLease = getLease,
+        .cleanupExpiredLeases = cleanupExpiredLeases,
         .close = close,
     };
 };

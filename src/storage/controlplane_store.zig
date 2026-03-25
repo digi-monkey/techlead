@@ -159,6 +159,7 @@ pub const ControlPlaneStore = struct {
         acquireLease: *const fn (ctx: *anyopaque, lease_id: []const u8, task_id: []const u8, project_id: []const u8, owner: []const u8, expires_at: i64) StoreError!void,
         releaseLease: *const fn (ctx: *anyopaque, lease_id: []const u8, owner: []const u8) StoreError!void,
         getLease: *const fn (ctx: *anyopaque, task_id: []const u8, allocator: std.mem.Allocator) StoreError!?Lease,
+        cleanupExpiredLeases: *const fn (ctx: *anyopaque) StoreError!u32,
 
         close: *const fn (ctx: *anyopaque) void,
     };
@@ -271,6 +272,10 @@ pub const ControlPlaneStore = struct {
 
     pub fn getLease(self: ControlPlaneStore, task_id: []const u8, allocator: std.mem.Allocator) StoreError!?Lease {
         return self.vtable.getLease(self.ctx, task_id, allocator);
+    }
+
+    pub fn cleanupExpiredLeases(self: ControlPlaneStore) StoreError!u32 {
+        return self.vtable.cleanupExpiredLeases(self.ctx);
     }
 
     pub fn close(self: ControlPlaneStore) void {

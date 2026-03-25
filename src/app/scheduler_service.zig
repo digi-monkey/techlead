@@ -175,12 +175,7 @@ pub const SchedulerService = struct {
 
     /// Clean up expired leases and return count of cleaned leases
     pub fn cleanupExpiredLeases(self: *SchedulerService) !u32 {
-        // Note: The controlplane_store doesn't have a direct cleanupExpiredLeases method
-        // We need to query for expired leases and release them individually
-        // For now, this is a placeholder that returns 0
-        // A full implementation would need to add this capability to the store
-        _ = self;
-        return 0;
+        return self.store.cleanupExpiredLeases();
     }
 
     /// Get current weights for all projects (for monitoring/debugging)
