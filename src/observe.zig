@@ -60,8 +60,6 @@ const ServerContext = struct {
     request_ids: std.StringHashMap(i64),
     bootstrap_tickets: std.StringHashMap(BootstrapTicket),
     external_url: ?[]const u8,
-    // Backward compatibility: optional default project_id for legacy endpoints
-    default_project_id: ?[]const u8,
 };
 
 const ControlBody = struct {
@@ -207,8 +205,7 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
 
     var store = sqlite_store.asControlPlaneStore();
 
-    // If target_dir provided, register as default project
-    var default_project_id: ?[]u8 = null;
+    // If target_dir provided, register as project
     if (target_dir) |dir| {
         // Verify directory exists
         std.fs.cwd().access(dir, .{}) catch |err| {
@@ -228,13 +225,10 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
         }) catch |err| {
             // Project may already exist, that's ok
             if (err != error.ProjectIdExists) {
-                ui.logWarn("Failed to register default project: {any}", .{err});
+                ui.logWarn("Failed to register project: {any}", .{err});
             }
         };
-
-        default_project_id = try allocator.dupe(u8, project_id);
     }
-    errdefer if (default_project_id) |pid| allocator.free(pid);
 
     const tokens = try ensureTokens(allocator, &store);
     defer allocator.free(tokens.observe_token);
@@ -255,14 +249,12 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
         .request_ids = std.StringHashMap(i64).init(allocator),
         .bootstrap_tickets = std.StringHashMap(BootstrapTicket).init(allocator),
         .external_url = external_url,
-        .default_project_id = default_project_id,
     };
     defer allocator.free(ctx.log_dir);
     defer allocator.free(ctx.host);
     defer allocator.free(ctx.observe_token);
     defer allocator.free(ctx.control_token);
     defer if (ctx.external_url) |url| allocator.free(url);
-    defer if (ctx.default_project_id) |pid| allocator.free(pid);
     defer {
         var it = ctx.request_ids.iterator();
         while (it.next()) |entry| allocator.free(entry.key_ptr.*);
@@ -289,9 +281,6 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
     }
     ui.logInfo("observe token: {s}", .{ctx.observe_token});
     ui.logInfo("control token: {s}", .{ctx.control_token});
-    if (default_project_id) |pid| {
-        ui.logInfo("默认项目: {s}", .{pid});
-    }
     const share_issue = try issueBootstrapTicket(&ctx, SHARE_BOOTSTRAP_TTL_SECONDS);
     defer allocator.free(share_issue.bootstrap_id);
     defer allocator.free(share_issue.code);
@@ -462,91 +451,6 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
         if (std.mem.eql(u8, after_project, "/events")) {
             return handleProjectEvents(ctx, req, target, project_id);
         }
-    }
-
-    // === Legacy API (Backward Compatibility) ===
-    // These endpoints use the default_project_id if available
-
-    if (std.mem.eql(u8, target_path, "/events")) {
-        // Support ?project_id=xxx query parameter
-        if (queryValue(target, "project_id")) |pid| {
-            return handleProjectEvents(ctx, req, target, pid);
-        }
-        // Fall back to default_project_id for backward compatibility
-        if (ctx.default_project_id) |pid| {
-            return handleProjectEvents(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"project_id_required\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/events/stream")) {
-        if (ctx.default_project_id) |pid| {
-            return handleRunsEventsStream(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/runs/current/events/stream")) {
-        if (ctx.default_project_id) |pid| {
-            return streamProjectEvents(req, ctx, pid, parseAfterFromRequest(req));
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/events")) {
-        if (ctx.default_project_id) |pid| {
-            return handleProjectEvents(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/runs/current/events")) {
-        if (ctx.default_project_id) |pid| {
-            return handleProjectEvents(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/tasks")) {
-        if (ctx.default_project_id) |pid| {
-            return handleTasksApi(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/sessions/current")) {
-        if (ctx.default_project_id) |pid| {
-            return handleSessionsApi(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/sessions/start")) {
-        if (ctx.default_project_id) |pid| {
-            return handleSessionStart(ctx, req, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/runs/start")) {
-        if (ctx.default_project_id) |pid| {
-            return handleRunStart(ctx, req, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/runs/") and std.mem.endsWith(u8, target, "/control")) {
-        if (ctx.default_project_id) |pid| {
-            return handleRunControl(ctx, req, target, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
-    }
-
-    if (std.mem.startsWith(u8, target, "/control") or std.mem.startsWith(u8, target, "/runs/current/control")) {
-        if (ctx.default_project_id) |pid| {
-            return handleRunControlCurrent(ctx, req, pid);
-        }
-        return respondJson(req, .not_found, "{\"error\":\"no_default_project\"}");
     }
 
     return respondJson(req, .not_found, "{\"error\":\"not_found\"}");
