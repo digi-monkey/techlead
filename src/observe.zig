@@ -658,7 +658,7 @@ fn handleRunStart(ctx: *ServerContext, req: *http.Server.Request, project_id: []
     }
     defer if (project) |p| p.deinit(ctx.allocator);
 
-    var mode: []const u8 = "optimize";
+    var mode: []const u8 = "pool";
     var mode_owned: ?[]u8 = null;
     defer if (mode_owned) |m| ctx.allocator.free(m);
     var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
