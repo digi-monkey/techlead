@@ -88,12 +88,12 @@ pub const OpencodeProvider = struct {
             try argv.append(allocator, "--model");
             try argv.append(allocator, cfg.model);
         }
-        if (cfg.agent.len > 0) {
-            try argv.append(allocator, "--agent");
-            const capitalized_agent = try opencode.capitalizeFirstLetter(allocator, cfg.agent);
-            defer allocator.free(capitalized_agent);
-            try argv.append(allocator, capitalized_agent);
-        }
+        // 始终添加 agent 参数，为空时使用默认值
+        const agent_name = if (cfg.agent.len > 0) cfg.agent else "Sisyphus";
+        try argv.append(allocator, "--agent");
+        const capitalized_agent = try opencode.capitalizeFirstLetter(allocator, agent_name);
+        defer allocator.free(capitalized_agent);
+        try argv.append(allocator, capitalized_agent);
         try argv.append(allocator, prompt);
 
         ui.logInfo("执行: oh-my-opencode run --attach {s} --directory {s} --json", .{ cfg.opencode_url, cfg.work_dir });
@@ -104,7 +104,7 @@ pub const OpencodeProvider = struct {
         var child = std.process.Child.init(argv.items, allocator);
         child.stdin_behavior = .Inherit;
         child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Inherit;
+        child.stderr_behavior = .Pipe; // 修复：捕获 stderr
         child.cwd = cfg.work_dir;
 
         try child.spawn();
@@ -112,6 +112,20 @@ pub const OpencodeProvider = struct {
             _ = child.kill() catch {};
         }
 
+        // 创建线程读取 stderr 并写入日志
+        const stderr_thread = try std.Thread.spawn(.{}, struct {
+            fn readStderr(stderr: std.fs.File, log: std.fs.File) !void {
+                var buf: [4096]u8 = undefined;
+                while (true) {
+                    const n = try stderr.read(&buf);
+                    if (n == 0) break;
+                    try log.writeAll(buf[0..n]);
+                    std.debug.print("{s}", .{buf[0..n]});
+                }
+            }
+        }.readStderr, .{ child.stderr.?, log_file });
+
+        // 主线程读取 stdout
         var buf: [4096]u8 = undefined;
         const child_stdout = child.stdout orelse return error.CommandFailed;
         while (true) {
@@ -122,6 +136,8 @@ pub const OpencodeProvider = struct {
             try log_file.writeAll(chunk);
             std.debug.print("{s}", .{chunk});
         }
+
+        stderr_thread.join();
 
         const term = try child.wait();
         if (!utils.isExitedZero(term)) {

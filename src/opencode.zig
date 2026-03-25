@@ -196,13 +196,13 @@ pub fn invokeOpencode(cfg: config.Config, allocator: std.mem.Allocator, iteratio
         try argv.append(allocator, "--model");
         try argv.append(allocator, cfg.model);
     }
-    if (cfg.agent.len > 0) {
-        try argv.append(allocator, "--agent");
-        // oh-my-opencode 使用首字母大写的 agent 名称
-        const capitalized_agent = try capitalizeFirstLetter(allocator, cfg.agent);
-        defer allocator.free(capitalized_agent);
-        try argv.append(allocator, capitalized_agent);
-    }
+    // 始终添加 agent 参数，为空时使用默认值
+    const agent_name = if (cfg.agent.len > 0) cfg.agent else "Sisyphus";
+    try argv.append(allocator, "--agent");
+    // oh-my-opencode 使用首字母大写的 agent 名称
+    const capitalized_agent = try capitalizeFirstLetter(allocator, agent_name);
+    defer allocator.free(capitalized_agent);
+    try argv.append(allocator, capitalized_agent);
     // prompt 必须放在最后
     try argv.append(allocator, prompt);
 
@@ -214,7 +214,7 @@ pub fn invokeOpencode(cfg: config.Config, allocator: std.mem.Allocator, iteratio
     var child = std.process.Child.init(argv.items, allocator);
     child.stdin_behavior = .Inherit;
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Inherit;
+    child.stderr_behavior = .Pipe; // 修复：捕获 stderr
     child.cwd = cfg.work_dir;
 
     try child.spawn();
@@ -225,6 +225,21 @@ pub fn invokeOpencode(cfg: config.Config, allocator: std.mem.Allocator, iteratio
     var merged: std.ArrayList(u8) = .empty;
     defer merged.deinit(allocator);
 
+    // 创建线程读取 stderr 并写入日志
+    const stderr_thread = try std.Thread.spawn(.{}, struct {
+        fn readStderr(stderr: std.fs.File, log: std.fs.File, merge: *std.ArrayList(u8), alloc: std.mem.Allocator) !void {
+            var buf: [4096]u8 = undefined;
+            while (true) {
+                const n = try stderr.read(&buf);
+                if (n == 0) break;
+                try log.writeAll(buf[0..n]);
+                try merge.appendSlice(alloc, buf[0..n]);
+                std.debug.print("{s}", .{buf[0..n]});
+            }
+        }
+    }.readStderr, .{ child.stderr.?, log_file, &merged, allocator });
+
+    // 主线程读取 stdout
     var buf: [4096]u8 = undefined;
     const child_stdout = child.stdout orelse return error.CommandFailed;
     while (true) {
@@ -238,6 +253,8 @@ pub fn invokeOpencode(cfg: config.Config, allocator: std.mem.Allocator, iteratio
         // Print directly to console (no JSON parsing)
         std.debug.print("{s}", .{chunk});
     }
+
+    stderr_thread.join();
 
     const term = try child.wait();
     if (!utils.isExitedZero(term)) {

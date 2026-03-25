@@ -98,14 +98,38 @@ pub fn parseResultFromMergedOutput(
 }
 
 fn extractResultJsonLine(merged_output: []const u8) ParseError![]const u8 {
-    const prefix_idx = std.mem.lastIndexOf(u8, merged_output, RESULT_JSON_PREFIX) orelse {
+    // 支持 `RESULT_JSON: 和 RESULT_JSON: 两种格式
+    const result_prefixes = [_][]const u8{ "`RESULT_JSON:", "RESULT_JSON:" };
+
+    var prefix_idx: ?usize = null;
+    var prefix_len: usize = 0;
+    var has_backtick = false;
+
+    for (result_prefixes) |prefix| {
+        if (std.mem.lastIndexOf(u8, merged_output, prefix)) |idx| {
+            prefix_idx = idx;
+            prefix_len = prefix.len;
+            has_backtick = (prefix[0] == '`');
+            break;
+        }
+    }
+
+    const start_idx = prefix_idx orelse {
         return error.ResultJsonPrefixNotFound;
     };
 
-    const after_prefix = merged_output[prefix_idx + RESULT_JSON_PREFIX.len ..];
+    const after_prefix = merged_output[start_idx + prefix_len ..];
     var line_end = after_prefix.len;
-    if (std.mem.indexOfScalar(u8, after_prefix, '\n')) |idx| line_end = @min(line_end, idx);
-    if (std.mem.indexOfScalar(u8, after_prefix, '\r')) |idx| line_end = @min(line_end, idx);
+
+    // 根据格式确定结束符
+    if (has_backtick) {
+        // 查找结束反引号
+        if (std.mem.indexOfScalar(u8, after_prefix, '`')) |idx| line_end = idx;
+    } else {
+        // 纯文本格式，查找换行
+        if (std.mem.indexOfScalar(u8, after_prefix, '\n')) |idx| line_end = @min(line_end, idx);
+        if (std.mem.indexOfScalar(u8, after_prefix, '\r')) |idx| line_end = @min(line_end, idx);
+    }
 
     const line = std.mem.trim(u8, after_prefix[0..line_end], " \t");
     if (line.len == 0) return error.ResultJsonPayloadEmpty;
