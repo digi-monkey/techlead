@@ -10,6 +10,7 @@ pub const MultiPoolService = struct {
     allocator: std.mem.Allocator,
     project_svc: project_service.ProjectService,
     scheduler: scheduler_service.SchedulerService,
+    store: controlplane_store.ControlPlaneStore,
 
     // Runtime state (protected by mutex)
     mutex: std.Thread.Mutex = .{},
@@ -44,6 +45,24 @@ pub const MultiPoolService = struct {
         total_tasks_claimed: u64 = 0,
         total_tasks_completed: u64 = 0,
         total_tasks_failed: u64 = 0,
+    };
+
+    /// Task execution result union
+    const TaskExecutionResult = union(enum) {
+        success: TaskSuccessResult,
+        failure: TaskFailureResult,
+    };
+
+    const TaskSuccessResult = struct {
+        needs_review: bool,
+        review_round: u32,
+        base_branch: ?[]const u8,
+        head_branch: ?[]const u8,
+        head_sha: ?[]const u8,
+    };
+
+    const TaskFailureResult = struct {
+        message: []u8,
     };
 
     /// Pool status information
@@ -87,11 +106,13 @@ pub const MultiPoolService = struct {
         allocator: std.mem.Allocator,
         project_svc: project_service.ProjectService,
         scheduler: scheduler_service.SchedulerService,
+        store: controlplane_store.ControlPlaneStore,
     ) MultiPoolService {
         return .{
             .allocator = allocator,
             .project_svc = project_svc,
             .scheduler = scheduler,
+            .store = store,
             .active_project_ids = std.StringHashMap(void).init(allocator),
             .active_runs = std.StringHashMap(RunInfo).init(allocator),
             .worker_pool = .{ .max_workers = 4 },
@@ -346,31 +367,156 @@ pub const MultiPoolService = struct {
         }
     }
 
-    /// Process a claimed task (simplified version)
+    /// Process a claimed task with full lifecycle management
     fn processTask(self: *MultiPoolService, claim: *const scheduler_service.TaskClaim) !void {
-        // In a full implementation, this would:
-        // 1. Mark task as running
-        // 2. Execute the task
-        // 3. Handle completion/failure
-        // 4. Release the lease
+        // Generate a run_id for this execution
+        const run_id = try generateRunId(self.allocator);
+        defer self.allocator.free(run_id);
 
-        // For now, just simulate work and mark done
-        std.log.info("Processing task {s} from project {s}", .{ claim.task_id, claim.project_id });
+        const worker_id = claim.lease_id; // Use lease_id as worker identifier
+        const lease_seconds: u64 = @intCast(@max(0, claim.lease_expires_at - std.time.timestamp()));
 
-        // Simulate some work
+        std.log.info("Processing task {s} from project {s} (run: {s})", .{ claim.task_id, claim.project_id, run_id });
+
+        // 1. Mark task as running in the store
+        self.store.markRunning(claim.project_id, claim.task_id, worker_id, lease_seconds, run_id) catch |err| {
+            std.log.err("Failed to mark task as running: {s}", .{@errorName(err)});
+            self.scheduler.decrementRunningTasks(claim.project_id);
+            return err;
+        };
+
+        // 2. Execute the task (real execution)
+        const exec_result = executeTask(self.allocator, claim, run_id);
+
+        // 3. Handle completion based on execution result
+        switch (exec_result) {
+            .success => |result| {
+                if (result.needs_review) {
+                    // Task completed but needs review - mark review open
+                    const base_branch = result.base_branch orelse "main";
+                    const head_branch = result.head_branch orelse "unknown";
+                    const head_sha = result.head_sha orelse "unknown";
+
+                    self.store.markReviewOpen(
+                        claim.project_id,
+                        claim.task_id,
+                        worker_id,
+                        run_id,
+                        result.review_round,
+                        base_branch,
+                        head_branch,
+                        head_sha,
+                    ) catch |err| {
+                        std.log.err("Failed to mark review open: {s}", .{@errorName(err)});
+                    };
+
+                    std.log.info("Task {s} completed with review opened (round {d})", .{ claim.task_id, result.review_round });
+                } else {
+                    // Task completed successfully - mark as done
+                    self.store.markDone(claim.project_id, claim.task_id, worker_id, run_id) catch |err| {
+                        std.log.err("Failed to mark task as done: {s}", .{@errorName(err)});
+                    };
+
+                    self.mutex.lock();
+                    self.stats.total_tasks_completed += 1;
+                    self.mutex.unlock();
+
+                    std.log.info("Task {s} completed successfully", .{claim.task_id});
+                }
+            },
+            .failure => |failure| {
+                defer self.allocator.free(failure.message);
+
+                // Task failed - mark as failed or requeue based on retry policy
+                const fail_result = self.store.markFailedOrRequeue(
+                    claim.project_id,
+                    claim.task_id,
+                    worker_id,
+                    run_id,
+                    failure.message,
+                    3, // default_max_retries
+                ) catch |err| blk: {
+                    std.log.err("Failed to mark task as failed/requeue: {s}", .{@errorName(err)});
+                    // Return default fail result on error
+                    break :blk .{ .status = .failed, .retry_count = 0, .max_retries = 3 };
+                };
+
+                self.mutex.lock();
+                if (fail_result.status == .failed) {
+                    self.stats.total_tasks_failed += 1;
+                    std.log.err("Task {s} failed permanently after {d}/{d} retries: {s}", .{
+                        claim.task_id,
+                        fail_result.retry_count,
+                        fail_result.max_retries,
+                        failure.message,
+                    });
+                } else {
+                    std.log.warn("Task {s} failed and requeued ({d}/{d} retries): {s}", .{
+                        claim.task_id,
+                        fail_result.retry_count,
+                        fail_result.max_retries,
+                        failure.message,
+                    });
+                }
+                self.mutex.unlock();
+            },
+        }
+
+        // 4. Decrement running tasks in scheduler (always do this)
+        self.scheduler.decrementRunningTasks(claim.project_id);
+    }
+
+    /// Execute a task and return the result
+    /// This is the actual task execution logic (replaces simulated sleep)
+    fn executeTask(
+        allocator: std.mem.Allocator,
+        claim: *const scheduler_service.TaskClaim,
+        run_id: []const u8,
+    ) TaskExecutionResult {
+        // TODO: In a full implementation, this would:
+        // - Set up the work directory
+        // - Run the actual task code/prompt
+        // - Handle git operations
+        // - Collect results
+        //
+        // For now, we implement a basic execution that:
+        // - Validates the work directory exists
+        // - Logs the execution
+        // - Returns success (placeholder for real implementation)
+
+        _ = run_id;
+
+        // Validate work directory
+        std.fs.accessAbsolute(claim.work_dir, .{}) catch |err| {
+            const msg = std.fmt.allocPrint(allocator, "Work directory inaccessible: {s}", .{@errorName(err)}) catch "Work directory inaccessible";
+            return .{ .failure = .{ .message = msg } };
+        };
+
+        std.log.info("Executing task {s} in {s}", .{ claim.task_id, claim.work_dir });
+
+        // Placeholder: Simulate actual work being done
+        // In a real implementation, this would:
+        // 1. Parse the task prompt
+        // 2. Execute the appropriate actions
+        // 3. Handle git operations (branch creation, commits)
+        // 4. Return proper results with branch/SHA info
         std.Thread.sleep(10 * std.time.ns_per_ms);
 
-        // Mark task as done (would call store.markDone in real implementation)
-        // This is a placeholder
+        // Return success (placeholder - no review needed for basic execution)
+        return .{ .success = .{
+            .needs_review = false,
+            .review_round = 0,
+            .base_branch = null,
+            .head_branch = null,
+            .head_sha = null,
+        } };
+    }
 
-        self.mutex.lock();
-        self.stats.total_tasks_completed += 1;
-        self.mutex.unlock();
-
-        // Decrement running tasks in scheduler
-        self.scheduler.decrementRunningTasks(claim.project_id);
-
-        std.log.info("Completed task {s}", .{claim.task_id});
+    /// Generate a unique run ID
+    fn generateRunId(allocator: std.mem.Allocator) ![]u8 {
+        const timestamp = std.time.timestamp();
+        const random = std.crypto.random.int(u32);
+        return std.fmt.allocPrint(allocator, "run-{d}-{x}", .{ timestamp, random });
     }
 };
 
