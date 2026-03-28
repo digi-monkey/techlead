@@ -950,17 +950,11 @@ fn shouldRequestChanges(
     correctness_verdict: task_store.TaskReviewVerdict,
     maintainability_verdict: task_store.TaskReviewVerdict,
     maintainability_score: ?i32,
-    correctness_suggestions_json: []const u8,
-    maintainability_suggestions_json: []const u8,
+    _: []const u8,
+    _: []const u8,
 ) bool {
     const score = maintainability_score orelse 0;
-    const has_suggestions = hasJsonArrayItems(correctness_suggestions_json) or hasJsonArrayItems(maintainability_suggestions_json);
-    return correctness_verdict != .approve or maintainability_verdict != .approve or score < 3 or has_suggestions;
-}
-
-fn hasJsonArrayItems(json_text: []const u8) bool {
-    const trimmed = std.mem.trim(u8, json_text, " \t\r\n");
-    return !std.mem.eql(u8, trimmed, "[]");
+    return correctness_verdict != .approve or maintainability_verdict != .approve or score < 3;
 }
 
 fn failResultToOutcome(result: task_store.FailResult) TaskOutcome {
@@ -982,9 +976,9 @@ test "review gate requests changes when maintainability score < 3" {
     try std.testing.expect(shouldRequestChanges(.approve, .approve, null, "[]", "[]"));
 }
 
-test "review gate requests changes when suggestions exist" {
-    try std.testing.expect(shouldRequestChanges(.approve, .approve, 5, "[\"improve naming\"]", "[]"));
-    try std.testing.expect(shouldRequestChanges(.approve, .approve, 5, "[]", "[\"extract helper\"]"));
+test "review gate approves with suggestions when verdicts and score are OK" {
+    try std.testing.expect(!shouldRequestChanges(.approve, .approve, 5, "[\"improve naming\"]", "[]"));
+    try std.testing.expect(!shouldRequestChanges(.approve, .approve, 5, "[]", "[\"extract helper\"]"));
 }
 
 test "parseReviewJsonMeta requires blockers suggestions confidence fields" {

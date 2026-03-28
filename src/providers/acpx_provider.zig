@@ -98,13 +98,15 @@ fn execAcpx(
     defer allocator.free(prompt_file);
     defer std.fs.cwd().deleteFile(prompt_file) catch {};
 
-    // Build argv: acpx [agent] exec --approve-all --file <prompt_file>
+    // Build argv: acpx --approve-all --cwd <work_dir> <agent> exec --file <prompt_file>
     var argv = std.ArrayList([]const u8).empty;
     defer argv.deinit(allocator);
     try argv.append(allocator, "acpx");
+    try argv.append(allocator, "--approve-all");
+    try argv.append(allocator, "--cwd");
+    try argv.append(allocator, cfg.work_dir);
     try argv.append(allocator, cfg.provider); // agent name: codex, claude, opencode, etc.
     try argv.append(allocator, "exec");
-    try argv.append(allocator, "--approve-all");
     try argv.append(allocator, "--file");
     try argv.append(allocator, prompt_file);
 
@@ -125,7 +127,6 @@ fn execAcpx(
     child.stdin_behavior = .Close;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    child.cwd = cfg.work_dir;
 
     try child.spawn();
 

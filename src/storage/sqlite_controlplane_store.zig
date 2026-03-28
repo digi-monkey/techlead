@@ -1090,7 +1090,7 @@ pub const SqliteControlPlaneStore = struct {
         try self.appendTaskEvent(task_id, run_id, "task.review.approved", payload, null, null, null);
     }
 
-    fn markReviewChangesRequestedAndRequeue(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, feedback: []const u8, reason: []const u8, default_max_retries: u32) controlplane_store.StoreError!task_store.FailResult {
+    fn markReviewChangesRequestedAndRequeue(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8, review_round: u32, feedback: []const u8, _: []const u8, default_max_retries: u32) controlplane_store.StoreError!task_store.FailResult {
         _ = review_round;
         const self: *SqliteControlPlaneStore = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -1117,9 +1117,8 @@ pub const SqliteControlPlaneStore = struct {
         if (self.api.step(stmt) != SQLITE_ROW) return error.TaskNotClaimed;
         const current_retry: u32 = @intCast(self.api.column_int(stmt, 0));
         const max_retries: u32 = @intCast(self.api.column_int(stmt, 1));
-        const is_review_gate_blocked = std.mem.eql(u8, reason, "review_gate_blocked");
-        const next_retry = if (is_review_gate_blocked) current_retry else current_retry + 1;
-        const should_requeue = is_review_gate_blocked or next_retry < max_retries;
+        const next_retry = current_retry + 1;
+        const should_requeue = next_retry < max_retries;
 
         const new_status = if (should_requeue) "queued" else "failed";
         var last_error_buf: ?[]u8 = null;
@@ -2039,6 +2038,10 @@ fn writeTaskReviewJson(writer: anytype, review: TaskReview) !void {
 
 fn openSqliteDynLib() !std.DynLib {
     const candidates = [_][]const u8{
+        // macOS
+        "libsqlite3.dylib",
+        "/usr/lib/libsqlite3.dylib",
+        // Linux
         "libsqlite3.so.0",
         "/lib/x86_64-linux-gnu/libsqlite3.so.0",
         "libsqlite3.so",
