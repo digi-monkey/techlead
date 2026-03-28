@@ -677,7 +677,7 @@ fn handleRunStart(ctx: *ServerContext, req: *http.Server.Request, project_id: []
         if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
 
-    if (!std.mem.eql(u8, mode, "optimize") and !std.mem.eql(u8, mode, "pool")) {
+    if (!std.mem.eql(u8, mode, "session") and !std.mem.eql(u8, mode, "project")) {
         return respondJson(req, .bad_request, "{\"error\":\"invalid_mode\"}");
     }
 

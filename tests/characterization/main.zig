@@ -15,18 +15,13 @@ pub const init_tests = @import("init_test.zig");
 // Tests for run command behavior
 pub const run_tests = @import("run_test.zig");
 
-// Tests for server start/stop behavior
-pub const server_tests = @import("server_test.zig");
-
 // Characterization test metadata
 pub const characterization_info = .{
-    .version = "1.0.0",
+    .version = "2.0.0",
     .purpose = "Document current CLI behavior for refactoring baseline",
     .commands_characterized = &[_][]const u8{
         "init",
         "run",
-        "server start",
-        "server stop",
         "--help",
     },
     .generated_date = "2025-03-14",
