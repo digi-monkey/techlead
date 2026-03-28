@@ -65,6 +65,8 @@ pub const ConfigFile = struct {
     max_branches: usize,
     pool_lease_seconds: u64 = 300,
     pool_max_retries: u32 = 2,
+    project_test_cmd: ?[]const u8 = null,
+    project_lint_cmd: ?[]const u8 = null,
 };
 
 /// Runtime configuration structure with owned strings.
@@ -161,6 +163,8 @@ pub fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
         .max_branches = value.max_branches,
         .pool_lease_seconds = value.pool_lease_seconds,
         .pool_max_retries = value.pool_max_retries,
+        .project_test_cmd = if (value.project_test_cmd) |cmd| try allocator.dupe(u8, cmd) else null,
+        .project_lint_cmd = if (value.project_lint_cmd) |cmd| try allocator.dupe(u8, cmd) else null,
     };
 }
 

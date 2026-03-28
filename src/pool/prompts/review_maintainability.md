@@ -17,6 +17,7 @@
 1. 评估命名、职责、重复、复杂度、可读性。
 2. 评估模块边界与未来扩展/维护成本。
 3. 给出可落地的改进建议，避免空泛意见。
+4. **score 评分标准 (1-5 整数)**: 1=极差, 2=较差, 3=一般可接受, 4=良好, 5=优秀。score >= 3 才算通过。如果 verdict 是 approve 则 score 通常应 >= 3。
 
 ## 输出格式（强约束）
 
@@ -30,7 +31,7 @@ JSON 必须为单行，且至少包含这些字段：
 {
   "role": "maintainability_reviewer",
   "verdict": "approve|request_changes|block",
-  "score": 1,
+  "score": 4,
   "summary": "总体结论",
   "blockers": [
     {
