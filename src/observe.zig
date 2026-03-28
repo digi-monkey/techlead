@@ -4,11 +4,9 @@ const http = std.http;
 const config = @import("config.zig");
 const ui = @import("ui.zig");
 const utils = @import("utils.zig");
-const runner = @import("runner.zig");
 const replay = @import("storage/replay.zig");
 const task_store = @import("storage/task_store.zig");
 const sqlite_task_store = @import("storage/sqlite_task_store.zig");
-const sqlite_runtime_store = @import("storage/sqlite_runtime_store.zig");
 const session_service = @import("app/session_service.zig");
 const controlplane_store = @import("storage/controlplane_store.zig");
 const sqlite_controlplane_store = @import("storage/sqlite_controlplane_store.zig");
@@ -784,12 +782,11 @@ fn handleRunControl(ctx: *ServerContext, req: *http.Server.Request, target: []co
             }
         }
     }
-    const rid = request_id orelse "unknown";
     if (request_id) |r| {
         if (isDuplicateRequestId(ctx, r)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
-    try runner.runControlCommandWithMetaAndRequestId(ctx.allocator, project.work_dir, action, prompt, "observe-user", "observe-api", rid);
-    return respondJson(req, .ok, "{\"ok\":true}");
+    // Control commands removed in acpx refactor
+    return respondJson(req, .gone, "{\"error\":\"control_commands_removed\"}");
 }
 
 fn handleRunControlCurrent(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8) !void {
@@ -843,12 +840,11 @@ fn handleRunControlCurrent(ctx: *ServerContext, req: *http.Server.Request, proje
             }
         }
     }
-    const rid = request_id orelse "unknown";
     if (request_id) |r| {
         if (isDuplicateRequestId(ctx, r)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
-    try runner.runControlCommandWithMetaAndRequestId(ctx.allocator, project.work_dir, action, prompt, "observe-user", "observe-api", rid);
-    return respondJson(req, .ok, "{\"ok\":true}");
+    // Control commands removed in acpx refactor
+    return respondJson(req, .gone, "{\"error\":\"control_commands_removed\"}");
 }
 
 fn handleRunsEventsStream(ctx: *ServerContext, req: *http.Server.Request, target: []const u8, project_id: []const u8) !void {

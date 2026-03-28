@@ -2,13 +2,10 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const ui = @import("ui.zig");
 const config = @import("config.zig");
-const server = @import("server.zig");
 const runner = @import("runner.zig");
 const observe = @import("observe.zig");
-const session_service = @import("app/session_service.zig");
 const replay = @import("storage/replay.zig");
 comptime {
-    _ = @import("providers/provider_contract_test.zig");
     _ = @import("core/domain.zig");
     _ = @import("core/scheduler.zig");
     _ = @import("pool/result_parser.zig");
@@ -44,29 +41,17 @@ fn showHelp() void {
             "用法:\n" ++
             "    zig build run -- init [--dir 目录] \"你的目标描述\" [--force]\n" ++
             "    zig build run -- init-agent \"目标描述\" [--dir 目录]\n" ++
-            "    zig build run -- run [--dir 目录] [--mode optimize|pool]\n" ++
-            "    zig build run -- control <pause|resume|abort|inject_prompt> [--dir 目录] [--prompt 文本]\n" ++
+            "    zig build run -- run [--dir 目录] [--mode session|project]\n" ++
             "    zig build run -- observe start [--dir 目录] [--host 0.0.0.0] [--port 7788]\n" ++
             "    zig build run -- observe rotate-tokens [--dir 目录]\n" ++
-            "    zig build run -- session process-message --dir 目录 --request-id 请求ID\n" ++
-            "    zig build run -- trace show [--dir 目录]\n" ++
-            "    zig build run -- server start [--daemon]\n" ++
-            "    zig build run -- server stop\n\n" ++
+            "    zig build run -- trace show [--dir 目录]\n\n" ++
             "说明:\n" ++
             "    - init: 在目标目录生成 .techlead/techlead.json 和 .techlead/program.md\n" ++
             "    - init-agent: 创建目标目录下的 sisyphus 代理项目\n" ++
-            "    - run: 从目标目录读取配置并执行迭代（默认 mode=pool）\n" ++
-            "    - control: 向正在运行的任务写入控制命令\n" ++
+            "    - run: 从目标目录读取配置并执行迭代（默认 mode=project）\n" ++
             "    - observe start: 启动 Web 观察与控制接口\n" ++
             "    - observe rotate-tokens: 轮换 observe/control token\n" ++
-            "    - session process-message: 内部后台任务，处理 in-flight 会话消息\n" ++
-            "    - trace show: 输出结构化 tracing 事件\n" ++
-            "    - server start: 在前台启动 opencode serve 服务\n" ++
-            "    - server start --daemon: 在后台启动 opencode serve 服务\n" ++
-            "    - server stop: 停止 opencode serve 服务\n\n" ++
-            "文件位置:\n" ++
-            "    - PID 文件: ~/.config/techlead/server.pid\n" ++
-            "    - 日志文件: ~/.config/techlead/server.log\n\n",
+            "    - trace show: 输出结构化 tracing 事件\n\n",
         .{},
     );
 }
@@ -121,7 +106,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "run")) {
         var target_dir: []const u8 = ".";
-        var mode: runner.RunMode = .pool;
+        var mode: runner.RunMode = .project;
         var i: usize = 2;
         while (i < args.len) : (i += 1) {
             const arg = args[i];
@@ -137,24 +122,24 @@ pub fn main() !void {
             }
             if (std.mem.eql(u8, arg, "--mode")) {
                 if (i + 1 >= args.len) {
-                    ui.logError("run 参数无效，--mode 需要取值 optimize|pool", .{});
+                    ui.logError("run 参数无效，--mode 需要取值 session|project", .{});
                     showHelp();
                     return;
                 }
                 const mode_str = args[i + 1];
-                if (std.mem.eql(u8, mode_str, "optimize")) {
-                    mode = .optimize;
-                } else if (std.mem.eql(u8, mode_str, "pool")) {
-                    mode = .pool;
+                if (std.mem.eql(u8, mode_str, "session")) {
+                    mode = .session;
+                } else if (std.mem.eql(u8, mode_str, "project")) {
+                    mode = .project;
                 } else {
-                    ui.logError("run 参数无效，--mode 仅支持 optimize|pool", .{});
+                    ui.logError("run 参数无效，--mode 仅支持 session|project", .{});
                     showHelp();
                     return;
                 }
                 i += 1;
                 continue;
             }
-            ui.logError("run 参数无效，仅支持 --dir 目录 和 --mode optimize|pool", .{});
+            ui.logError("run 参数无效，仅支持 --dir 目录 和 --mode session|project", .{});
             showHelp();
             return;
         }
@@ -175,7 +160,6 @@ pub fn main() !void {
         ui.logInfo("  - 配置文件: {s}", .{CONFIG_REL_PATH});
         ui.logInfo("  - 迭代次数: {d}", .{cfg.iterations});
         ui.logInfo("  - Program 文件: {s}", .{cfg.program_file});
-        ui.logInfo("  - OpenCode URL: {s}", .{cfg.opencode_url});
         ui.logInfo("  - 主分支: {s}", .{cfg.main_branch});
         ui.logInfo("  - 日志目录: {s}", .{cfg.log_dir});
         ui.logInfo("  - 运行模式: {s}", .{@tagName(mode)});
@@ -186,95 +170,10 @@ pub fn main() !void {
         std.debug.print("\n", .{});
         runner.runCommandWithMode(cfg, allocator, mode) catch |err| {
             switch (err) {
-                error.MissingProgramFile => ui.logError(".techlead/program.md 缺失，请重新执行 init --force", .{}),
-                error.InvalidProgramTemplate => ui.logError(".techlead/program.md 模板块缺失，请重新执行 init --force", .{}),
-                error.NotGitRepo => ui.logError("work_dir 不是 git 仓库", .{}),
-                error.OpencodeUnavailable => {},
-                error.MissingOpencode => {},
                 error.ModeNotImplemented => {},
-                error.AllIterationsFailed => {},
                 else => ui.logError("run 失败: {any}", .{err}),
             }
             return;
-        };
-        return;
-    }
-
-    if (std.mem.eql(u8, command, "server")) {
-        if (args.len < 3) {
-            ui.logError("server 需要子命令: start, stop", .{});
-            showHelp();
-            return;
-        }
-        const subcommand = args[2];
-        if (std.mem.eql(u8, subcommand, "start")) {
-            var daemon_mode = false;
-            for (args[3..]) |arg| {
-                if (std.mem.eql(u8, arg, "--daemon")) {
-                    daemon_mode = true;
-                    break;
-                }
-            }
-            server.runServerStartCommand(allocator, daemon_mode) catch |err| {
-                switch (err) {
-                    error.ServerAlreadyRunning => ui.logError("服务已在运行", .{}),
-                    error.ServerStartFailed => ui.logError("启动服务失败", .{}),
-                    error.MissingOpencode => ui.logError("找不到 opencode CLI，请确保已安装", .{}),
-                    else => ui.logError("启动服务失败: {any}", .{err}),
-                }
-            };
-            return;
-        }
-        if (std.mem.eql(u8, subcommand, "stop")) {
-            server.runServerStopCommand(allocator) catch |err| {
-                switch (err) {
-                    error.ServerNotRunning => ui.logError("服务未运行", .{}),
-                    error.ServerStopFailed => ui.logError("停止服务失败", .{}),
-                    else => ui.logError("停止服务失败: {any}", .{err}),
-                }
-            };
-            return;
-        }
-        ui.logError("未知的 server 子命令: {s}", .{subcommand});
-        showHelp();
-        return;
-    }
-
-    if (std.mem.eql(u8, command, "control")) {
-        if (args.len < 3) {
-            ui.logError("control 需要 action: pause|resume|abort|inject_prompt", .{});
-            showHelp();
-            return;
-        }
-        const action = args[2];
-        var target_dir: []const u8 = ".";
-        var prompt: ?[]const u8 = null;
-        var i: usize = 3;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--dir")) {
-                if (i + 1 >= args.len) {
-                    ui.logError("control 参数无效，--dir 需要目录参数", .{});
-                    return;
-                }
-                target_dir = args[i + 1];
-                i += 1;
-                continue;
-            }
-            if (std.mem.eql(u8, args[i], "--prompt")) {
-                if (i + 1 >= args.len) {
-                    ui.logError("control 参数无效，--prompt 需要文本参数", .{});
-                    return;
-                }
-                prompt = args[i + 1];
-                i += 1;
-                continue;
-            }
-            ui.logError("control 参数无效", .{});
-            showHelp();
-            return;
-        }
-        runner.runControlCommand(allocator, target_dir, action, prompt) catch |err| {
-            ui.logError("写入控制命令失败: {any}", .{err});
         };
         return;
     }
@@ -338,60 +237,6 @@ pub fn main() !void {
             return;
         }
         ui.logError("observe 仅支持子命令: start 或 rotate-tokens", .{});
-        return;
-    }
-
-    if (std.mem.eql(u8, command, "session")) {
-        if (args.len < 3) {
-            ui.logError("session 需要子命令: process-message", .{});
-            showHelp();
-            return;
-        }
-        const sub = args[2];
-        if (!std.mem.eql(u8, sub, "process-message")) {
-            ui.logError("session 仅支持子命令: process-message", .{});
-            showHelp();
-            return;
-        }
-
-        var target_dir: []const u8 = ".";
-        var request_id: ?[]const u8 = null;
-        var i: usize = 3;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--dir")) {
-                if (i + 1 >= args.len) {
-                    ui.logError("session 参数无效，--dir 需要目录参数", .{});
-                    return;
-                }
-                target_dir = args[i + 1];
-                i += 1;
-                continue;
-            }
-            if (std.mem.eql(u8, args[i], "--request-id")) {
-                if (i + 1 >= args.len) {
-                    ui.logError("session 参数无效，--request-id 需要参数", .{});
-                    return;
-                }
-                request_id = args[i + 1];
-                i += 1;
-                continue;
-            }
-            ui.logError("session 参数无效", .{});
-            showHelp();
-            return;
-        }
-        const rid = request_id orelse {
-            ui.logError("session process-message 缺少 --request-id", .{});
-            return;
-        };
-        _ = session_service.processInFlightMessage(allocator, target_dir, rid) catch |err| {
-            const err_name = @errorName(err);
-            session_service.failInFlightMessage(allocator, target_dir, rid, err_name) catch |cleanup_err| {
-                ui.logWarn("session process-message cleanup failed: {any}", .{cleanup_err});
-            };
-            ui.logWarn("session process-message failed: {any}", .{err});
-            return;
-        };
         return;
     }
 
