@@ -1,0 +1,38 @@
+name: Integration Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: 'Agent to use (opencode, claude, codex)'
+        default: 'opencode'
+        type: string
+
+jobs:
+  e2e:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build
+        run: zig build
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install acpx
+        run: npm install -g acpx
+
+      - name: Run integration test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: bash scripts/integ-test-opencode.sh
