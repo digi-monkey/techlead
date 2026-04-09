@@ -1,3 +1,4 @@
+import type { z } from 'zod'
 import type { EventRow, JsonValue, StatusTone } from '../types'
 
 export function newRequestId() {
@@ -52,7 +53,19 @@ export function isApiError(err: unknown): err is ApiError {
   return err instanceof ApiError
 }
 
-export async function apiRequest<T>(path: string, token?: string, options: RequestInit = {}): Promise<T> {
+export function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message
+  }
+  return String(err)
+}
+
+export async function apiRequest<T>(
+  path: string,
+  token: string | null,
+  options: RequestInit = {},
+  schema?: z.ZodSchema<T>
+): Promise<T> {
   const headers = new Headers(options.headers ?? {})
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json; charset=utf-8')
@@ -74,5 +87,9 @@ export async function apiRequest<T>(path: string, token?: string, options: Reque
     throw new ApiError(resp.status, text, errorCode)
   }
   if (!text.trim()) return {} as T
-  return JSON.parse(text) as T
+  const parsed = JSON.parse(text)
+  if (schema) {
+    return schema.parse(parsed)
+  }
+  return parsed as T
 }

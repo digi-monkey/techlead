@@ -1355,6 +1355,10 @@ fn writeTaskDetailJson(
 
 fn openSqliteDynLib() !std.DynLib {
     const candidates = [_][]const u8{
+        // macOS
+        "libsqlite3.dylib",
+        "/usr/lib/libsqlite3.dylib",
+        // Linux
         "libsqlite3.so.0",
         "/lib/x86_64-linux-gnu/libsqlite3.so.0",
         "libsqlite3.so",

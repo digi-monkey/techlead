@@ -15,7 +15,7 @@ export function useEventsStream(observeAuth?: string) {
       try {
         const eventBody = await apiRequest<{ events?: unknown[]; last_event_id?: number }>(
           `/runs/current/events?after=${afterRef.current}`,
-          observeAuth,
+          observeAuth ?? null,
         )
         if (cancelled) return
 

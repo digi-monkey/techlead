@@ -55,20 +55,23 @@ pub const TechStackDetection = struct {
 pub const ConfigFile = struct {
     iterations: usize,
     program_file: []const u8,
-    opencode_url: []const u8,
+    opencode_url: []const u8 = "",
     work_dir: []const u8,
     log_dir: []const u8,
     model: []const u8,
     agent: []const u8,
-    provider: []const u8 = "opencode",
+    provider: []const u8 = "codex",
     main_branch: []const u8,
     max_branches: usize,
     pool_lease_seconds: u64 = 300,
     pool_max_retries: u32 = 2,
+    project_test_cmd: ?[]const u8 = null,
+    project_lint_cmd: ?[]const u8 = null,
 };
 
 /// Runtime configuration structure with owned strings.
 /// All fields are allocated and must be freed using deinitConfig.
+/// The `provider` field is the acpx agent name (e.g. "codex", "claude", "opencode").
 pub const Config = struct {
     iterations: usize,
     program_file: []u8,
@@ -143,7 +146,7 @@ pub fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
     defer parsed.deinit();
 
     const value = parsed.value;
-    if (value.program_file.len == 0 or value.opencode_url.len == 0 or value.work_dir.len == 0 or value.log_dir.len == 0 or value.main_branch.len == 0) {
+    if (value.program_file.len == 0 or value.work_dir.len == 0 or value.log_dir.len == 0 or value.main_branch.len == 0) {
         return error.InvalidConfig;
     }
 
@@ -160,6 +163,8 @@ pub fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
         .max_branches = value.max_branches,
         .pool_lease_seconds = value.pool_lease_seconds,
         .pool_max_retries = value.pool_max_retries,
+        .project_test_cmd = if (value.project_test_cmd) |cmd| try allocator.dupe(u8, cmd) else null,
+        .project_lint_cmd = if (value.project_lint_cmd) |cmd| try allocator.dupe(u8, cmd) else null,
     };
 }
 
@@ -173,12 +178,11 @@ pub fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const
     const cfg = ConfigFile{
         .iterations = 20,
         .program_file = DEFAULT_PROGRAM_REL_PATH,
-        .opencode_url = "http://localhost:4096",
         .work_dir = abs_work_dir,
         .log_dir = DEFAULT_LOG_DIR,
         .model = "",
         .agent = "Sisyphus",
-        .provider = "opencode",
+        .provider = "codex",
         .main_branch = "master",
         .max_branches = 10,
         .pool_lease_seconds = 300,

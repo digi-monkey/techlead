@@ -91,8 +91,9 @@ export function useQrScanner({ onPayload }: UseQrScannerOptions) {
               setScannerStatus(`authorization failed: ${(err as Error).message}`)
             })
           })
-          .catch(() => {
+          .catch((err) => {
             // Keep scanning; decode errors are expected for most frames.
+            console.error('[useQrScanner] QR decode error:', err);
           })
           .finally(() => {
             scannerBusyRef.current = false

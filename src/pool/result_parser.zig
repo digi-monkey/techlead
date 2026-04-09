@@ -133,7 +133,39 @@ fn extractResultJsonLine(merged_output: []const u8) ParseError![]const u8 {
 
     const line = std.mem.trim(u8, after_prefix[0..line_end], " \t");
     if (line.len == 0) return error.ResultJsonPayloadEmpty;
-    return line;
+
+    // Extract balanced JSON object: agents sometimes append extra closing braces
+    return extractBalancedJson(line) orelse line;
+}
+
+/// Given a string like `{"a":1}}`, find the balanced `{...}` portion.
+/// Returns null if no opening brace is found.
+fn extractBalancedJson(line: []const u8) ?[]const u8 {
+    const start = std.mem.indexOfScalar(u8, line, '{') orelse return null;
+    var depth: i32 = 0;
+    var in_string = false;
+    var escape = false;
+    for (line[start..], 0..) |c, i| {
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (c == '\\' and in_string) {
+            escape = true;
+            continue;
+        }
+        if (c == '"') {
+            in_string = !in_string;
+            continue;
+        }
+        if (in_string) continue;
+        if (c == '{') depth += 1;
+        if (c == '}') {
+            depth -= 1;
+            if (depth == 0) return line[start .. start + i + 1];
+        }
+    }
+    return null;
 }
 
 fn readRole(
@@ -244,4 +276,19 @@ test "parseResultFromMergedOutput: invalid json" {
         error.ResultJsonInvalid,
         parseResultFromMergedOutput(allocator, merged, .review_correctness),
     );
+}
+
+test "parseResultFromMergedOutput: trailing extra brace" {
+    const allocator = std.testing.allocator;
+    const merged =
+        \\output text
+        \\RESULT_JSON: {"role":"implementer","status":"implemented","summary":"added validation","changed_files":["hello.js"],"tests":["node test.js"],"risks":[]}}
+    ;
+
+    var parsed = try parseResultFromMergedOutput(allocator, merged, .implement);
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectEqualStrings("implementer", parsed.role);
+    try std.testing.expectEqual(.implemented, parsed.status.?);
+    try std.testing.expectEqualStrings("added validation", parsed.summary);
 }

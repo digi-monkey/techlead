@@ -96,7 +96,7 @@ export function useOutboxDispatcher(options: UseOutboxDispatcherOptions) {
       }))
 
       try {
-        const result = await apiRequest<SessionSendResp>('/sessions/current/message', controlAuth, {
+        const result = await apiRequest<SessionSendResp>('/sessions/current/message', controlAuth ?? null, {
           method: 'POST',
           headers: { 'X-Request-Id': ready.requestId },
           body: JSON.stringify({

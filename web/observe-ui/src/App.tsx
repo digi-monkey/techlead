@@ -123,7 +123,7 @@ export default function App() {
 
   const exchangeBootstrapTicket = useCallback(async (bootstrapId: string, code: string): Promise<boolean> => {
     try {
-      await apiRequest<JsonValue>('/auth/token/exchange', undefined, {
+      await apiRequest<JsonValue>('/auth/token/exchange', null, {
         method: 'POST',
         body: JSON.stringify({ bootstrap_id: bootstrapId, code }),
       })
@@ -169,7 +169,7 @@ export default function App() {
     clearOutbox()
     try {
       const requestId = newRequestId()
-      await apiRequest<JsonValue>('/sessions/start', controlAuth, {
+      await apiRequest<JsonValue>('/sessions/start', controlAuth ?? null, {
         method: 'POST',
         headers: { 'X-Request-Id': requestId },
         body: JSON.stringify({ provider: sessionProvider, request_id: requestId }),
@@ -188,7 +188,7 @@ export default function App() {
     setIsEndingSession(true)
     try {
       const requestId = newRequestId()
-      await apiRequest<JsonValue>('/sessions/current/end', controlAuth, {
+      await apiRequest<JsonValue>('/sessions/current/end', controlAuth ?? null, {
         method: 'POST',
         headers: { 'X-Request-Id': requestId },
         body: JSON.stringify({ request_id: requestId }),

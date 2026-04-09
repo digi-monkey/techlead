@@ -149,6 +149,48 @@ pub fn build(b: *std.Build) void {
     // A run step for characterization tests
     const run_characterization_tests = b.addRunArtifact(characterization_tests);
 
+    // Unit tests for utils module
+    const utils_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/utils_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "techlead", .module = mod },
+            },
+        }),
+    });
+    utils_tests.linkLibC();
+    const run_utils_tests = b.addRunArtifact(utils_tests);
+
+    // Unit tests for config module
+    const config_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/config_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "techlead", .module = mod },
+            },
+        }),
+    });
+    config_tests.linkLibC();
+    const run_config_tests = b.addRunArtifact(config_tests);
+
+    // Unit tests for storage module
+    const storage_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/storage_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "techlead", .module = mod },
+            },
+        }),
+    });
+    storage_tests.linkLibC();
+    const run_storage_tests = b.addRunArtifact(storage_tests);
+
     // A top level step for running characterization tests only
     const characterization_step = b.step("characterization", "Run characterization tests (behavior baseline)");
     characterization_step.dependOn(&run_characterization_tests.step);
@@ -156,10 +198,13 @@ pub fn build(b: *std.Build) void {
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
-    const test_step = b.step("test", "Run all tests (including characterization)");
+    const test_step = b.step("test", "Run all tests (including unit and characterization)");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_characterization_tests.step);
+    test_step.dependOn(&run_utils_tests.step);
+    test_step.dependOn(&run_config_tests.step);
+    test_step.dependOn(&run_storage_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
