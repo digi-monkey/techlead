@@ -274,9 +274,12 @@ test "task: list tasks by project" {
         const task_id = try std.fmt.allocPrint(allocator, "test-task-{d}", .{i});
         defer allocator.free(task_id);
 
+        const task_title = try std.fmt.allocPrint(allocator, "Task {d}", .{i});
+        defer allocator.free(task_title);
+
         const task_input = task_store.CreateTaskInput{
             .task_id = task_id,
-            .title = try std.fmt.allocPrint(allocator, "Task {d}", .{i}),
+            .title = task_title,
             .prompt = null,
             .priority = @intCast(i),
             .max_retries = null,

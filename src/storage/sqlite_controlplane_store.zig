@@ -407,33 +407,33 @@ pub const SqliteControlPlaneStore = struct {
         var first = true;
         if (input.work_dir) |_| {
             if (!first) try sql.appendSlice(self.allocator, ", ");
-            try sql.appendSlice(self.allocator, "work_dir=?1");
+            try sql.appendSlice(self.allocator, "work_dir=?");
             first = false;
         }
         if (input.enabled) |_| {
             if (!first) try sql.appendSlice(self.allocator, ", ");
-            try sql.appendSlice(self.allocator, "enabled=?2");
+            try sql.appendSlice(self.allocator, "enabled=?");
             first = false;
         }
         if (input.test_cmd) |_| {
             if (!first) try sql.appendSlice(self.allocator, ", ");
-            try sql.appendSlice(self.allocator, "test_cmd=?3");
+            try sql.appendSlice(self.allocator, "test_cmd=?");
             first = false;
         }
         if (input.lint_cmd) |_| {
             if (!first) try sql.appendSlice(self.allocator, ", ");
-            try sql.appendSlice(self.allocator, "lint_cmd=?4");
+            try sql.appendSlice(self.allocator, "lint_cmd=?");
             first = false;
         }
         if (input.max_workers) |_| {
             if (!first) try sql.appendSlice(self.allocator, ", ");
-            try sql.appendSlice(self.allocator, "max_workers=?5");
+            try sql.appendSlice(self.allocator, "max_workers=?");
             first = false;
         }
 
         if (first) return;
 
-        try sql.appendSlice(self.allocator, ", updated_at=?6 WHERE project_id=?7;");
+        try sql.appendSlice(self.allocator, ", updated_at=? WHERE project_id=?;");
 
         const stmt = try self.prepare(sql.items);
         defer self.finalize(stmt);
