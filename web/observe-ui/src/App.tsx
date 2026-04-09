@@ -6,14 +6,13 @@ import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
 import { useSessionPolling } from './hooks/useSessionPolling'
-import { ProjectDetail } from './views/ProjectDetail'
 import { ProjectList } from './views/ProjectList'
 import { SessionView } from './views/SessionView'
 import { TaskPoolView } from './views/TaskPoolView'
 import type { JsonValue } from './types'
 
 type SessionProvider = 'codex' | 'opencode'
-type MainView = 'session' | 'task-pool' | 'projects' | 'project-detail'
+type MainView = 'session' | 'projects' | 'project-detail'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 const MAIN_VIEW_STORAGE_KEY = 'techlead.observe.main.view'
 const PROJECT_ID_STORAGE_KEY = 'techlead.observe.project.id'
@@ -43,7 +42,6 @@ export default function App() {
   const [isEndingSession, setIsEndingSession] = useState(false)
   const [mainView, setMainView] = useState<MainView>(() => {
     const raw = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)
-    if (raw === 'task-pool') return 'task-pool'
     if (raw === 'projects') return 'projects'
     if (raw === 'project-detail') return 'project-detail'
     return 'session'
@@ -244,10 +242,8 @@ export default function App() {
     updateOutbox,
   })
 
-  const maxWidthClass = mainView === 'task-pool' || mainView === 'projects' || mainView === 'project-detail' ? 'max-w-[1700px]' : 'max-w-4xl'
-
   return (
-    <div className={`mx-auto flex h-full max-h-dvh w-full ${maxWidthClass} flex-col`}>
+    <div className="mx-auto flex h-full max-h-dvh w-full max-w-[1700px] flex-col">
       <header className="bg-slate-900 py-3 text-white">
         <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
           <div className="flex items-center gap-3">
@@ -261,15 +257,6 @@ export default function App() {
                 }`}
               >
                 Session
-              </button>
-              <button
-                type="button"
-                onClick={() => setMainView('task-pool')}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  mainView === 'task-pool' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
-                }`}
-              >
-                Task Pool
               </button>
               <button
                 type="button"
@@ -384,30 +371,14 @@ export default function App() {
             onRetryCommand={handleRetryCommand}
           />
         )}
-        {mainView === 'task-pool' && selectedProjectId && (
-          <TaskPoolView projectId={selectedProjectId} observeAuth={observeAuth} controlAuth={controlAuth} />
-        )}
-        {mainView === 'task-pool' && !selectedProjectId && (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <p className="text-sm text-slate-500">No project selected for Task Pool</p>
-              <button
-                type="button"
-                onClick={() => setMainView('projects')}
-                className="mt-2 text-sm text-slate-600 hover:text-slate-800"
-              >
-                Select a project first
-              </button>
-            </div>
-          </div>
-        )}
         {mainView === 'projects' && (
           <ProjectList observeAuth={observeAuth} onViewProject={handleViewProject} />
         )}
         {mainView === 'project-detail' && selectedProjectId && (
-          <ProjectDetail
-            projectId={selectedProjectId}
-            observeAuth={observeAuth}
+          <TaskPoolView 
+            projectId={selectedProjectId} 
+            observeAuth={observeAuth} 
+            controlAuth={controlAuth} 
             onBack={handleBackFromProject}
           />
         )}

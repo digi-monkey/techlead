@@ -19,6 +19,7 @@ type TaskPoolViewProps = {
   projectId: string
   observeAuth?: string
   controlAuth?: string
+  onBack?: () => void
 }
 
 const LIST_POLL_MS = 5000
@@ -160,7 +161,7 @@ function renderReviewCard(review: TaskReviewSummary, emptyTitle: string) {
   )
 }
 
-export function TaskPoolView({ projectId, observeAuth, controlAuth }: TaskPoolViewProps) {
+export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: TaskPoolViewProps) {
   const [statusFilter, setStatusFilter] = useState<TaskListStatusFilter>('all')
   const [searchInput, searchQuery, setSearchInput] = useDebouncedState('', 250)
   const [cursor, setCursor] = useState(0)
@@ -398,8 +399,23 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth }: TaskPoolVi
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-[320px_minmax(420px,1fr)_minmax(360px,1fr)]">
       <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <header className="mb-2">
-          <h2 className="text-sm font-semibold text-slate-800">Task Pool</h2>
-          <p className="text-xs text-slate-500">分组列表 / 搜索 / 分页</p>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="mb-2 flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to Projects
+            </button>
+          )}
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-slate-800">Task Pool</h2>
+            <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">{projectId}</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">分组列表 / 搜索 / 分页</p>
         </header>
 
         <div className="grid gap-2">
