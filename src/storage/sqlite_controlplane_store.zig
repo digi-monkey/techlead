@@ -737,20 +737,14 @@ pub const SqliteControlPlaneStore = struct {
     }
 
     fn getLatestTaskReview(self: *SqliteControlPlaneStore, task_id: []const u8, role: task_store.TaskReviewRole) controlplane_store.StoreError!?TaskReview {
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const role_q = try sqlQuote(self.allocator, task_store.taskReviewRoleToString(role));
-        defer self.allocator.free(role_q);
-
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "SELECT id,task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at FROM task_reviews WHERE task_id='{s}' AND role='{s}' ORDER BY created_at DESC, id DESC LIMIT 1;",
-            .{ task_q, role_q },
-        );
-        defer self.allocator.free(sql);
+        const sql = "SELECT id,task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at FROM task_reviews WHERE task_id=?1 AND role=?2 ORDER BY created_at DESC, id DESC LIMIT 1;";
 
         const stmt = try self.prepare(sql);
         defer self.finalize(stmt);
+
+        try self.bindText(stmt, 1, task_id);
+        try self.bindText(stmt, 2, task_store.taskReviewRoleToString(role));
+
         if (self.api.step(stmt) != SQLITE_ROW) return null;
         return try self.readTaskReviewFromStmt(stmt);
     }
@@ -1659,14 +1653,11 @@ pub const SqliteControlPlaneStore = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const name_q = try sqlQuote(self.allocator, name);
-        defer self.allocator.free(name_q);
-
-        const sql = try std.fmt.allocPrint(self.allocator, "SELECT value FROM tokens WHERE name='{s}';", .{name_q});
-        defer self.allocator.free(sql);
-
+        const sql = "SELECT value FROM tokens WHERE name=?1;";
         const stmt = try self.prepare(sql);
         defer self.finalize(stmt);
+
+        try self.bindText(stmt, 1, name);
 
         if (self.api.step(stmt) != SQLITE_ROW) return null;
 
@@ -1679,19 +1670,19 @@ pub const SqliteControlPlaneStore = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const name_q = try sqlQuote(self.allocator, name);
-        defer self.allocator.free(name_q);
-        const value_q = try sqlQuote(self.allocator, value);
-        defer self.allocator.free(value_q);
-
         const now = std.time.timestamp();
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "INSERT INTO tokens(name, value, created_at) VALUES('{s}', '{s}', {d}) ON CONFLICT(name) DO UPDATE SET value='{s}', created_at={d};",
-            .{ name_q, value_q, now, value_q, now },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const sql = "INSERT INTO tokens(name, value, created_at) VALUES(?1, ?2, ?3) ON CONFLICT(name) DO UPDATE SET value=?4, created_at=?5;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        try self.bindText(stmt, 1, name);
+        try self.bindText(stmt, 2, value);
+        _ = self.api.bind_int64(stmt, 3, now);
+        try self.bindText(stmt, 4, value);
+        _ = self.api.bind_int64(stmt, 5, now);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
     }
 
     fn close(ctx: *anyopaque) void {

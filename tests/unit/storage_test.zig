@@ -387,12 +387,16 @@ test "task: mark running after claim" {
         .max_retries = null,
     }, .{});
 
-    _ = try cp_store.claimNext(.{
+    const claimed_task1 = try cp_store.claimNext(.{
         .owner = "test-worker",
         .lease_seconds = 300,
         .default_max_retries = 3,
         .project_id = project_id,
     }, allocator);
+    if (claimed_task1) |task| {
+        var t = task;
+        t.deinit(allocator);
+    }
 
     try cp_store.markRunning(project_id, task_id, "test-worker", 600, run_id);
 
@@ -428,12 +432,16 @@ test "task: mark done from running" {
         .max_retries = null,
     }, .{});
 
-    _ = try cp_store.claimNext(.{
+    const claimed_task2 = try cp_store.claimNext(.{
         .owner = "test-worker",
         .lease_seconds = 300,
         .default_max_retries = 3,
         .project_id = project_id,
     }, allocator);
+    if (claimed_task2) |task| {
+        var t = task;
+        t.deinit(allocator);
+    }
 
     try cp_store.markRunning(project_id, task_id, "test-worker", 600, run_id);
     try cp_store.markDone(project_id, task_id, "test-worker", run_id);
@@ -470,12 +478,16 @@ test "task: review workflow - open, approve, merge" {
         .max_retries = null,
     }, .{});
 
-    _ = try cp_store.claimNext(.{
+    const claimed_task3 = try cp_store.claimNext(.{
         .owner = "test-worker",
         .lease_seconds = 300,
         .default_max_retries = 3,
         .project_id = project_id,
     }, allocator);
+    if (claimed_task3) |task| {
+        var t = task;
+        t.deinit(allocator);
+    }
 
     try cp_store.markRunning(project_id, task_id, "test-worker", 600, run_id);
     try cp_store.markReviewOpen(project_id, task_id, "test-worker", run_id, 1, "main", "feature-branch", "abc123");
