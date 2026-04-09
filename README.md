@@ -2,6 +2,57 @@
 
 AI-powered task execution engine with automated implement → review → merge pipeline.
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Techlead CLI Architecture                 │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
+│  │   Provider   │    │   Provider   │    │   Provider   │  │
+│  │   (codex)    │    │  (opencode)  │    │   (custom)   │  │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘  │
+│         │                   │                   │          │
+│         └───────────────────┼───────────────────┘          │
+│                             │                              │
+│                    ┌────────┴────────┐                     │
+│                    │  Pool Service   │                     │
+│                    │  (Orchestrator) │                     │
+│                    └────────┬────────┘                     │
+│                             │                              │
+│         ┌───────────────────┼───────────────────┐          │
+│         │                   │                   │          │
+│  ┌──────▼───────┐    ┌──────▼───────┐    ┌──────▼───────┐  │
+│  │  Worktree    │    │   Review     │    │    Merge     │  │
+│  │   Service    │    │   Service    │    │   Service    │  │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘  │
+│         │                   │                   │          │
+│         └───────────────────┼───────────────────┘          │
+│                             │                              │
+│                    ┌────────┴────────┐                     │
+│                    │ SQLite Storage  │                     │
+│                    │  (ControlPlane) │                     │
+│                    └─────────────────┘                     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Workflow
+
+1. **Claim**: Pool service claims next available task from queue
+2. **Implement**: AI provider generates code changes
+3. **Gate**: Run test/lint commands to validate changes
+4. **Review**: Correctness and maintainability reviews
+5. **Merge**: Merge approved changes to main branch
+
+### Components
+
+- **CLI (Zig)**: Core execution engine
+- **Frontend (React)**: Web UI for monitoring
+- **Storage (SQLite)**: Task and project state
+- **Providers**: AI model integrations
+
 ## What This Repo Contains
 
 - `src/main.zig` — CLI entrypoint (`init`, `init-agent`, `run`, `observe`)

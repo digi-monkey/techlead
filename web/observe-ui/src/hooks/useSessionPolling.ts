@@ -78,7 +78,7 @@ export function useSessionPolling(options: UseSessionPollingOptions) {
 
     const poll = async () => {
       try {
-        const resp = await apiRequest<JsonValue>('/sessions/current', observeAuth)
+        const resp = await apiRequest<JsonValue>('/sessions/current', observeAuth ?? null)
         if (cancelled) return
 
         setSessionState(resp)

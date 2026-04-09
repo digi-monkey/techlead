@@ -82,6 +82,27 @@ pub const SqliteControlPlaneStore = struct {
     closed: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) !SqliteControlPlaneStore {
+        const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch "/tmp";
+        defer allocator.free(home_dir);
+
+        const config_dir = try std.fs.path.join(allocator, &[_][]const u8{ home_dir, ".config", "techlead" });
+        defer allocator.free(config_dir);
+        try std.fs.cwd().makePath(config_dir);
+
+        const db_path = try std.fs.path.join(allocator, &[_][]const u8{ config_dir, "controlplane.sqlite3" });
+        defer allocator.free(db_path);
+
+        const db_path_z = try allocator.dupeZ(u8, db_path);
+        defer allocator.free(db_path_z);
+
+        return try initInternal(allocator, db_path_z, true);
+    }
+
+    pub fn initInMemory(allocator: std.mem.Allocator) !SqliteControlPlaneStore {
+        return try initInternal(allocator, ":memory:", false);
+    }
+
+    fn initInternal(allocator: std.mem.Allocator, db_path_z: [*:0]const u8, use_wal: bool) !SqliteControlPlaneStore {
         var dylib = openSqliteDynLib() catch return error.StoreNotAvailable;
         errdefer dylib.close();
 
@@ -109,19 +130,6 @@ pub const SqliteControlPlaneStore = struct {
             .reset = dylib.lookup(*const fn (*sqlite3_stmt) callconv(.c) CInt, "sqlite3_reset") orelse return error.MissingSqliteSymbol,
         };
 
-        const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch "/tmp";
-        defer allocator.free(home_dir);
-
-        const config_dir = try std.fs.path.join(allocator, &[_][]const u8{ home_dir, ".config", "techlead" });
-        defer allocator.free(config_dir);
-        try std.fs.cwd().makePath(config_dir);
-
-        const db_path = try std.fs.path.join(allocator, &[_][]const u8{ config_dir, "controlplane.sqlite3" });
-        defer allocator.free(db_path);
-
-        const db_path_z = try allocator.dupeZ(u8, db_path);
-        defer allocator.free(db_path_z);
-
         var db_ptr: ?*sqlite3 = null;
         const rc = api.open_v2(db_path_z, &db_ptr, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, null);
         if (rc != SQLITE_OK or db_ptr == null) return error.SqliteOpenFailed;
@@ -136,13 +144,16 @@ pub const SqliteControlPlaneStore = struct {
 
         _ = self.api.limit(self.db, SQLITE_LIMIT_SQL_LENGTH, 8 * 1024 * 1024);
 
-        try self.execSql("PRAGMA journal_mode=WAL;");
-        try self.execSql("PRAGMA synchronous=NORMAL;");
+        if (use_wal) {
+            try self.execSql("PRAGMA journal_mode=WAL;");
+            try self.execSql("PRAGMA synchronous=NORMAL;");
+        }
         try self.execSql("PRAGMA foreign_keys=ON;");
         try self.ensureSchema();
 
         return self;
     }
+
 
     pub fn asControlPlaneStore(self: *SqliteControlPlaneStore) controlplane_store.ControlPlaneStore {
         return .{ .ctx = self, .vtable = &vtable };
@@ -283,6 +294,12 @@ pub const SqliteControlPlaneStore = struct {
 
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_leases_task_id ON leases(task_id);");
         try self.execSql("CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);");
+
+        // Optimized indexes for query performance
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority_created ON tasks(status, priority DESC, created_at ASC);");
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_tasks_lease_claimed ON tasks(status, lease_until) WHERE status = 'claimed';");
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_task_reviews_task_role_created ON task_reviews(task_id, role, created_at DESC, id DESC);");
+        try self.execSql("CREATE INDEX IF NOT EXISTS idx_tasks_project_updated ON tasks(project_id, updated_at DESC, task_id ASC);");
 
         // Tokens table for API authentication
         try self.execSql(
@@ -514,48 +531,56 @@ pub const SqliteControlPlaneStore = struct {
 
         var retries: usize = 0;
         while (retries < 16) : (retries += 1) {
-            // Build SELECT query with optional project filter
-            var select_sql: std.ArrayList(u8) = .empty;
-            defer select_sql.deinit(self.allocator);
-
-            try select_sql.appendSlice(self.allocator, "SELECT task_id,version FROM tasks WHERE status='queued'");
-            if (options.project_id) |pid| {
-                const pid_q = try sqlQuote(self.allocator, pid);
-                defer self.allocator.free(pid_q);
-                try std.fmt.format(select_sql.writer(self.allocator), " AND project_id='{s}'", .{pid_q});
-            }
-            try select_sql.appendSlice(self.allocator, " ORDER BY priority DESC, created_at ASC LIMIT 1;");
+            // Build SELECT query - project_id is parameterized, status='queued' is constant
+            const select_sql = if (options.project_id) |_|
+                "SELECT task_id,version FROM tasks WHERE status='queued' AND project_id=?1 ORDER BY priority DESC, created_at ASC LIMIT 1;"
+            else
+                "SELECT task_id,version FROM tasks WHERE status='queued' ORDER BY priority DESC, created_at ASC LIMIT 1;";
 
             var selected_id: ?[]u8 = null;
             defer if (selected_id) |v| self.allocator.free(v);
             var selected_version: i64 = 0;
 
-            const stmt = try self.prepare(select_sql.items);
+            const stmt = try self.prepare(select_sql);
             defer self.finalize(stmt);
+
+            if (options.project_id) |pid| {
+                try self.bindText(stmt, 1, pid);
+            }
+
             if (self.api.step(stmt) == SQLITE_ROW) {
-                selected_id = try self.columnTextDup(stmt, 0, allocator);
+                selected_id = try self.columnTextDup(stmt, 0, self.allocator);
                 selected_version = self.api.column_int64(stmt, 1);
             } else {
                 return null;
             }
 
-            const id_q = try sqlQuote(self.allocator, selected_id.?);
-            defer self.allocator.free(id_q);
-            const owner_q = try sqlQuote(self.allocator, options.owner);
-            defer self.allocator.free(owner_q);
+            // Use parameterized UPDATE query
+            const update_sql = "UPDATE tasks SET status='claimed', lease_owner=?1, lease_until=?2, leased_at=?3, updated_at=?4, version=version+1 WHERE task_id=?5 AND version=?6;";
+            const update_stmt = try self.prepare(update_sql);
+            defer self.finalize(update_stmt);
 
-            const update_sql = try std.fmt.allocPrint(
-                self.allocator,
-                "UPDATE tasks SET status='claimed', lease_owner='{s}', lease_until={d}, leased_at={d}, updated_at={d}, version=version+1 WHERE task_id='{s}' AND version={d};",
-                .{ owner_q, lease_until, now, now, id_q, selected_version },
-            );
-            defer self.allocator.free(update_sql);
-            try self.execSql(update_sql);
+            try self.bindText(update_stmt, 1, options.owner);
+            _ = self.api.bind_int64(update_stmt, 2, lease_until);
+            _ = self.api.bind_int64(update_stmt, 3, now);
+            _ = self.api.bind_int64(update_stmt, 4, now);
+            try self.bindText(update_stmt, 5, selected_id.?);
+            _ = self.api.bind_int64(update_stmt, 6, selected_version);
+
+            const rc = self.api.step(update_stmt);
+            if (rc != SQLITE_DONE) return error.SqliteExecFailed;
             if (self.api.changes(self.db) != 1) continue;
 
-            const fetch_sql = try std.fmt.allocPrint(self.allocator, "SELECT {s} FROM tasks WHERE task_id='{s}' LIMIT 1;", .{ TASK_SELECT_COLUMNS, id_q });
-            defer self.allocator.free(fetch_sql);
-            return try self.getOneTask(fetch_sql, allocator);
+            // Fetch the updated task using parameterized query
+            const fetch_sql = "SELECT " ++ TASK_SELECT_COLUMNS ++ " FROM tasks WHERE task_id=?1 LIMIT 1;";
+            const fetch_stmt = try self.prepare(fetch_sql);
+            defer self.finalize(fetch_stmt);
+            try self.bindText(fetch_stmt, 1, selected_id.?);
+
+            if (self.api.step(fetch_stmt) == SQLITE_ROW) {
+                return try self.readTaskFromStmt(fetch_stmt, allocator);
+            }
+            return null;
         }
 
         return null;
@@ -567,59 +592,66 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const limit = @max(@as(usize, 1), @min(query.limit, 200));
-        var where_parts: std.ArrayList([]const u8) = .empty;
-        defer where_parts.deinit(self.allocator);
-        var owned_parts: std.ArrayList([]u8) = .empty;
-        defer {
-            for (owned_parts.items) |p| self.allocator.free(p);
-            owned_parts.deinit(self.allocator);
-        }
 
-        // Always filter by project_id
-        const project_q = try sqlQuote(self.allocator, query.project_id);
-        try owned_parts.append(self.allocator, project_q);
-        const project_clause = try std.fmt.allocPrint(self.allocator, "project_id='{s}'", .{project_q});
-        try owned_parts.append(self.allocator, project_clause);
-        try where_parts.append(self.allocator, project_clause);
+        // Build parameterized count query based on which filters are present
+        const count_sql = if (query.status != null and query.q != null)
+            "SELECT COUNT(*) FROM tasks WHERE project_id=?1 AND status=?2 AND (title LIKE ?3 OR prompt LIKE ?3);"
+        else if (query.status != null)
+            "SELECT COUNT(*) FROM tasks WHERE project_id=?1 AND status=?2;"
+        else if (query.q != null)
+            "SELECT COUNT(*) FROM tasks WHERE project_id=?1 AND (title LIKE ?2 OR prompt LIKE ?2);"
+        else
+            "SELECT COUNT(*) FROM tasks WHERE project_id=?1;";
 
+        const count_stmt = try self.prepare(count_sql);
+        defer self.finalize(count_stmt);
+
+        // Bind parameters for count query
+        try self.bindText(count_stmt, 1, query.project_id);
+        var next_param: CInt = 2;
         if (query.status) |status| {
-            const status_q = try sqlQuote(self.allocator, task_store.taskStatusToString(status));
-            try owned_parts.append(self.allocator, status_q);
-            const clause = try std.fmt.allocPrint(self.allocator, "status='{s}'", .{status_q});
-            try owned_parts.append(self.allocator, clause);
-            try where_parts.append(self.allocator, clause);
+            try self.bindText(count_stmt, next_param, task_store.taskStatusToString(status));
+            next_param += 1;
         }
         if (query.q) |text| {
-            const q_q = try sqlQuote(self.allocator, text);
-            try owned_parts.append(self.allocator, q_q);
-            const clause = try std.fmt.allocPrint(self.allocator, "(title LIKE '%%{s}%%' OR prompt LIKE '%%{s}%%')", .{ q_q, q_q });
-            try owned_parts.append(self.allocator, clause);
-            try where_parts.append(self.allocator, clause);
+            // SQLite LIKE pattern: %text%
+            const pattern = try std.fmt.allocPrint(self.allocator, "%{s}%", .{text});
+            defer self.allocator.free(pattern);
+            try self.bindText(count_stmt, next_param, pattern);
         }
 
-        var where_sql: []const u8 = "";
-        if (where_parts.items.len > 0) {
-            var join = std.ArrayList(u8).empty;
-            defer join.deinit(self.allocator);
-            try join.appendSlice(self.allocator, " WHERE ");
-            for (where_parts.items, 0..) |part, idx| {
-                if (idx > 0) try join.appendSlice(self.allocator, " AND ");
-                try join.appendSlice(self.allocator, part);
-            }
-            where_sql = try join.toOwnedSlice(self.allocator);
-            try owned_parts.append(self.allocator, @constCast(where_sql));
+        if (self.api.step(count_stmt) != SQLITE_ROW) return error.SqliteExecFailed;
+        const total = self.api.column_int64(count_stmt, 0);
+
+        // Build parameterized list query
+        const list_sql = if (query.status != null and query.q != null)
+            "SELECT " ++ TASK_SELECT_COLUMNS ++ " FROM tasks WHERE project_id=?1 AND status=?2 AND (title LIKE ?3 OR prompt LIKE ?3) ORDER BY updated_at DESC, task_id ASC LIMIT ?4 OFFSET ?5;"
+        else if (query.status != null)
+            "SELECT " ++ TASK_SELECT_COLUMNS ++ " FROM tasks WHERE project_id=?1 AND status=?2 ORDER BY updated_at DESC, task_id ASC LIMIT ?3 OFFSET ?4;"
+        else if (query.q != null)
+            "SELECT " ++ TASK_SELECT_COLUMNS ++ " FROM tasks WHERE project_id=?1 AND (title LIKE ?2 OR prompt LIKE ?2) ORDER BY updated_at DESC, task_id ASC LIMIT ?3 OFFSET ?4;"
+        else
+            "SELECT " ++ TASK_SELECT_COLUMNS ++ " FROM tasks WHERE project_id=?1 ORDER BY updated_at DESC, task_id ASC LIMIT ?2 OFFSET ?3;";
+
+        const list_stmt = try self.prepare(list_sql);
+        defer self.finalize(list_stmt);
+
+        // Bind parameters for list query
+        try self.bindText(list_stmt, 1, query.project_id);
+        next_param = 2;
+        if (query.status) |status| {
+            try self.bindText(list_stmt, next_param, task_store.taskStatusToString(status));
+            next_param += 1;
         }
-
-        const count_sql = try std.fmt.allocPrint(self.allocator, "SELECT COUNT(*) FROM tasks{s};", .{where_sql});
-        defer self.allocator.free(count_sql);
-        const total = try self.queryCount(count_sql);
-
-        const list_sql = try std.fmt.allocPrint(
-            self.allocator,
-            "SELECT {s} FROM tasks{s} ORDER BY updated_at DESC, task_id ASC LIMIT {d} OFFSET {d};",
-            .{ TASK_SELECT_COLUMNS, where_sql, limit, query.cursor },
-        );
-        defer self.allocator.free(list_sql);
+        if (query.q) |text| {
+            const pattern = try std.fmt.allocPrint(self.allocator, "%{s}%", .{text});
+            defer self.allocator.free(pattern);
+            try self.bindText(list_stmt, next_param, pattern);
+            next_param += 1;
+        }
+        _ = self.api.bind_int64(list_stmt, next_param, @intCast(limit));
+        next_param += 1;
+        _ = self.api.bind_int64(list_stmt, next_param, @intCast(query.cursor));
 
         var rows = std.ArrayList(task_store.Task).empty;
         defer {
@@ -627,10 +659,8 @@ pub const SqliteControlPlaneStore = struct {
             rows.deinit(self.allocator);
         }
 
-        const stmt = try self.prepare(list_sql);
-        defer self.finalize(stmt);
-        while (self.api.step(stmt) == SQLITE_ROW) {
-            try rows.append(self.allocator, try self.readTaskFromStmt(stmt, self.allocator));
+        while (self.api.step(list_stmt) == SQLITE_ROW) {
+            try rows.append(self.allocator, try self.readTaskFromStmt(list_stmt, self.allocator));
         }
 
         var sums = [_]struct { status: []const u8, count: i64 }{
@@ -643,11 +673,12 @@ pub const SqliteControlPlaneStore = struct {
             .{ .status = "canceled", .count = 0 },
         };
 
-        // Get counts filtered by project_id only
-        const sum_sql = try std.fmt.allocPrint(self.allocator, "SELECT status, COUNT(*) FROM tasks WHERE project_id='{s}' GROUP BY status;", .{project_q});
-        defer self.allocator.free(sum_sql);
+        // Get counts filtered by project_id only (parameterized)
+        const sum_sql = "SELECT status, COUNT(*) FROM tasks WHERE project_id=?1 GROUP BY status;";
         const sum_stmt = try self.prepare(sum_sql);
         defer self.finalize(sum_stmt);
+        try self.bindText(sum_stmt, 1, query.project_id);
+
         while (self.api.step(sum_stmt) == SQLITE_ROW) {
             const status = (try self.columnTextDup(sum_stmt, 0, self.allocator));
             defer self.allocator.free(status);
@@ -742,49 +773,39 @@ pub const SqliteControlPlaneStore = struct {
     }
 
     fn appendTaskEvent(self: *SqliteControlPlaneStore, task_id: []const u8, run_id: ?[]const u8, event_type: []const u8, payload: []const u8, operator: ?[]const u8, source: ?[]const u8, request_id: ?[]const u8) controlplane_store.StoreError!void {
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const event_q = try sqlQuote(self.allocator, event_type);
-        defer self.allocator.free(event_q);
-        const payload_q = try sqlQuote(self.allocator, payload);
-        defer self.allocator.free(payload_q);
         const now = std.time.timestamp();
 
-        const run_val = if (run_id) |r| blk: {
-            const q = try sqlQuote(self.allocator, r);
-            defer self.allocator.free(q);
-            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
-        } else try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(run_val);
+        const sql = "INSERT INTO task_events(task_id,run_id,event_type,payload,operator,source,request_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8);";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
 
-        const op_val = if (operator) |o| blk: {
-            const q = try sqlQuote(self.allocator, o);
-            defer self.allocator.free(q);
-            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
-        } else try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(op_val);
+        try self.bindText(stmt, 1, task_id);
+        if (run_id) |r| {
+            try self.bindText(stmt, 2, r);
+        } else {
+            _ = self.api.bind_null(stmt, 2);
+        }
+        try self.bindText(stmt, 3, event_type);
+        try self.bindText(stmt, 4, payload);
+        if (operator) |o| {
+            try self.bindText(stmt, 5, o);
+        } else {
+            _ = self.api.bind_null(stmt, 5);
+        }
+        if (source) |s| {
+            try self.bindText(stmt, 6, s);
+        } else {
+            _ = self.api.bind_null(stmt, 6);
+        }
+        if (request_id) |r| {
+            try self.bindText(stmt, 7, r);
+        } else {
+            _ = self.api.bind_null(stmt, 7);
+        }
+        _ = self.api.bind_int64(stmt, 8, now);
 
-        const source_val = if (source) |s| blk: {
-            const q = try sqlQuote(self.allocator, s);
-            defer self.allocator.free(q);
-            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
-        } else try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(source_val);
-
-        const req_val = if (request_id) |r| blk: {
-            const q = try sqlQuote(self.allocator, r);
-            defer self.allocator.free(q);
-            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
-        } else try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(req_val);
-
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "INSERT INTO task_events(task_id,run_id,event_type,payload,operator,source,request_id,created_at) VALUES('{s}',{s},'{s}','{s}',{s},{s},{s},{d});",
-            .{ task_q, run_val, event_q, payload_q, op_val, source_val, req_val, now },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
     }
 
     fn queryCount(self: *SqliteControlPlaneStore, sql: []const u8) controlplane_store.StoreError!i64 {
@@ -799,23 +820,22 @@ pub const SqliteControlPlaneStore = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const project_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(project_q);
+        // Fetch task with project_id filter (parameterized)
+        const task_sql = "SELECT " ++ TASK_SELECT_COLUMNS ++ " FROM tasks WHERE task_id=?1 AND project_id=?2 LIMIT 1;";
+        const task_stmt = try self.prepare(task_sql);
+        defer self.finalize(task_stmt);
+        try self.bindText(task_stmt, 1, task_id);
+        try self.bindText(task_stmt, 2, project_id);
 
-        // Fetch task with project_id filter
-        const task_sql = try std.fmt.allocPrint(self.allocator, "SELECT {s} FROM tasks WHERE task_id='{s}' AND project_id='{s}' LIMIT 1;", .{ TASK_SELECT_COLUMNS, task_q, project_q });
-        defer self.allocator.free(task_sql);
-
-        const maybe_task = try self.getOneTask(task_sql, self.allocator);
-        if (maybe_task == null) return error.TaskNotFound;
-        var task = maybe_task.?;
+        if (self.api.step(task_stmt) != SQLITE_ROW) return error.TaskNotFound;
+        var task = try self.readTaskFromStmt(task_stmt, self.allocator);
         defer task.deinit(self.allocator);
 
-        // Fetch events
-        const event_sql = try std.fmt.allocPrint(self.allocator, "SELECT id,task_id,run_id,event_type,payload,operator,source,request_id,created_at FROM task_events WHERE task_id='{s}' ORDER BY id DESC LIMIT 50;", .{task_q});
-        defer self.allocator.free(event_sql);
+        // Fetch events (parameterized)
+        const event_sql = "SELECT id,task_id,run_id,event_type,payload,operator,source,request_id,created_at FROM task_events WHERE task_id=?1 ORDER BY id DESC LIMIT 50;";
+        const event_stmt = try self.prepare(event_sql);
+        defer self.finalize(event_stmt);
+        try self.bindText(event_stmt, 1, task_id);
 
         var events = std.ArrayList(task_store.TaskEvent).empty;
         defer {
@@ -823,24 +843,22 @@ pub const SqliteControlPlaneStore = struct {
             events.deinit(self.allocator);
         }
 
-        const stmt = try self.prepare(event_sql);
-        defer self.finalize(stmt);
-        while (self.api.step(stmt) == SQLITE_ROW) {
-            try events.append(self.allocator, try self.readTaskEventFromStmt(stmt));
+        while (self.api.step(event_stmt) == SQLITE_ROW) {
+            try events.append(self.allocator, try self.readTaskEventFromStmt(event_stmt));
         }
 
-        // Fetch reviews
+        // Fetch reviews (parameterized)
         var reviews = std.ArrayList(TaskReview).empty;
         defer {
             for (reviews.items) |*item| item.deinit(self.allocator);
             reviews.deinit(self.allocator);
         }
 
-        const review_sql = try std.fmt.allocPrint(self.allocator, "SELECT id,task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at FROM task_reviews WHERE task_id='{s}' ORDER BY created_at DESC, id DESC;", .{task_q});
-        defer self.allocator.free(review_sql);
-
+        const review_sql = "SELECT id,task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at FROM task_reviews WHERE task_id=?1 ORDER BY created_at DESC, id DESC;";
         const review_stmt = try self.prepare(review_sql);
         defer self.finalize(review_stmt);
+        try self.bindText(review_stmt, 1, task_id);
+
         while (self.api.step(review_stmt) == SQLITE_ROW) {
             try reviews.append(self.allocator, try self.readTaskReviewFromStmt(review_stmt));
         }
@@ -858,50 +876,94 @@ pub const SqliteControlPlaneStore = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        var sets = std.ArrayList(u8).empty;
-        defer sets.deinit(self.allocator);
-        var w = sets.writer(self.allocator);
-
+        // Determine which fields to update and build parameterized query
         var changed_fields: usize = 0;
-        if (input.title) |title| {
-            const title_q = try sqlQuote(self.allocator, title);
-            defer self.allocator.free(title_q);
-            try w.print("title='{s}'", .{title_q});
-            changed_fields += 1;
-        }
-        if (input.prompt) |prompt| {
-            if (changed_fields > 0) try w.writeAll(",");
-            const prompt_q = try sqlQuote(self.allocator, prompt);
-            defer self.allocator.free(prompt_q);
-            try w.print("prompt='{s}'", .{prompt_q});
-            changed_fields += 1;
-        }
-        if (input.priority) |priority| {
-            if (changed_fields > 0) try w.writeAll(",");
-            try w.print("priority={d}", .{priority});
-            changed_fields += 1;
-        }
-        if (input.max_retries) |mr| {
-            if (changed_fields > 0) try w.writeAll(",");
-            try w.print("max_retries={d}", .{mr});
-            changed_fields += 1;
-        }
+        if (input.title) |_| changed_fields += 1;
+        if (input.prompt) |_| changed_fields += 1;
+        if (input.priority) |_| changed_fields += 1;
+        if (input.max_retries) |_| changed_fields += 1;
+
         if (changed_fields == 0) return;
 
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const project_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(project_q);
+        // Build dynamic SET clause with positional parameters
+        var set_sql: std.ArrayList(u8) = .empty;
+        defer set_sql.deinit(self.allocator);
+
+        var param_idx: CInt = 1;
+        var first = true;
+
+        if (input.title) |_| {
+            if (!first) try set_sql.appendSlice(self.allocator, ", ");
+            try set_sql.appendSlice(self.allocator, "title=?");
+            try std.fmt.format(set_sql.writer(self.allocator), "{d}", .{param_idx});
+            param_idx += 1;
+            first = false;
+        }
+        if (input.prompt) |_| {
+            if (!first) try set_sql.appendSlice(self.allocator, ", ");
+            try set_sql.appendSlice(self.allocator, "prompt=?");
+            try std.fmt.format(set_sql.writer(self.allocator), "{d}", .{param_idx});
+            param_idx += 1;
+            first = false;
+        }
+        if (input.priority) |_| {
+            if (!first) try set_sql.appendSlice(self.allocator, ", ");
+            try set_sql.appendSlice(self.allocator, "priority=?");
+            try std.fmt.format(set_sql.writer(self.allocator), "{d}", .{param_idx});
+            param_idx += 1;
+            first = false;
+        }
+        if (input.max_retries) |_| {
+            if (!first) try set_sql.appendSlice(self.allocator, ", ");
+            try set_sql.appendSlice(self.allocator, "max_retries=?");
+            try std.fmt.format(set_sql.writer(self.allocator), "{d}", .{param_idx});
+            param_idx += 1;
+            first = false;
+        }
 
         const now = std.time.timestamp();
+        // param_idx now points to updated_at position, task_id is next, project_id is next, version is last
+        const version_param = param_idx + 3;
+
         const sql = try std.fmt.allocPrint(
             self.allocator,
-            "UPDATE tasks SET {s}, updated_at={d}, version=version+1 WHERE task_id='{s}' AND project_id='{s}' AND version={d};",
-            .{ sets.items, now, task_q, project_q, input.version },
+            "UPDATE tasks SET {s}, updated_at=?{d}, version=version+1 WHERE task_id=?{d} AND project_id=?{d} AND version=?{d};",
+            .{ set_sql.items, param_idx, param_idx + 1, param_idx + 2, version_param },
         );
         defer self.allocator.free(sql);
 
-        self.execSql(sql) catch return error.SqliteExecFailed;
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        // Bind parameters
+        var bind_idx: CInt = 1;
+        if (input.title) |v| {
+            try self.bindText(stmt, bind_idx, v);
+            bind_idx += 1;
+        }
+        if (input.prompt) |v| {
+            try self.bindText(stmt, bind_idx, v);
+            bind_idx += 1;
+        }
+        if (input.priority) |v| {
+            _ = self.api.bind_int(stmt, bind_idx, v);
+            bind_idx += 1;
+        }
+        if (input.max_retries) |v| {
+            _ = self.api.bind_int(stmt, bind_idx, @intCast(v));
+            bind_idx += 1;
+        }
+
+        _ = self.api.bind_int64(stmt, bind_idx, now);
+        bind_idx += 1;
+        try self.bindText(stmt, bind_idx, task_id);
+        bind_idx += 1;
+        try self.bindText(stmt, bind_idx, project_id);
+        bind_idx += 1;
+        _ = self.api.bind_int64(stmt, bind_idx, input.version);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.VersionConflict;
 
         // Append task event for audit
@@ -929,20 +991,20 @@ pub const SqliteControlPlaneStore = struct {
 
         const now = std.time.timestamp();
         const lease_until = now + @as(i64, @intCast(lease_seconds));
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='running', lease_owner='{s}', lease_until={d}, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ owner_q, lease_until, now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const sql = "UPDATE tasks SET status='running', lease_owner=?1, lease_until=?2, updated_at=?3, version=version+1 WHERE project_id=?4 AND task_id=?5 AND lease_owner=?6;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        try self.bindText(stmt, 1, owner);
+        _ = self.api.bind_int64(stmt, 2, lease_until);
+        _ = self.api.bind_int64(stmt, 3, now);
+        try self.bindText(stmt, 4, project_id);
+        try self.bindText(stmt, 5, task_id);
+        try self.bindText(stmt, 6, owner);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
         try self.appendTaskEvent(task_id, run_id, "task.running", "{}", null, null, null);
@@ -954,20 +1016,18 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const now = std.time.timestamp();
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='done', lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const sql = "UPDATE tasks SET status='done', lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=?1, version=version+1 WHERE project_id=?2 AND task_id=?3 AND lease_owner=?4;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        _ = self.api.bind_int64(stmt, 1, now);
+        try self.bindText(stmt, 2, project_id);
+        try self.bindText(stmt, 3, task_id);
+        try self.bindText(stmt, 4, owner);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
         try self.appendTaskEvent(task_id, run_id, "task.done", "{}", null, null, null);
@@ -979,44 +1039,58 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const now = std.time.timestamp();
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
-        const msg_q = try sqlQuote(self.allocator, message);
-        defer self.allocator.free(msg_q);
 
-        const read_sql = try std.fmt.allocPrint(
-            self.allocator,
-            "SELECT retry_count,COALESCE(max_retries,{d}) FROM tasks WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}' LIMIT 1;",
-            .{ default_max_retries, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(read_sql);
-        const stmt = try self.prepare(read_sql);
-        defer self.finalize(stmt);
-        if (self.api.step(stmt) != SQLITE_ROW) return error.TaskNotClaimed;
-        const current_retry: u32 = @intCast(self.api.column_int(stmt, 0));
-        const max_retries: u32 = @intCast(self.api.column_int(stmt, 1));
+        // Read current retry count using parameterized query
+        const read_sql = "SELECT retry_count,COALESCE(max_retries,?1) FROM tasks WHERE project_id=?2 AND task_id=?3 AND lease_owner=?4 LIMIT 1;";
+        const read_stmt = try self.prepare(read_sql);
+        defer self.finalize(read_stmt);
+
+        _ = self.api.bind_int(read_stmt, 1, @intCast(default_max_retries));
+        try self.bindText(read_stmt, 2, project_id);
+        try self.bindText(read_stmt, 3, task_id);
+        try self.bindText(read_stmt, 4, owner);
+
+        if (self.api.step(read_stmt) != SQLITE_ROW) return error.TaskNotClaimed;
+        const current_retry: u32 = @intCast(self.api.column_int(read_stmt, 0));
+        const max_retries: u32 = @intCast(self.api.column_int(read_stmt, 1));
         const next_retry = current_retry + 1;
         const should_requeue = next_retry < max_retries;
 
-        const new_status = if (should_requeue) "queued" else "failed";
-        const last_error_val = if (should_requeue) "NULL" else try std.fmt.allocPrint(self.allocator, "'{s}'", .{msg_q});
-        defer if (!should_requeue) self.allocator.free(last_error_val);
+        // Use different queries based on requeue decision to avoid dynamic SQL
+        if (should_requeue) {
+            const sql = "UPDATE tasks SET status='queued', retry_count=?1, lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=?2, version=version+1 WHERE project_id=?3 AND task_id=?4 AND lease_owner=?5;";
+            const stmt = try self.prepare(sql);
+            defer self.finalize(stmt);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='{s}', retry_count={d}, lease_owner=NULL, lease_until=NULL, last_error={s}, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ new_status, next_retry, last_error_val, now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
-        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+            _ = self.api.bind_int(stmt, 1, @intCast(next_retry));
+            _ = self.api.bind_int64(stmt, 2, now);
+            try self.bindText(stmt, 3, project_id);
+            try self.bindText(stmt, 4, task_id);
+            try self.bindText(stmt, 5, owner);
 
-        const event_type = if (should_requeue) "task.requeue" else "task.failed";
-        try self.appendTaskEvent(task_id, run_id, event_type, "{}", null, null, null);
+            const rc = self.api.step(stmt);
+            if (rc != SQLITE_DONE) return error.SqliteExecFailed;
+            if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+            try self.appendTaskEvent(task_id, run_id, "task.requeue", "{}", null, null, null);
+        } else {
+            const sql = "UPDATE tasks SET status='failed', retry_count=?1, lease_owner=NULL, lease_until=NULL, last_error=?2, updated_at=?3, version=version+1 WHERE project_id=?4 AND task_id=?5 AND lease_owner=?6;";
+            const stmt = try self.prepare(sql);
+            defer self.finalize(stmt);
+
+            _ = self.api.bind_int(stmt, 1, @intCast(next_retry));
+            try self.bindText(stmt, 2, message);
+            _ = self.api.bind_int64(stmt, 3, now);
+            try self.bindText(stmt, 4, project_id);
+            try self.bindText(stmt, 5, task_id);
+            try self.bindText(stmt, 6, owner);
+
+            const rc = self.api.step(stmt);
+            if (rc != SQLITE_DONE) return error.SqliteExecFailed;
+            if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+            try self.appendTaskEvent(task_id, run_id, "task.failed", "{}", null, null, null);
+        }
 
         const final_status: task_store.TaskStatus = if (should_requeue) .queued else .failed;
         return .{ .status = final_status, .retry_count = next_retry, .max_retries = max_retries };
@@ -1028,26 +1102,22 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const now = std.time.timestamp();
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
-        const base_q = try sqlQuote(self.allocator, base_branch);
-        defer self.allocator.free(base_q);
-        const head_q = try sqlQuote(self.allocator, head_branch);
-        defer self.allocator.free(head_q);
-        const sha_q = try sqlQuote(self.allocator, head_sha);
-        defer self.allocator.free(sha_q);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='review', review_stage='open', review_round={d}, base_branch='{s}', head_branch='{s}', head_sha='{s}', updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ review_round, base_q, head_q, sha_q, now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const sql = "UPDATE tasks SET status='review', review_stage='open', review_round=?1, base_branch=?2, head_branch=?3, head_sha=?4, updated_at=?5, version=version+1 WHERE project_id=?6 AND task_id=?7 AND lease_owner=?8;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        _ = self.api.bind_int(stmt, 1, @intCast(review_round));
+        try self.bindText(stmt, 2, base_branch);
+        try self.bindText(stmt, 3, head_branch);
+        try self.bindText(stmt, 4, head_sha);
+        _ = self.api.bind_int64(stmt, 5, now);
+        try self.bindText(stmt, 6, project_id);
+        try self.bindText(stmt, 7, task_id);
+        try self.bindText(stmt, 8, owner);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
         const payload = try std.fmt.allocPrint(
@@ -1065,20 +1135,18 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const now = std.time.timestamp();
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='review', review_stage='approved', review_feedback=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const sql = "UPDATE tasks SET status='review', review_stage='approved', review_feedback=NULL, updated_at=?1, version=version+1 WHERE project_id=?2 AND task_id=?3 AND lease_owner=?4;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        _ = self.api.bind_int64(stmt, 1, now);
+        try self.bindText(stmt, 2, project_id);
+        try self.bindText(stmt, 3, task_id);
+        try self.bindText(stmt, 4, owner);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
         const payload = try std.fmt.allocPrint(
@@ -1097,48 +1165,59 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const now = std.time.timestamp();
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
-        const feedback_q = try sqlQuote(self.allocator, feedback);
-        defer self.allocator.free(feedback_q);
 
-        const read_sql = try std.fmt.allocPrint(
-            self.allocator,
-            "SELECT retry_count,COALESCE(max_retries,{d}) FROM tasks WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}' LIMIT 1;",
-            .{ default_max_retries, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(read_sql);
-        const stmt = try self.prepare(read_sql);
-        defer self.finalize(stmt);
-        if (self.api.step(stmt) != SQLITE_ROW) return error.TaskNotClaimed;
-        const current_retry: u32 = @intCast(self.api.column_int(stmt, 0));
-        const max_retries: u32 = @intCast(self.api.column_int(stmt, 1));
+        // Read current retry count using parameterized query
+        const read_sql = "SELECT retry_count,COALESCE(max_retries,?1) FROM tasks WHERE project_id=?2 AND task_id=?3 AND lease_owner=?4 LIMIT 1;";
+        const read_stmt = try self.prepare(read_sql);
+        defer self.finalize(read_stmt);
+
+        _ = self.api.bind_int(read_stmt, 1, @intCast(default_max_retries));
+        try self.bindText(read_stmt, 2, project_id);
+        try self.bindText(read_stmt, 3, task_id);
+        try self.bindText(read_stmt, 4, owner);
+
+        if (self.api.step(read_stmt) != SQLITE_ROW) return error.TaskNotClaimed;
+        const current_retry: u32 = @intCast(self.api.column_int(read_stmt, 0));
+        const max_retries: u32 = @intCast(self.api.column_int(read_stmt, 1));
         const next_retry = current_retry + 1;
         const should_requeue = next_retry < max_retries;
 
-        const new_status = if (should_requeue) "queued" else "failed";
-        var last_error_buf: ?[]u8 = null;
-        defer if (last_error_buf) |b| self.allocator.free(b);
-        const last_error_val = if (should_requeue) "NULL" else blk: {
-            last_error_buf = try std.fmt.allocPrint(self.allocator, "'{s}'", .{feedback_q});
-            break :blk last_error_buf.?;
-        };
+        // Use different queries based on requeue decision to avoid dynamic SQL
+        if (should_requeue) {
+            const sql = "UPDATE tasks SET status='queued', review_stage='changes_requested', retry_count=?1, lease_owner=NULL, lease_until=NULL, review_feedback=NULL, last_error=NULL, updated_at=?2, version=version+1 WHERE project_id=?3 AND task_id=?4 AND lease_owner=?5;";
+            const stmt = try self.prepare(sql);
+            defer self.finalize(stmt);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='{s}', review_stage='changes_requested', retry_count={d}, lease_owner=NULL, lease_until=NULL, review_feedback='{s}', last_error={s}, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ new_status, next_retry, feedback_q, last_error_val, now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
-        if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+            _ = self.api.bind_int(stmt, 1, @intCast(next_retry));
+            _ = self.api.bind_int64(stmt, 2, now);
+            try self.bindText(stmt, 3, project_id);
+            try self.bindText(stmt, 4, task_id);
+            try self.bindText(stmt, 5, owner);
 
-        const event_type = if (should_requeue) "task.review.changes_requested.requeue" else "task.review.changes_requested.fail";
-        try self.appendTaskEvent(task_id, run_id, event_type, "{}", null, null, null);
+            const rc = self.api.step(stmt);
+            if (rc != SQLITE_DONE) return error.SqliteExecFailed;
+            if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+            try self.appendTaskEvent(task_id, run_id, "task.review.changes_requested.requeue", "{}", null, null, null);
+        } else {
+            const sql = "UPDATE tasks SET status='failed', review_stage='changes_requested', retry_count=?1, lease_owner=NULL, lease_until=NULL, review_feedback=?2, last_error=?3, updated_at=?4, version=version+1 WHERE project_id=?5 AND task_id=?6 AND lease_owner=?7;";
+            const stmt = try self.prepare(sql);
+            defer self.finalize(stmt);
+
+            _ = self.api.bind_int(stmt, 1, @intCast(next_retry));
+            try self.bindText(stmt, 2, feedback);
+            try self.bindText(stmt, 3, feedback);
+            _ = self.api.bind_int64(stmt, 4, now);
+            try self.bindText(stmt, 5, project_id);
+            try self.bindText(stmt, 6, task_id);
+            try self.bindText(stmt, 7, owner);
+
+            const rc = self.api.step(stmt);
+            if (rc != SQLITE_DONE) return error.SqliteExecFailed;
+            if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
+
+            try self.appendTaskEvent(task_id, run_id, "task.review.changes_requested.fail", "{}", null, null, null);
+        }
 
         const final_status: task_store.TaskStatus = if (should_requeue) .queued else .failed;
         return .{ .status = final_status, .retry_count = next_retry, .max_retries = max_retries };
@@ -1150,22 +1229,19 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const now = std.time.timestamp();
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
-        const task_q = try sqlQuote(self.allocator, task_id);
-        defer self.allocator.free(task_q);
-        const owner_q = try sqlQuote(self.allocator, owner);
-        defer self.allocator.free(owner_q);
-        const merge_q = try sqlQuote(self.allocator, merge_commit);
-        defer self.allocator.free(merge_q);
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "UPDATE tasks SET status='done', review_stage='merged', merge_commit='{s}', lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at={d}, version=version+1 WHERE project_id='{s}' AND task_id='{s}' AND lease_owner='{s}';",
-            .{ merge_q, now, pid_q, task_q, owner_q },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const sql = "UPDATE tasks SET status='done', review_stage='merged', merge_commit=?1, lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=?2, version=version+1 WHERE project_id=?3 AND task_id=?4 AND lease_owner=?5;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        try self.bindText(stmt, 1, merge_commit);
+        _ = self.api.bind_int64(stmt, 2, now);
+        try self.bindText(stmt, 3, project_id);
+        try self.bindText(stmt, 4, task_id);
+        try self.bindText(stmt, 5, owner);
+
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
         const payload = try std.fmt.allocPrint(
@@ -1184,45 +1260,37 @@ pub const SqliteControlPlaneStore = struct {
         _ = project_id;
 
         const now = std.time.timestamp();
-        const task_q = try sqlQuote(self.allocator, input.task_id);
-        defer self.allocator.free(task_q);
-        const role_q = try sqlQuote(self.allocator, task_store.taskReviewRoleToString(input.role));
-        defer self.allocator.free(role_q);
-        const verdict_q = try sqlQuote(self.allocator, task_store.taskReviewVerdictToString(input.verdict));
-        defer self.allocator.free(verdict_q);
-        const summary_q = try sqlQuote(self.allocator, input.summary);
-        defer self.allocator.free(summary_q);
-        const blockers_q = try sqlQuote(self.allocator, input.blockers_json);
-        defer self.allocator.free(blockers_q);
-        const suggestions_q = try sqlQuote(self.allocator, input.suggestions_json);
-        defer self.allocator.free(suggestions_q);
 
-        const score_val = if (input.score) |score|
-            try std.fmt.allocPrint(self.allocator, "{d}", .{score})
-        else
-            try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(score_val);
+        const sql = "INSERT INTO task_reviews(task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11);";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
 
-        const confidence_val = if (input.confidence) |confidence|
-            try std.fmt.allocPrint(self.allocator, "{d}", .{confidence})
-        else
-            try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(confidence_val);
+        try self.bindText(stmt, 1, input.task_id);
+        _ = self.api.bind_int(stmt, 2, @intCast(input.review_round));
+        try self.bindText(stmt, 3, task_store.taskReviewRoleToString(input.role));
+        try self.bindText(stmt, 4, task_store.taskReviewVerdictToString(input.verdict));
+        if (input.score) |score| {
+            _ = self.api.bind_int(stmt, 5, score);
+        } else {
+            _ = self.api.bind_null(stmt, 5);
+        }
+        try self.bindText(stmt, 6, input.summary);
+        try self.bindText(stmt, 7, input.blockers_json);
+        try self.bindText(stmt, 8, input.suggestions_json);
+        if (input.confidence) |confidence| {
+            _ = self.api.bind_double(stmt, 9, confidence);
+        } else {
+            _ = self.api.bind_null(stmt, 9);
+        }
+        if (input.reviewer_run_id) |rid| {
+            try self.bindText(stmt, 10, rid);
+        } else {
+            _ = self.api.bind_null(stmt, 10);
+        }
+        _ = self.api.bind_int64(stmt, 11, now);
 
-        const reviewer_run_val = if (input.reviewer_run_id) |r| blk: {
-            const q = try sqlQuote(self.allocator, r);
-            defer self.allocator.free(q);
-            break :blk try std.fmt.allocPrint(self.allocator, "'{s}'", .{q});
-        } else try self.allocator.dupe(u8, "NULL");
-        defer self.allocator.free(reviewer_run_val);
-
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "INSERT INTO task_reviews(task_id,review_round,role,verdict,score,summary,blockers_json,suggestions_json,confidence,reviewer_run_id,created_at) VALUES('{s}',{d},'{s}','{s}',{s},'{s}','{s}','{s}',{s},{s},{d});",
-            .{ task_q, input.review_round, role_q, verdict_q, score_val, summary_q, blockers_q, suggestions_q, confidence_val, reviewer_run_val, now },
-        );
-        defer self.allocator.free(sql);
-        try self.execSql(sql);
+        const rc = self.api.step(stmt);
+        if (rc != SQLITE_DONE) return error.SqliteExecFailed;
 
         const event_type = switch (input.role) {
             .correctness_reviewer => "task.review.correctness.completed",
@@ -1254,11 +1322,14 @@ pub const SqliteControlPlaneStore = struct {
         defer self.mutex.unlock();
 
         const safe_limit = @max(@as(usize, 1), @min(limit, 200));
-        const pid_q = try sqlQuote(self.allocator, project_id);
-        defer self.allocator.free(pid_q);
 
-        const sql = try std.fmt.allocPrint(self.allocator, "SELECT e.id,e.task_id,e.run_id,e.event_type,e.payload,e.operator,e.source,e.request_id,e.created_at FROM task_events e INNER JOIN tasks t ON e.task_id=t.task_id WHERE t.project_id='{s}' AND e.id>{d} ORDER BY e.id ASC LIMIT {d};", .{ pid_q, after_id, safe_limit });
-        defer self.allocator.free(sql);
+        const sql = "SELECT e.id,e.task_id,e.run_id,e.event_type,e.payload,e.operator,e.source,e.request_id,e.created_at FROM task_events e INNER JOIN tasks t ON e.task_id=t.task_id WHERE t.project_id=?1 AND e.id>?2 ORDER BY e.id ASC LIMIT ?3;";
+        const stmt = try self.prepare(sql);
+        defer self.finalize(stmt);
+
+        try self.bindText(stmt, 1, project_id);
+        _ = self.api.bind_int64(stmt, 2, after_id);
+        _ = self.api.bind_int(stmt, 3, @intCast(safe_limit));
 
         var rows = std.ArrayList(task_store.TaskEvent).empty;
         defer {
@@ -1266,8 +1337,6 @@ pub const SqliteControlPlaneStore = struct {
             rows.deinit(self.allocator);
         }
 
-        const stmt = try self.prepare(sql);
-        defer self.finalize(stmt);
         var last_id = after_id;
         while (self.api.step(stmt) == SQLITE_ROW) {
             const evt = try self.readTaskEventFromStmt(stmt);

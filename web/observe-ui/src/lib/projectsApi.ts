@@ -1,56 +1,22 @@
-import { apiRequest, isApiError, newRequestId } from './api'
-import type { JsonValue } from '../types'
+import { apiRequest, isApiError, newRequestId, getErrorMessage } from './api'
+import {
+  ProjectSchema,
+  ProjectSummarySchema,
+  ProjectTaskSchema,
+  ProjectTaskDetailSchema,
+  TaskPoolListSchema,
+} from './schemas'
+import { z } from 'zod'
 
-// Project types
-export type Project = {
-  project_id: string
-  name: string
-  description: string
-  repository_url: string | null
-  base_branch: string
-  created_at: number
-  updated_at: number
-  task_count: number
-  running_count: number
-  completed_count: number
-}
-
-export type ProjectSummary = {
-  total_projects: number
-  total_tasks: number
-  running_tasks: number
-  completed_tasks: number
-  failed_tasks: number
-}
-
-// Task types (for project-specific tasks)
-export type ProjectTask = {
-  task_id: string
-  project_id: string
-  title: string
-  prompt: string
-  status: 'queued' | 'running' | 'review' | 'done' | 'failed' | 'canceled' | 'claimed'
-  review_stage: 'none' | 'open' | 'changes_requested' | 'approved' | 'merged'
-  priority: number
-  created_at: number
-  updated_at: number
-}
+export type Project = z.infer<typeof ProjectSchema>
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>
+export type ProjectTask = z.infer<typeof ProjectTaskSchema>
+export type ProjectTaskDetail = z.infer<typeof ProjectTaskDetailSchema>
 
 export type ProjectTaskListResult = {
   tasks: ProjectTask[]
   total: number
   summary: Record<string, number>
-}
-
-export type ProjectTaskDetail = ProjectTask & {
-  head_branch: string
-  head_sha: string
-  base_branch: string
-  merge_commit: string | null
-  retry_count: number
-  max_retries: number | null
-  review_feedback: string
-  last_error: string
 }
 
 export type CreateProjectData = {
@@ -70,7 +36,238 @@ export type CreateTaskData = {
 
 export type TaskAction = 'start' | 'pause' | 'resume' | 'abort' | 'ask' | 'retry' | 'cancel'
 
-// Helper functions
+const ProjectsResponseSchema = z.object({
+  projects: z.array(ProjectSchema),
+})
+
+const ProjectResponseSchema = z.object({
+  project: ProjectSchema,
+})
+
+const ProjectSummaryResponseSchema = ProjectSummarySchema
+
+const TaskResponseSchema = z.object({
+  task: ProjectTaskSchema,
+})
+
+const TaskDetailResponseSchema = z.object({
+  task: ProjectTaskDetailSchema,
+})
+
+const RATE_LIMIT_RETRY_DELAYS_MS = [300, 900, 1800]
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+async function requestWith429Backoff<T>(fn: () => Promise<T>): Promise<T> {
+  let retries = 0
+  while (true) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!isApiError(err) || err.status !== 429 || retries >= RATE_LIMIT_RETRY_DELAYS_MS.length) {
+        throw err
+      }
+      const delay = RATE_LIMIT_RETRY_DELAYS_MS[retries]
+      retries += 1
+      await wait(delay)
+    }
+  }
+}
+
+export async function getProjects(token?: string, signal?: AbortSignal): Promise<Project[]> {
+  return requestWith429Backoff(async () => {
+    const rec = await apiRequest('/projects', token ?? null, { signal }, ProjectsResponseSchema)
+    return rec.projects.filter((p) => p.project_id.length > 0)
+  })
+}
+
+export async function getProject(projectId: string, token?: string, signal?: AbortSignal): Promise<Project | null> {
+  return requestWith429Backoff(async () => {
+    try {
+      const rec = await apiRequest(`/projects/${encodeURIComponent(projectId)}`, token ?? null, { signal }, ProjectResponseSchema)
+      return rec.project
+    } catch (err) {
+      if (isApiError(err) && err.status === 404) {
+        return null
+      }
+      throw err
+    }
+  })
+}
+
+export async function createProject(data: CreateProjectData, token?: string, signal?: AbortSignal): Promise<Project> {
+  return requestWith429Backoff(async () => {
+    const rec = await apiRequest('/projects', token ?? null, {
+      method: 'POST',
+      signal,
+      body: JSON.stringify(data),
+    }, ProjectResponseSchema)
+    return rec.project
+  })
+}
+
+export async function updateProject(
+  projectId: string,
+  data: UpdateProjectData,
+  token?: string,
+  signal?: AbortSignal
+): Promise<Project> {
+  return requestWith429Backoff(async () => {
+    const rec = await apiRequest(`/projects/${encodeURIComponent(projectId)}`, token ?? null, {
+      method: 'PATCH',
+      signal,
+      body: JSON.stringify(data),
+    }, ProjectResponseSchema)
+    return rec.project
+  })
+}
+
+export async function deleteProject(projectId: string, token?: string, signal?: AbortSignal): Promise<void> {
+  return requestWith429Backoff(async () => {
+    await apiRequest(`/projects/${encodeURIComponent(projectId)}`, token ?? null, {
+      method: 'DELETE',
+      signal,
+    })
+  })
+}
+
+export async function getProjectSummary(token?: string, signal?: AbortSignal): Promise<ProjectSummary> {
+  return requestWith429Backoff(async () => {
+    return await apiRequest('/projects/summary', token ?? null, { signal }, ProjectSummaryResponseSchema)
+  })
+}
+
+export async function getTasks(
+  projectId: string,
+  token?: string,
+  signal?: AbortSignal
+): Promise<ProjectTaskListResult> {
+  return requestWith429Backoff(async () => {
+    return await apiRequest(`/projects/${encodeURIComponent(projectId)}/tasks`, token ?? null, { signal }, TaskPoolListSchema)
+  })
+}
+
+export async function createTask(
+  projectId: string,
+  data: CreateTaskData,
+  token?: string,
+  signal?: AbortSignal
+): Promise<ProjectTask> {
+  return requestWith429Backoff(async () => {
+    const rec = await apiRequest(`/projects/${encodeURIComponent(projectId)}/tasks`, token ?? null, {
+      method: 'POST',
+      signal,
+      body: JSON.stringify(data),
+    }, TaskResponseSchema)
+    return rec.task
+  })
+}
+
+export async function getTask(
+  projectId: string,
+  taskId: string,
+  token?: string,
+  signal?: AbortSignal
+): Promise<ProjectTaskDetail | null> {
+  return requestWith429Backoff(async () => {
+    try {
+      const rec = await apiRequest(
+        `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`,
+        token ?? null,
+        { signal },
+        TaskDetailResponseSchema
+      )
+      return rec.task
+    } catch (err) {
+      if (isApiError(err) && err.status === 404) {
+        return null
+      }
+      throw err
+    }
+  })
+}
+
+export async function taskAction(
+  projectId: string,
+  taskId: string,
+  action: TaskAction,
+  token?: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const requestId = newRequestId()
+  return requestWith429Backoff(async () => {
+    await apiRequest(
+      `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/actions`,
+      token ?? null,
+      {
+        method: 'POST',
+        signal,
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({ action, request_id: requestId }),
+      }
+    )
+  })
+}
+
+export function formatProjectError(err: unknown, fallback: string): string {
+  if (!isApiError(err)) return `${fallback}: ${getErrorMessage(err)}`
+  const code = err.errorCode?.trim() || 'unknown_error'
+  if (err.status === 401) {
+    return `未授权 401：请先扫码授权或提供有效 token（${code}）`
+  }
+  if (err.status === 404) {
+    return `未找到：${code}`
+  }
+  if (err.status === 409) {
+    return `冲突 409：请求与当前状态不一致（${code}）`
+  }
+  if (err.status === 429) {
+    return `限流 429：已自动退避重试（${code}）`
+  }
+  if (err.status === 400) {
+    return `请求错误 400：${code}`
+  }
+  return `${fallback}: ${err.status} ${code}`
+}
+
+export type CreateProjectData = {
+  name: string
+  description?: string
+  repository_url?: string
+  base_branch?: string
+}
+
+export type UpdateProjectData = Partial<CreateProjectData>
+
+export type CreateTaskData = {
+  title: string
+  prompt: string
+  priority?: number
+}
+
+export type TaskAction = 'start' | 'pause' | 'resume' | 'abort' | 'ask' | 'retry' | 'cancel'
+
+const ProjectsResponseSchema = z.object({
+  projects: z.array(ProjectSchema),
+})
+
+const ProjectResponseSchema = z.object({
+  project: ProjectSchema,
+})
+
+const ProjectSummaryResponseSchema = ProjectSummarySchema
+
+const TaskResponseSchema = z.object({
+  task: ProjectTaskSchema,
+})
+
+const TaskDetailResponseSchema = z.object({
+  task: ProjectTaskDetailSchema,
+})
 const RATE_LIMIT_RETRY_DELAYS_MS = [300, 900, 1800]
 
 type JsonRecord = Record<string, unknown>
@@ -173,18 +370,16 @@ function parseProjectTask(raw: unknown): ProjectTask {
 
 export async function getProjects(token?: string, signal?: AbortSignal): Promise<Project[]> {
   return requestWith429Backoff(async () => {
-    const rec = asRecord(await apiRequest<JsonValue>('/projects', token, { signal }))
-    const projectsRaw = Array.isArray(rec.projects) ? rec.projects : []
-    return projectsRaw.map(parseProject).filter((p) => p.project_id.length > 0)
+    const rec = await apiRequest('/projects', token ?? null, { signal }, ProjectsResponseSchema)
+    return rec.projects.filter((p) => p.project_id.length > 0)
   })
 }
 
 export async function getProject(projectId: string, token?: string, signal?: AbortSignal): Promise<Project | null> {
   return requestWith429Backoff(async () => {
     try {
-      const rec = asRecord(await apiRequest<JsonValue>(`/projects/${encodeURIComponent(projectId)}`, token, { signal }))
-      const projectRaw = rec.project
-      return projectRaw ? parseProject(projectRaw) : null
+      const rec = await apiRequest(`/projects/${encodeURIComponent(projectId)}`, token ?? null, { signal }, ProjectResponseSchema)
+      return rec.project
     } catch (err) {
       if (isApiError(err) && err.status === 404) {
         return null
@@ -196,12 +391,12 @@ export async function getProject(projectId: string, token?: string, signal?: Abo
 
 export async function createProject(data: CreateProjectData, token?: string, signal?: AbortSignal): Promise<Project> {
   return requestWith429Backoff(async () => {
-    const rec = asRecord(await apiRequest<JsonValue>('/projects', token, {
+    const rec = await apiRequest('/projects', token ?? null, {
       method: 'POST',
       signal,
       body: JSON.stringify(data),
-    }))
-    return parseProject(rec.project ?? rec)
+    }, ProjectResponseSchema)
+    return rec.project
   })
 }
 
@@ -212,18 +407,18 @@ export async function updateProject(
   signal?: AbortSignal
 ): Promise<Project> {
   return requestWith429Backoff(async () => {
-    const rec = asRecord(await apiRequest<JsonValue>(`/projects/${encodeURIComponent(projectId)}`, token, {
+    const rec = await apiRequest(`/projects/${encodeURIComponent(projectId)}`, token ?? null, {
       method: 'PATCH',
       signal,
       body: JSON.stringify(data),
-    }))
-    return parseProject(rec.project ?? rec)
+    }, ProjectResponseSchema)
+    return rec.project
   })
 }
 
 export async function deleteProject(projectId: string, token?: string, signal?: AbortSignal): Promise<void> {
   return requestWith429Backoff(async () => {
-    await apiRequest<JsonValue>(`/projects/${encodeURIComponent(projectId)}`, token, {
+    await apiRequest(`/projects/${encodeURIComponent(projectId)}`, token ?? null, {
       method: 'DELETE',
       signal,
     })
@@ -232,14 +427,7 @@ export async function deleteProject(projectId: string, token?: string, signal?: 
 
 export async function getProjectSummary(token?: string, signal?: AbortSignal): Promise<ProjectSummary> {
   return requestWith429Backoff(async () => {
-    const rec = asRecord(await apiRequest<JsonValue>('/projects/summary', token, { signal }))
-    return {
-      total_projects: asNumber(rec.total_projects, 0),
-      total_tasks: asNumber(rec.total_tasks, 0),
-      running_tasks: asNumber(rec.running_tasks, 0),
-      completed_tasks: asNumber(rec.completed_tasks, 0),
-      failed_tasks: asNumber(rec.failed_tasks, 0),
-    }
+    return await apiRequest('/projects/summary', token ?? null, { signal }, ProjectSummaryResponseSchema)
   })
 }
 
@@ -251,18 +439,7 @@ export async function getTasks(
   signal?: AbortSignal
 ): Promise<ProjectTaskListResult> {
   return requestWith429Backoff(async () => {
-    const rec = asRecord(await apiRequest<JsonValue>(`/projects/${encodeURIComponent(projectId)}/tasks`, token, { signal }))
-    const tasksRaw = Array.isArray(rec.tasks) ? rec.tasks : []
-    const summaryRaw = asRecord(rec.summary)
-    const summary: Record<string, number> = {}
-    for (const [key, value] of Object.entries(summaryRaw)) {
-      summary[key] = asNumber(value, 0)
-    }
-    return {
-      tasks: tasksRaw.map(parseProjectTask).filter((t) => t.task_id.length > 0),
-      total: asNumber(rec.total, tasksRaw.length),
-      summary,
-    }
+    return await apiRequest(`/projects/${encodeURIComponent(projectId)}/tasks`, token ?? null, { signal }, TaskPoolListSchema)
   })
 }
 
@@ -273,12 +450,12 @@ export async function createTask(
   signal?: AbortSignal
 ): Promise<ProjectTask> {
   return requestWith429Backoff(async () => {
-    const rec = asRecord(await apiRequest<JsonValue>(`/projects/${encodeURIComponent(projectId)}/tasks`, token, {
+    const rec = await apiRequest(`/projects/${encodeURIComponent(projectId)}/tasks`, token ?? null, {
       method: 'POST',
       signal,
       body: JSON.stringify(data),
-    }))
-    return parseProjectTask(rec.task ?? rec)
+    }, TaskResponseSchema)
+    return rec.task
   })
 }
 
@@ -290,28 +467,13 @@ export async function getTask(
 ): Promise<ProjectTaskDetail | null> {
   return requestWith429Backoff(async () => {
     try {
-      const rec = asRecord(await apiRequest<JsonValue>(
+      const rec = await apiRequest(
         `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`,
-        token,
-        { signal }
-      ))
-      const taskRaw = rec.task
-      if (!taskRaw) return null
-      
-      const baseTask = parseProjectTask(taskRaw)
-      const taskRec = asRecord(taskRaw)
-      
-      return {
-        ...baseTask,
-        head_branch: asString(taskRec.head_branch),
-        head_sha: asString(taskRec.head_sha),
-        base_branch: asString(taskRec.base_branch),
-        merge_commit: asNullableString(taskRec.merge_commit),
-        retry_count: asNumber(taskRec.retry_count, 0),
-        max_retries: asNullableNumber(taskRec.max_retries),
-        review_feedback: asString(taskRec.review_feedback),
-        last_error: asString(taskRec.last_error),
-      }
+        token ?? null,
+        { signal },
+        TaskDetailResponseSchema
+      )
+      return rec.task
     } catch (err) {
       if (isApiError(err) && err.status === 404) {
         return null
@@ -330,9 +492,9 @@ export async function taskAction(
 ): Promise<void> {
   const requestId = newRequestId()
   return requestWith429Backoff(async () => {
-    await apiRequest<JsonValue>(
+    await apiRequest(
       `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/actions`,
-      token,
+      token ?? null,
       {
         method: 'POST',
         signal,
@@ -345,7 +507,7 @@ export async function taskAction(
 
 // Error formatting helper
 export function formatProjectError(err: unknown, fallback: string): string {
-  if (!isApiError(err)) return `${fallback}: ${(err as Error).message}`
+  if (!isApiError(err)) return `${fallback}: ${getErrorMessage(err)}`
   const code = err.errorCode?.trim() || 'unknown_error'
   if (err.status === 401) {
     return `未授权 401：请先扫码授权或提供有效 token（${code}）`

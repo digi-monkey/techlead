@@ -201,10 +201,13 @@ fn buildLogPath(
     const sanitized = try sanitizeLogLabel(allocator, log_label);
     defer allocator.free(sanitized);
 
+    const filename = try std.fmt.allocPrint(allocator, "{s}.log", .{sanitized});
+    defer allocator.free(filename);
+
     return std.fs.path.join(allocator, &[_][]const u8{
         cfg.work_dir,
         cfg.log_dir,
-        try std.fmt.allocPrint(allocator, "{s}.log", .{sanitized}),
+        filename,
     });
 }
 

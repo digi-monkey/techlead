@@ -98,7 +98,8 @@ function loadOutboxFromStorage(): OutboxItem[] {
     const raw = localStorage.getItem(OUTBOX_STORAGE_KEY)
     if (!raw) return []
     return sanitizeOutbox(JSON.parse(raw))
-  } catch {
+  } catch (err) {
+    console.error('[useSessionOutbox] Failed to load outbox from localStorage:', err);
     return []
   }
 }
@@ -127,8 +128,8 @@ export function useSessionOutbox() {
     const timer = setTimeout(() => {
       try {
         localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(outbox))
-      } catch {
-        // Ignore localStorage failures.
+      } catch (err) {
+        console.error('[useSessionOutbox] Failed to save outbox to localStorage:', err);
       }
     }, 500)
     return () => clearTimeout(timer)
