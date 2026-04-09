@@ -16,6 +16,7 @@ import {
 import { useDebouncedState } from '../hooks/useDebouncedState'
 
 type TaskPoolViewProps = {
+  projectId: string
   observeAuth?: string
   controlAuth?: string
 }
@@ -159,7 +160,7 @@ function renderReviewCard(review: TaskReviewSummary, emptyTitle: string) {
   )
 }
 
-export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
+export function TaskPoolView({ projectId, observeAuth, controlAuth }: TaskPoolViewProps) {
   const [statusFilter, setStatusFilter] = useState<TaskListStatusFilter>('all')
   const [searchInput, searchQuery, setSearchInput] = useDebouncedState('', 250)
   const [cursor, setCursor] = useState(0)
@@ -246,6 +247,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
     if (!silent) setListLoading(true)
     try {
       const data = await listTaskPoolTasks({
+        projectId,
         token: observeAuth,
         status: statusFilter,
         q: searchQuery,
@@ -267,7 +269,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
   const refreshDetail = useCallback(async (taskId: string, silent: boolean) => {
     if (!silent) setDetailLoading(true)
     try {
-      const detail = await getTaskPoolDetail({ token: observeAuth, taskId })
+      const detail = await getTaskPoolDetail({ projectId, token: observeAuth, taskId })
       setSelectedTask(detail.task)
       const taskEvents = detail.events.filter((evt) => evt.task_id === taskId)
       const normalized = normalizeTimeline(taskEvents)
@@ -290,7 +292,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
 
   const refreshTimeline = useCallback(async (taskId: string) => {
     try {
-      const stream = await getTaskPoolEvents({ token: observeAuth, after: timelineCursorRef.current })
+      const stream = await getTaskPoolEvents({ projectId, token: observeAuth, after: timelineCursorRef.current })
       timelineCursorRef.current = Math.max(timelineCursorRef.current, stream.last_event_id)
       const incoming = stream.events.filter((evt) => evt.task_id === taskId)
       if (incoming.length > 0) {
@@ -374,6 +376,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
     setActionMessage('')
     try {
       await runTaskPoolAction({
+        projectId,
         token: controlAuth,
         taskId: selectedTaskId,
         action,

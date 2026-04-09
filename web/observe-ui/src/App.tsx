@@ -384,7 +384,23 @@ export default function App() {
             onRetryCommand={handleRetryCommand}
           />
         )}
-        {mainView === 'task-pool' && <TaskPoolView observeAuth={observeAuth} controlAuth={controlAuth} />}
+        {mainView === 'task-pool' && selectedProjectId && (
+          <TaskPoolView projectId={selectedProjectId} observeAuth={observeAuth} controlAuth={controlAuth} />
+        )}
+        {mainView === 'task-pool' && !selectedProjectId && (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <p className="text-sm text-slate-500">No project selected for Task Pool</p>
+              <button
+                type="button"
+                onClick={() => setMainView('projects')}
+                className="mt-2 text-sm text-slate-600 hover:text-slate-800"
+              >
+                Select a project first
+              </button>
+            </div>
+          </div>
+        )}
         {mainView === 'projects' && (
           <ProjectList observeAuth={observeAuth} onViewProject={handleViewProject} />
         )}

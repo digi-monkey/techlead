@@ -138,7 +138,12 @@ export function ProjectDetail({ projectId, observeAuth, onBack }: ProjectDetailP
         )}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-lg font-semibold text-slate-800">{project.name}</h1>
+            <h1 className="text-lg font-semibold text-slate-800">
+              {project.name === 'Unnamed Project' ? project.project_id : project.name}
+            </h1>
+            {project.name !== 'Unnamed Project' && (
+              <p className="mt-0.5 text-xs text-slate-400">{project.project_id}</p>
+            )}
             {project.description && (
               <p className="mt-1 text-sm text-slate-500">{project.description}</p>
             )}
