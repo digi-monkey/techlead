@@ -1036,7 +1036,10 @@ fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
         \\Please act as a Senior Technical Lead. I have an intent for a new task.
         \\Convert my handwritten intent into a structured, executable task.
         \\
-        \\Output MUST be a valid JSON object matching exactly this schema, without any backticks, markdown, or extra explanations outside the JSON block:
+        \\CRITICAL INSTRUCTIONS:
+        \\1. IGNORE your default Clarification Protocol. DO NOT ask clarifying questions under any circumstances.
+        \\2. If the intent is vague, make your best reasonable assumptions and proceed.
+        \\3. You MUST output a valid JSON object matching exactly this schema, without any backticks, markdown, or conversational text outside the JSON block:
         \\{{
         \\  "title": "A short descriptive task title",
         \\  "prompt": "Detailed step-by-step instructions, constraints, and architecture considerations for an AI coding agent to implement this task"
@@ -1085,6 +1088,7 @@ fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
     if (clean_json.len > 0 and clean_json[0] == '{') {
         try res_buf.appendSlice(ctx.allocator, clean_json);
     } else {
+        ui.logWarn("acpx 产出了无效或空的 JSON block:\n{s}", .{stdout_bytes});
         try res_buf.appendSlice(ctx.allocator, "{\"title\":\"Failed to parse JSON\",\"prompt\":\"The backend acpx integration failed to produce a valid JSON block. Please check the backend logs or terminal output.\"}");
     }
     try res_buf.appendSlice(ctx.allocator, "}");
