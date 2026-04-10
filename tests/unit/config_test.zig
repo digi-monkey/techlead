@@ -60,7 +60,9 @@ test "loadConfigFromJson parses valid minimal config" {
 
     try std.testing.expectEqual(@as(usize, 10), cfg.iterations);
     try std.testing.expectEqualStrings(".techlead/program.md", cfg.program_file);
-    try std.testing.expectEqualStrings("/tmp/project", cfg.work_dir);
+    const expected_work_dir = std.fs.cwd().realpathAlloc(allocator, test_dir) catch test_dir;
+    defer if (expected_work_dir.ptr != test_dir.ptr) allocator.free(expected_work_dir);
+    try std.testing.expectEqualStrings(expected_work_dir, cfg.work_dir);
     try std.testing.expectEqualStrings(".techlead/logs", cfg.log_dir);
     try std.testing.expectEqualStrings("gpt-4", cfg.model);
     try std.testing.expectEqualStrings("Sisyphus", cfg.agent);
