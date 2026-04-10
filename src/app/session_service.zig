@@ -55,17 +55,14 @@ pub fn startSession(
     provider_override: ?[]const u8,
     model_override: ?[]const u8,
 ) ![]u8 {
-    const cfg = try config.loadConfigFromJson(allocator, target_dir);
-    defer config.deinitConfig(allocator, &cfg);
-
-    const provider_raw = std.mem.trim(u8, provider_override orelse cfg.provider, " \t\r\n");
+    const provider_raw = std.mem.trim(u8, provider_override orelse "opencode", " \t\r\n");
     const provider = if (std.ascii.eqlIgnoreCase(provider_raw, "codex"))
         "codex"
     else if (std.ascii.eqlIgnoreCase(provider_raw, "opencode"))
         "opencode"
     else
         return error.ProviderNotSupportedForSession;
-    const model = model_override orelse cfg.model;
+    const model = model_override orelse "";
 
     g_session_ops_mutex.lock();
     defer g_session_ops_mutex.unlock();
@@ -194,14 +191,11 @@ pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, requ
     const user_text = (try store.getLatestUserMessageByRequestId(session.session_id, rid)) orelse return error.MessageNotFound;
     defer store.allocator.free(user_text);
 
-    var cfg = try config.loadConfigFromJson(allocator, target_dir);
-    defer config.deinitConfig(allocator, &cfg);
-
     const assistant = generateAssistantReply(
         allocator,
-        cfg.work_dir,
-        cfg.opencode_url,
-        cfg.agent,
+        target_dir,
+        "",
+        "",
         session.provider,
         session.model,
         session.provider_session_id,
