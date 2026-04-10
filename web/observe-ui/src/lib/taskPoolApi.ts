@@ -3,6 +3,8 @@ import {
   TaskPoolListResultSchema,
   TaskPoolDetailResultSchema,
   TaskPoolEventsResultSchema,
+  DraftTaskResultSchema,
+  CreateTaskResultSchema,
 } from './schemas'
 import type {
   TaskPoolTask,
@@ -10,6 +12,8 @@ import type {
   TaskPoolListResult,
   TaskPoolDetailResult,
   TaskPoolEventsResult,
+  DraftTaskResult,
+  CreateTaskResult,
 } from './schemas'
 
 export const TASK_STATUS_ORDER = ['queued', 'running', 'review', 'done', 'failed', 'canceled'] as const
@@ -68,6 +72,7 @@ async function requestWith429Backoff<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function listTaskPoolTasks(params: {
+  projectId: string
   token?: string
   status?: TaskListStatusFilter
   q?: string
@@ -85,7 +90,8 @@ export async function listTaskPoolTasks(params: {
   search.set('cursor', String(Math.max(0, params.cursor ?? 0)))
   search.set('limit', String(Math.max(1, Math.min(200, params.limit ?? 30))))
   const qs = search.toString()
-  const path = qs.length > 0 ? `/tasks?${qs}` : '/tasks'
+  const basePath = `/projects/${encodeURIComponent(params.projectId)}/tasks`
+  const path = qs.length > 0 ? `${basePath}?${qs}` : basePath
 
   return requestWith429Backoff(async () => {
     return await apiRequest(path, params.token ?? null, { signal: params.signal }, TaskPoolListResultSchema)
@@ -93,12 +99,13 @@ export async function listTaskPoolTasks(params: {
 }
 
 export async function getTaskPoolDetail(params: {
+  projectId: string
   token?: string
   taskId: string
   signal?: AbortSignal
 }): Promise<TaskPoolDetailResult> {
   return requestWith429Backoff(async () => {
-    const path = `/tasks/${encodeURIComponent(params.taskId)}`
+    const path = `/projects/${encodeURIComponent(params.projectId)}/tasks/${encodeURIComponent(params.taskId)}`
     const result = await apiRequest(path, params.token ?? null, { signal: params.signal }, TaskPoolDetailResultSchema)
     return {
       task: result.task,
@@ -108,13 +115,14 @@ export async function getTaskPoolDetail(params: {
 }
 
 export async function getTaskPoolEvents(params: {
+  projectId: string
   token?: string
   after?: number
   signal?: AbortSignal
 }): Promise<TaskPoolEventsResult> {
   const after = Math.max(0, params.after ?? 0)
   return requestWith429Backoff(async () => {
-    const path = `/tasks/events?after=${after}`
+    const path = `/projects/${encodeURIComponent(params.projectId)}/events?after=${after}`
     const result = await apiRequest(path, params.token ?? null, { signal: params.signal }, TaskPoolEventsResultSchema)
     return {
       events: result.events.filter((evt) => evt.id > 0),
@@ -124,6 +132,7 @@ export async function getTaskPoolEvents(params: {
 }
 
 export async function runTaskPoolAction(params: {
+  projectId: string
   token?: string
   taskId: string
   action: TaskPoolAction
@@ -131,11 +140,67 @@ export async function runTaskPoolAction(params: {
 }): Promise<void> {
   const requestId = newRequestId()
   await requestWith429Backoff(async () => {
-    await apiRequest(`/tasks/${encodeURIComponent(params.taskId)}/actions`, params.token ?? null, {
+    await apiRequest(`/projects/${encodeURIComponent(params.projectId)}/tasks/${encodeURIComponent(params.taskId)}/actions`, params.token ?? null, {
       method: 'POST',
       signal: params.signal,
       headers: { 'X-Request-Id': requestId },
       body: JSON.stringify({ action: params.action, request_id: requestId }),
     })
+  })
+}
+
+export async function draftTask(params: {
+  projectId: string
+  intent: string
+  provider?: string
+  token?: string
+  signal?: AbortSignal
+}): Promise<DraftTaskResult> {
+  const requestId = newRequestId()
+  return requestWith429Backoff(async () => {
+    return await apiRequest(
+      `/projects/${encodeURIComponent(params.projectId)}/tasks/draft`,
+      params.token ?? null,
+      {
+        method: 'POST',
+        signal: params.signal,
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({
+          intent: params.intent,
+          provider: params.provider,
+          request_id: requestId,
+        }),
+      },
+      DraftTaskResultSchema
+    )
+  })
+}
+
+export async function createTask(params: {
+  projectId: string
+  title: string
+  prompt: string
+  max_retries?: number
+  token?: string
+  signal?: AbortSignal
+}): Promise<CreateTaskResult> {
+  const requestId = newRequestId()
+  return requestWith429Backoff(async () => {
+    return await apiRequest(
+      `/projects/${encodeURIComponent(params.projectId)}/tasks`,
+      params.token ?? null,
+      {
+        method: 'POST',
+        signal: params.signal,
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({
+          title: params.title,
+          prompt: params.prompt,
+          max_retries: params.max_retries,
+          request_id: requestId,
+        }),
+      },
+      CreateTaskResultSchema
+    )
   })
 }

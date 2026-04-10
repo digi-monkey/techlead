@@ -209,8 +209,15 @@ fn processClaimedTask(
     defer implement_result.deinit(allocator);
 
     if (implement_result.status != .implemented) {
-        ui.logWarn("task {s} implement phase blocked: status={s}", .{ task.task_id, @tagName(implement_result.status) });
-        return error.ImplementBlocked;
+        ui.logWarn("task {s} implement phase blocked: status={s} summary={s}", .{ task.task_id, @tagName(implement_result.status), implement_result.summary });
+        const blocked_msg = try std.fmt.allocPrint(
+            allocator,
+            "implement blocked (status={s}): {s}",
+            .{ @tagName(implement_result.status), implement_result.summary },
+        );
+        defer allocator.free(blocked_msg);
+        const fail_result = try cps.markFailedOrRequeue(project_id, task.task_id, run_id, run_id, blocked_msg, cfg.pool_max_retries);
+        return failResultToOutcome(fail_result);
     }
 
     try ensureImplementationCommit(allocator, cfg.work_dir, task.task_id, review_round);

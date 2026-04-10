@@ -22,7 +22,14 @@ export function ProjectCard({ project, onClick }: ProjectCardProps) {
       className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left transition-all hover:border-slate-300 hover:shadow-sm"
     >
       <div className="flex items-start justify-between gap-2">
-        <h3 className="truncate text-sm font-semibold text-slate-800">{project.name}</h3>
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-slate-800">
+            {project.name === 'Unnamed Project' ? project.project_id : project.name}
+          </h3>
+          {project.name !== 'Unnamed Project' && (
+            <p className="truncate text-xs text-slate-400">{project.project_id}</p>
+          )}
+        </div>
         <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] ${statusColor}`}>
           {status}
         </span>

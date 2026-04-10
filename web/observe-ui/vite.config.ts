@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
         '/tasks': backend,
         '/runs': backend,
         '/sessions': backend,
+        '/projects': backend,
       },
     },
   }

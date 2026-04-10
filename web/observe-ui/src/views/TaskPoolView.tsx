@@ -14,10 +14,13 @@ import {
   type TaskReviewSummary,
 } from '../lib/taskPoolApi'
 import { useDebouncedState } from '../hooks/useDebouncedState'
+import { CreateTaskModal } from '../components/CreateTaskModal'
 
 type TaskPoolViewProps = {
+  projectId: string
   observeAuth?: string
   controlAuth?: string
+  onBack?: () => void
 }
 
 const LIST_POLL_MS = 5000
@@ -52,7 +55,7 @@ function formatError(err: unknown, fallback: string): string {
 }
 
 function stringifyPayload(evt: TaskPoolEvent): string {
-  if (evt.payload_text.trim().length > 0) {
+  if (evt.payload_text.trim().length > 0 && evt.payload_text.trim() !== '{}') {
     try {
       const parsed = JSON.parse(evt.payload_text) as unknown
       return JSON.stringify(parsed, null, 2)
@@ -60,14 +63,40 @@ function stringifyPayload(evt: TaskPoolEvent): string {
       return evt.payload_text
     }
   }
-  if (evt.payload_json) {
+  if (evt.payload_json && JSON.stringify(evt.payload_json) !== '{}') {
     try {
       return JSON.stringify(evt.payload_json, null, 2)
     } catch {
       return '{}'
     }
   }
-  return '{}'
+  // For events with no meaningful payload, show contextual info
+  const parts: string[] = []
+  const typeDesc = eventTypeDescription(evt.event_type)
+  if (typeDesc) parts.push(typeDesc)
+  if (evt.run_id) parts.push(`run: ${evt.run_id}`)
+  if (evt.operator) parts.push(`by: ${evt.operator}`)
+  if (evt.request_id) parts.push(`req: ${evt.request_id}`)
+  return parts.length > 0 ? parts.join('\n') : '(no details)'
+}
+
+function eventTypeDescription(eventType: string): string {
+  const map: Record<string, string> = {
+    'task.running': '任务开始执行',
+    'task.done': '任务完成',
+    'task.failed': '任务失败',
+    'task.requeue': '任务重新排队（将自动重试）',
+    'task.created': '任务创建',
+    'task.updated': '任务已更新',
+    'task.review.opened': '代码审查已开启',
+    'task.review.approved': '代码审查通过',
+    'task.review.changes_requested.requeue': '审查要求修改 → 重新排队',
+    'task.review.changes_requested.fail': '审查要求修改 → 已达最大重试次数',
+    'task.merge.succeeded': '代码合并成功',
+    'task.action.requeue': '手动重新排队',
+    'task.action.cancel': '手动取消',
+  }
+  return map[eventType] ?? ''
 }
 
 function eventTone(eventType: string): string {
@@ -159,11 +188,12 @@ function renderReviewCard(review: TaskReviewSummary, emptyTitle: string) {
   )
 }
 
-export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
+export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: TaskPoolViewProps) {
   const [statusFilter, setStatusFilter] = useState<TaskListStatusFilter>('all')
   const [searchInput, searchQuery, setSearchInput] = useDebouncedState('', 250)
   const [cursor, setCursor] = useState(0)
   const [cursorHistory, setCursorHistory] = useState<number[]>([])
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   const [tasks, setTasks] = useState<TaskPoolTask[]>([])
   const [summary, setSummary] = useState<Record<string, number>>({})
@@ -246,6 +276,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
     if (!silent) setListLoading(true)
     try {
       const data = await listTaskPoolTasks({
+        projectId,
         token: observeAuth,
         status: statusFilter,
         q: searchQuery,
@@ -267,7 +298,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
   const refreshDetail = useCallback(async (taskId: string, silent: boolean) => {
     if (!silent) setDetailLoading(true)
     try {
-      const detail = await getTaskPoolDetail({ token: observeAuth, taskId })
+      const detail = await getTaskPoolDetail({ projectId, token: observeAuth, taskId })
       setSelectedTask(detail.task)
       const taskEvents = detail.events.filter((evt) => evt.task_id === taskId)
       const normalized = normalizeTimeline(taskEvents)
@@ -290,7 +321,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
 
   const refreshTimeline = useCallback(async (taskId: string) => {
     try {
-      const stream = await getTaskPoolEvents({ token: observeAuth, after: timelineCursorRef.current })
+      const stream = await getTaskPoolEvents({ projectId, token: observeAuth, after: timelineCursorRef.current })
       timelineCursorRef.current = Math.max(timelineCursorRef.current, stream.last_event_id)
       const incoming = stream.events.filter((evt) => evt.task_id === taskId)
       if (incoming.length > 0) {
@@ -374,6 +405,7 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
     setActionMessage('')
     try {
       await runTaskPoolAction({
+        projectId,
         token: controlAuth,
         taskId: selectedTaskId,
         action,
@@ -395,8 +427,29 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-[320px_minmax(420px,1fr)_minmax(360px,1fr)]">
       <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <header className="mb-2">
-          <h2 className="text-sm font-semibold text-slate-800">Task Pool</h2>
-          <p className="text-xs text-slate-500">分组列表 / 搜索 / 分页</p>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="mb-2 flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to Projects
+            </button>
+          )}
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-slate-800">Task Pool</h2>
+            <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">{projectId}</span>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow hover:bg-blue-700 transition"
+            >
+              + New Task
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">分组列表 / 搜索 / 分页</p>
         </header>
 
         <div className="grid gap-2">
@@ -629,6 +682,18 @@ export function TaskPoolView({ observeAuth, controlAuth }: TaskPoolViewProps) {
           )}
         </div>
       </section>
+
+      {showCreateModal && (
+        <CreateTaskModal
+          projectId={projectId}
+          token={controlAuth}
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={() => {
+            setShowCreateModal(false)
+            void refreshList(false)
+          }}
+        />
+      )}
     </div>
   )
 }

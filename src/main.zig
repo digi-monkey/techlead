@@ -276,6 +276,49 @@ pub fn main() !void {
         return;
     }
 
+    if (std.mem.eql(u8, command, "session")) {
+        if (args.len < 3 or !std.mem.eql(u8, args[2], "process-message")) {
+            ui.logError("session 仅支持子命令: process-message", .{});
+            std.process.exit(1);
+        }
+        var target_dir: ?[]const u8 = null;
+        var request_id: ?[]const u8 = null;
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--dir")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("session 参数无效，--dir 需要目录参数", .{});
+                    std.process.exit(1);
+                }
+                target_dir = args[i + 1];
+                i += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, args[i], "--request-id")) {
+                if (i + 1 >= args.len) {
+                    ui.logError("session 参数无效，--request-id 需要参数", .{});
+                    std.process.exit(1);
+                }
+                request_id = args[i + 1];
+                i += 1;
+                continue;
+            }
+            ui.logError("session 参数无效: {s}", .{args[i]});
+            std.process.exit(1);
+        }
+        if (target_dir == null or request_id == null) {
+            ui.logError("session process-message 需要 --dir 和 --request-id", .{});
+            std.process.exit(1);
+        }
+
+        const session_service = @import("app/session_service.zig");
+        _ = session_service.processInFlightMessage(allocator, target_dir.?, request_id.?) catch |err| {
+            ui.logError("处理消息失败: {any}", .{err});
+            std.process.exit(1);
+        };
+        return;
+    }
+
     if (std.mem.eql(u8, command, "init-agent")) {
         runner.runInitAgentCommand(allocator, args[2..]) catch |err| {
             switch (err) {
@@ -310,4 +353,5 @@ pub fn main() !void {
 
     ui.logError("未知命令: {s}", .{command});
     showHelp();
+    std.process.exit(1);
 }

@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { apiRequest, newRequestId } from './lib/api'
+import { apiRequest, newRequestId, getErrorMessage } from './lib/api'
 import { extractBootstrapParams, readAuthQuery } from './lib/auth'
 import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
 import { useSessionOutbox } from './hooks/useSessionOutbox'
 import { useSessionPolling } from './hooks/useSessionPolling'
-import { ProjectDetail } from './views/ProjectDetail'
 import { ProjectList } from './views/ProjectList'
 import { SessionView } from './views/SessionView'
 import { TaskPoolView } from './views/TaskPoolView'
 import type { JsonValue } from './types'
 
 type SessionProvider = 'codex' | 'opencode'
-type MainView = 'session' | 'task-pool' | 'projects' | 'project-detail'
+type MainView = 'session' | 'projects' | 'project-detail'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 const MAIN_VIEW_STORAGE_KEY = 'techlead.observe.main.view'
 const PROJECT_ID_STORAGE_KEY = 'techlead.observe.project.id'
@@ -43,7 +42,6 @@ export default function App() {
   const [isEndingSession, setIsEndingSession] = useState(false)
   const [mainView, setMainView] = useState<MainView>(() => {
     const raw = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)
-    if (raw === 'task-pool') return 'task-pool'
     if (raw === 'projects') return 'projects'
     if (raw === 'project-detail') return 'project-detail'
     return 'session'
@@ -164,7 +162,7 @@ export default function App() {
   }, [])
 
   const startSession = useCallback(async () => {
-    if (!controlAuth || isStartingSession) return
+    if (isStartingSession) return
     setIsStartingSession(true)
     clearOutbox()
     try {
@@ -176,12 +174,12 @@ export default function App() {
       })
       clearOutbox()
       setSessionInput('')
-    } catch {
-      void 0
+    } catch (err: any) {
+      alert("Start Session Failed: " + getErrorMessage(err))
     } finally {
       setIsStartingSession(false)
     }
-  }, [controlAuth, sessionProvider, clearOutbox, isStartingSession])
+  }, [sessionProvider, clearOutbox, isStartingSession])
 
   const endSession = useCallback(async () => {
     if (isEndingSession) return
@@ -195,8 +193,8 @@ export default function App() {
       })
       clearOutbox()
       setSessionInput('')
-    } catch {
-      void 0
+    } catch (err: any) {
+      alert("End Session Failed: " + getErrorMessage(err))
     } finally {
       setIsEndingSession(false)
     }
@@ -244,10 +242,8 @@ export default function App() {
     updateOutbox,
   })
 
-  const maxWidthClass = mainView === 'task-pool' || mainView === 'projects' || mainView === 'project-detail' ? 'max-w-[1700px]' : 'max-w-4xl'
-
   return (
-    <div className={`mx-auto flex h-full max-h-dvh w-full ${maxWidthClass} flex-col`}>
+    <div className="mx-auto flex h-full max-h-dvh w-full max-w-[1700px] flex-col">
       <header className="bg-slate-900 py-3 text-white">
         <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
           <div className="flex items-center gap-3">
@@ -261,15 +257,6 @@ export default function App() {
                 }`}
               >
                 Session
-              </button>
-              <button
-                type="button"
-                onClick={() => setMainView('task-pool')}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  mainView === 'task-pool' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
-                }`}
-              >
-                Task Pool
               </button>
               <button
                 type="button"
@@ -364,7 +351,7 @@ export default function App() {
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+      <main className="min-h-0 flex-1 overflow-y-auto px-0 sm:px-4 sm:pt-4">
         {mainView === 'session' && (
           <SessionView
             sessionState={sessionState}
@@ -384,14 +371,14 @@ export default function App() {
             onRetryCommand={handleRetryCommand}
           />
         )}
-        {mainView === 'task-pool' && <TaskPoolView observeAuth={observeAuth} controlAuth={controlAuth} />}
         {mainView === 'projects' && (
           <ProjectList observeAuth={observeAuth} onViewProject={handleViewProject} />
         )}
         {mainView === 'project-detail' && selectedProjectId && (
-          <ProjectDetail
-            projectId={selectedProjectId}
-            observeAuth={observeAuth}
+          <TaskPoolView 
+            projectId={selectedProjectId} 
+            observeAuth={observeAuth} 
+            controlAuth={controlAuth} 
             onBack={handleBackFromProject}
           />
         )}
@@ -409,7 +396,7 @@ export default function App() {
             </div>
           </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }

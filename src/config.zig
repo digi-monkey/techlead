@@ -154,7 +154,7 @@ pub fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
         .iterations = value.iterations,
         .program_file = try allocator.dupe(u8, value.program_file),
         .opencode_url = try allocator.dupe(u8, value.opencode_url),
-        .work_dir = try allocator.dupe(u8, value.work_dir),
+        .work_dir = std.fs.cwd().realpathAlloc(allocator, base_dir) catch try allocator.dupe(u8, value.work_dir),
         .log_dir = try allocator.dupe(u8, value.log_dir),
         .model = try allocator.dupe(u8, value.model),
         .agent = try allocator.dupe(u8, value.agent),

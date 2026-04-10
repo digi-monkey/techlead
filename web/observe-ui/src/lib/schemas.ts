@@ -12,15 +12,15 @@ export type EventRow = z.infer<typeof EventRowSchema>
 
 export const ProjectSchema = z.object({
   project_id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  repository_url: z.string().nullable(),
-  base_branch: z.string(),
-  created_at: z.number(),
-  updated_at: z.number(),
-  task_count: z.number(),
-  running_count: z.number(),
-  completed_count: z.number(),
+  name: z.string().catch('Unnamed Project').optional().transform(v => v || 'Unnamed Project'),
+  description: z.string().catch('').optional().transform(v => v || ''),
+  repository_url: z.string().nullable().catch(null),
+  base_branch: z.string().catch('master').optional().transform(v => v || 'master'),
+  created_at: z.number().catch(0),
+  updated_at: z.number().catch(0),
+  task_count: z.number().catch(0),
+  running_count: z.number().catch(0),
+  completed_count: z.number().catch(0),
 })
 
 export type Project = z.infer<typeof ProjectSchema>
@@ -37,7 +37,7 @@ export type ProjectSummary = z.infer<typeof ProjectSummarySchema>
 
 export const ProjectTaskSchema = z.object({
   task_id: z.string(),
-  project_id: z.string(),
+  project_id: z.string().catch('').optional().transform(v => v || ''),
   title: z.string(),
   prompt: z.string(),
   status: z.enum(['queued', 'running', 'review', 'done', 'failed', 'canceled', 'claimed']),
@@ -115,65 +115,73 @@ export const TaskActionSchema = z.enum(['start', 'pause', 'resume', 'abort', 'as
 export type TaskAction = z.infer<typeof TaskActionSchema>
 
 export const TaskReviewBlockerSchema = z.object({
-  title: z.string(),
-  detail: z.string(),
-  severity: z.string(),
-  file: z.string(),
-  line: z.number().nullable(),
-  evidence: z.string(),
-  clean_code_rule: z.string(),
+  title: z.string().catch(''),
+  detail: z.string().catch(''),
+  severity: z.string().catch(''),
+  file: z.string().catch(''),
+  line: z.number().nullable().catch(null),
+  evidence: z.string().catch(''),
+  clean_code_rule: z.string().catch(''),
 })
 
 export type TaskReviewBlocker = z.infer<typeof TaskReviewBlockerSchema>
 
 export const TaskReviewSummarySchema = z.object({
-  role: z.enum(['correctness_reviewer', 'maintainability_reviewer', 'unknown']),
-  verdict: z.enum(['approve', 'request_changes', 'block', 'unknown']),
-  score: z.number().nullable(),
-  summary: z.string(),
-  blockers: z.array(TaskReviewBlockerSchema),
-  suggestions: z.array(z.string()),
-  confidence: z.number().nullable(),
+  role: z.enum(['correctness_reviewer', 'maintainability_reviewer', 'unknown']).catch('unknown'),
+  verdict: z.enum(['approve', 'request_changes', 'block', 'unknown']).catch('unknown'),
+  score: z.number().nullable().catch(null),
+  summary: z.string().catch(''),
+  blockers: z.array(TaskReviewBlockerSchema).catch([]),
+  suggestions: z.array(z.string()).catch([]),
+  confidence: z.number().nullable().catch(null),
 })
 
 export type TaskReviewSummary = z.infer<typeof TaskReviewSummarySchema>
 
 export const TaskPoolTaskSchema = z.object({
   task_id: z.string(),
-  title: z.string(),
-  prompt: z.string(),
-  status: z.enum(['queued', 'running', 'review', 'done', 'failed', 'canceled', 'claimed', 'unknown']),
-  review_stage: z.enum(['none', 'open', 'changes_requested', 'approved', 'merged', 'unknown']),
-  review_round: z.number(),
-  priority: z.number(),
-  max_retries: z.number().nullable(),
-  retry_count: z.number(),
-  version: z.number(),
-  created_at: z.number(),
-  updated_at: z.number(),
-  base_branch: z.string(),
-  head_branch: z.string(),
-  head_sha: z.string(),
-  merge_commit: z.string(),
-  review_feedback: z.string(),
-  last_error: z.string(),
-  latest_reviews: z.array(TaskReviewSummarySchema),
+  title: z.string().catch(''),
+  prompt: z.string().catch(''),
+  status: z.enum(['queued', 'running', 'review', 'done', 'failed', 'canceled', 'claimed', 'unknown']).catch('unknown'),
+  review_stage: z.enum(['none', 'open', 'changes_requested', 'approved', 'merged', 'unknown']).catch('unknown'),
+  review_round: z.number().catch(0),
+  priority: z.number().catch(0),
+  max_retries: z.number().nullable().catch(null),
+  retry_count: z.number().catch(0),
+  version: z.number().catch(0),
+  created_at: z.number().catch(0),
+  updated_at: z.number().catch(0),
+  base_branch: z.string().nullable().catch(null).transform(v => v || ''),
+  head_branch: z.string().nullable().catch(null).transform(v => v || ''),
+  head_sha: z.string().nullable().catch(null).transform(v => v || ''),
+  merge_commit: z.string().nullable().catch(null).transform(v => v || ''),
+  review_feedback: z.string().nullable().catch(null).transform(v => v || ''),
+  last_error: z.string().nullable().catch(null).transform(v => v || ''),
+  latest_reviews: z.array(TaskReviewSummarySchema).nullable().catch([]).transform(v => v || []),
 })
 
 export type TaskPoolTask = z.infer<typeof TaskPoolTaskSchema>
 
-export const TaskPoolEventSchema = z.object({
-  id: z.number(),
-  task_id: z.string(),
-  run_id: z.string(),
-  event_type: z.string(),
-  payload_text: z.string(),
-  payload_json: z.any().nullable(),
-  operator: z.string(),
-  source: z.string(),
-  request_id: z.string(),
-  created_at: z.number(),
-})
+export const TaskPoolEventSchema = z.preprocess((raw: unknown) => {
+  // Backend sends `payload` (string), frontend uses `payload_text`.
+  // Map the field name so Zod can parse it correctly.
+  if (raw && typeof raw === 'object' && 'payload' in raw && !('payload_text' in raw)) {
+    const { payload, ...rest } = raw as Record<string, unknown>
+    return { ...rest, payload_text: payload }
+  }
+  return raw
+}, z.object({
+  id: z.number().catch(0),
+  task_id: z.string().catch(''),
+  run_id: z.string().nullable().catch(null).transform(v => v || ''),
+  event_type: z.string().nullable().catch(null).transform(v => v || ''),
+  payload_text: z.string().nullable().catch(null).transform(v => v || ''),
+  payload_json: z.any().nullable().catch(null),
+  operator: z.string().nullable().catch(null).transform(v => v || ''),
+  source: z.string().nullable().catch(null).transform(v => v || ''),
+  request_id: z.string().nullable().catch(null).transform(v => v || ''),
+  created_at: z.number().catch(0),
+}))
 
 export type TaskPoolEvent = z.infer<typeof TaskPoolEventSchema>
 
@@ -189,15 +197,15 @@ export const TaskPoolListResultSchema = z.object({
 export type TaskPoolListResult = z.infer<typeof TaskPoolListResultSchema>
 
 export const TaskPoolDetailResultSchema = z.object({
-  task: TaskPoolTaskSchema.nullable(),
-  events: z.array(TaskPoolEventSchema),
+  task: TaskPoolTaskSchema.nullable().catch(null),
+  events: z.array(TaskPoolEventSchema).nullable().catch([]).transform(v => v || []),
 })
 
 export type TaskPoolDetailResult = z.infer<typeof TaskPoolDetailResultSchema>
 
 export const TaskPoolEventsResultSchema = z.object({
-  events: z.array(TaskPoolEventSchema),
-  last_event_id: z.number(),
+  events: z.array(TaskPoolEventSchema).nullable().catch([]).transform(v => v || []),
+  last_event_id: z.number().catch(0),
 })
 
 export type TaskPoolEventsResult = z.infer<typeof TaskPoolEventsResultSchema>
@@ -215,3 +223,35 @@ export const SessionSyncStateSchema = z.object({
 })
 
 export type SessionSyncState = z.infer<typeof SessionSyncStateSchema>
+
+export const DraftTaskPayloadSchema = z.object({
+  intent: z.string(),
+  provider: z.string().optional(),
+})
+
+export type DraftTaskPayload = z.infer<typeof DraftTaskPayloadSchema>
+
+export const DraftTaskResultSchema = z.object({
+  ok: z.boolean(),
+  draft: z.object({
+    title: z.string(),
+    prompt: z.string(),
+  }).optional(),
+})
+
+export type DraftTaskResult = z.infer<typeof DraftTaskResultSchema>
+
+export const CreateTaskPayloadSchema = z.object({
+  title: z.string(),
+  prompt: z.string(),
+  max_retries: z.number().optional(),
+})
+
+export type CreateTaskPayload = z.infer<typeof CreateTaskPayloadSchema>
+
+export const CreateTaskResultSchema = z.object({
+  ok: z.boolean(),
+  task_id: z.string().optional(),
+})
+
+export type CreateTaskResult = z.infer<typeof CreateTaskResultSchema>
