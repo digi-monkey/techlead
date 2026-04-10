@@ -1001,7 +1001,13 @@ pub const SqliteControlPlaneStore = struct {
         if (rc != SQLITE_DONE) return error.SqliteExecFailed;
         if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
-        try self.appendTaskEvent(task_id, run_id, "task.running", "{}", null, null, null);
+        var run_payload_buf: [512]u8 = undefined;
+        const run_payload = std.fmt.bufPrint(
+            &run_payload_buf,
+            "{{\"status\":\"running\",\"run_id\":{f}}}",
+            .{std.json.fmt(run_id, .{})},
+        ) catch "{}";
+        try self.appendTaskEvent(task_id, run_id, "task.running", run_payload, null, null, null);
     }
 
     fn markDone(ctx: *anyopaque, project_id: []const u8, task_id: []const u8, owner: []const u8, run_id: []const u8) controlplane_store.StoreError!void {
@@ -1066,7 +1072,13 @@ pub const SqliteControlPlaneStore = struct {
             if (rc != SQLITE_DONE) return error.SqliteExecFailed;
             if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
-            try self.appendTaskEvent(task_id, run_id, "task.requeue", "{}", null, null, null);
+            var requeue_payload_buf: [512]u8 = undefined;
+            const requeue_payload = std.fmt.bufPrint(
+                &requeue_payload_buf,
+                "{{\"status\":\"queued\",\"retry_count\":{d},\"max_retries\":{d}}}",
+                .{ next_retry, max_retries },
+            ) catch "{}";
+            try self.appendTaskEvent(task_id, run_id, "task.requeue", requeue_payload, null, null, null);
         } else {
             const sql = "UPDATE tasks SET status='failed', retry_count=?1, lease_owner=NULL, lease_until=NULL, last_error=?2, updated_at=?3, version=version+1 WHERE project_id=?4 AND task_id=?5 AND lease_owner=?6;";
             const stmt = try self.prepare(sql);
@@ -1083,7 +1095,13 @@ pub const SqliteControlPlaneStore = struct {
             if (rc != SQLITE_DONE) return error.SqliteExecFailed;
             if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
-            try self.appendTaskEvent(task_id, run_id, "task.failed", "{}", null, null, null);
+            var fail_payload_buf: [1024]u8 = undefined;
+            const fail_payload = std.fmt.bufPrint(
+                &fail_payload_buf,
+                "{{\"status\":\"failed\",\"retry_count\":{d},\"max_retries\":{d},\"error\":{f}}}",
+                .{ next_retry, max_retries, std.json.fmt(message, .{}) },
+            ) catch "{}";
+            try self.appendTaskEvent(task_id, run_id, "task.failed", fail_payload, null, null, null);
         }
 
         const final_status: task_store.TaskStatus = if (should_requeue) .queued else .failed;
@@ -1192,7 +1210,13 @@ pub const SqliteControlPlaneStore = struct {
             if (rc != SQLITE_DONE) return error.SqliteExecFailed;
             if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
-            try self.appendTaskEvent(task_id, run_id, "task.review.changes_requested.requeue", "{}", null, null, null);
+            var cr_requeue_buf: [512]u8 = undefined;
+            const cr_requeue_payload = std.fmt.bufPrint(
+                &cr_requeue_buf,
+                "{{\"status\":\"queued\",\"retry_count\":{d},\"max_retries\":{d},\"reason\":\"changes_requested\"}}",
+                .{ next_retry, max_retries },
+            ) catch "{}";
+            try self.appendTaskEvent(task_id, run_id, "task.review.changes_requested.requeue", cr_requeue_payload, null, null, null);
         } else {
             const sql = "UPDATE tasks SET status='failed', review_stage='changes_requested', retry_count=?1, lease_owner=NULL, lease_until=NULL, review_feedback=?2, last_error=?3, updated_at=?4, version=version+1 WHERE project_id=?5 AND task_id=?6 AND lease_owner=?7;";
             const stmt = try self.prepare(sql);
@@ -1210,7 +1234,13 @@ pub const SqliteControlPlaneStore = struct {
             if (rc != SQLITE_DONE) return error.SqliteExecFailed;
             if (self.api.changes(self.db) != 1) return error.TaskNotClaimed;
 
-            try self.appendTaskEvent(task_id, run_id, "task.review.changes_requested.fail", "{}", null, null, null);
+            var cr_fail_buf: [512]u8 = undefined;
+            const cr_fail_payload = std.fmt.bufPrint(
+                &cr_fail_buf,
+                "{{\"status\":\"failed\",\"retry_count\":{d},\"max_retries\":{d},\"reason\":\"changes_requested_max_retries\"}}",
+                .{ next_retry, max_retries },
+            ) catch "{}";
+            try self.appendTaskEvent(task_id, run_id, "task.review.changes_requested.fail", cr_fail_payload, null, null, null);
         }
 
         const final_status: task_store.TaskStatus = if (should_requeue) .queued else .failed;

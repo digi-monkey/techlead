@@ -162,7 +162,15 @@ export const TaskPoolTaskSchema = z.object({
 
 export type TaskPoolTask = z.infer<typeof TaskPoolTaskSchema>
 
-export const TaskPoolEventSchema = z.object({
+export const TaskPoolEventSchema = z.preprocess((raw: unknown) => {
+  // Backend sends `payload` (string), frontend uses `payload_text`.
+  // Map the field name so Zod can parse it correctly.
+  if (raw && typeof raw === 'object' && 'payload' in raw && !('payload_text' in raw)) {
+    const { payload, ...rest } = raw as Record<string, unknown>
+    return { ...rest, payload_text: payload }
+  }
+  return raw
+}, z.object({
   id: z.number().catch(0),
   task_id: z.string().catch(''),
   run_id: z.string().nullable().catch(null).transform(v => v || ''),
@@ -173,7 +181,7 @@ export const TaskPoolEventSchema = z.object({
   source: z.string().nullable().catch(null).transform(v => v || ''),
   request_id: z.string().nullable().catch(null).transform(v => v || ''),
   created_at: z.number().catch(0),
-})
+}))
 
 export type TaskPoolEvent = z.infer<typeof TaskPoolEventSchema>
 

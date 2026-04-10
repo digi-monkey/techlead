@@ -54,7 +54,7 @@ function formatError(err: unknown, fallback: string): string {
 }
 
 function stringifyPayload(evt: TaskPoolEvent): string {
-  if (evt.payload_text.trim().length > 0) {
+  if (evt.payload_text.trim().length > 0 && evt.payload_text.trim() !== '{}') {
     try {
       const parsed = JSON.parse(evt.payload_text) as unknown
       return JSON.stringify(parsed, null, 2)
@@ -62,14 +62,40 @@ function stringifyPayload(evt: TaskPoolEvent): string {
       return evt.payload_text
     }
   }
-  if (evt.payload_json) {
+  if (evt.payload_json && JSON.stringify(evt.payload_json) !== '{}') {
     try {
       return JSON.stringify(evt.payload_json, null, 2)
     } catch {
       return '{}'
     }
   }
-  return '{}'
+  // For events with no meaningful payload, show contextual info
+  const parts: string[] = []
+  const typeDesc = eventTypeDescription(evt.event_type)
+  if (typeDesc) parts.push(typeDesc)
+  if (evt.run_id) parts.push(`run: ${evt.run_id}`)
+  if (evt.operator) parts.push(`by: ${evt.operator}`)
+  if (evt.request_id) parts.push(`req: ${evt.request_id}`)
+  return parts.length > 0 ? parts.join('\n') : '(no details)'
+}
+
+function eventTypeDescription(eventType: string): string {
+  const map: Record<string, string> = {
+    'task.running': '任务开始执行',
+    'task.done': '任务完成',
+    'task.failed': '任务失败',
+    'task.requeue': '任务重新排队（将自动重试）',
+    'task.created': '任务创建',
+    'task.updated': '任务已更新',
+    'task.review.opened': '代码审查已开启',
+    'task.review.approved': '代码审查通过',
+    'task.review.changes_requested.requeue': '审查要求修改 → 重新排队',
+    'task.review.changes_requested.fail': '审查要求修改 → 已达最大重试次数',
+    'task.merge.succeeded': '代码合并成功',
+    'task.action.requeue': '手动重新排队',
+    'task.action.cancel': '手动取消',
+  }
+  return map[eventType] ?? ''
 }
 
 function eventTone(eventType: string): string {
