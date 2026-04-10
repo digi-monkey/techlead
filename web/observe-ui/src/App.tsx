@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { apiRequest, newRequestId } from './lib/api'
+import { apiRequest, newRequestId, getErrorMessage } from './lib/api'
 import { extractBootstrapParams, readAuthQuery } from './lib/auth'
 import { useOutboxDispatcher } from './hooks/useOutboxDispatcher'
 import { useQrScanner } from './hooks/useQrScanner'
@@ -162,7 +162,7 @@ export default function App() {
   }, [])
 
   const startSession = useCallback(async () => {
-    if (!controlAuth || isStartingSession) return
+    if (isStartingSession) return
     setIsStartingSession(true)
     clearOutbox()
     try {
@@ -174,12 +174,12 @@ export default function App() {
       })
       clearOutbox()
       setSessionInput('')
-    } catch {
-      void 0
+    } catch (err: any) {
+      alert("Start Session Failed: " + getErrorMessage(err))
     } finally {
       setIsStartingSession(false)
     }
-  }, [controlAuth, sessionProvider, clearOutbox, isStartingSession])
+  }, [sessionProvider, clearOutbox, isStartingSession])
 
   const endSession = useCallback(async () => {
     if (isEndingSession) return
@@ -193,8 +193,8 @@ export default function App() {
       })
       clearOutbox()
       setSessionInput('')
-    } catch {
-      void 0
+    } catch (err: any) {
+      alert("End Session Failed: " + getErrorMessage(err))
     } finally {
       setIsEndingSession(false)
     }
@@ -351,7 +351,7 @@ export default function App() {
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+      <main className="min-h-0 flex-1 overflow-y-auto px-0 sm:px-4 sm:pt-4">
         {mainView === 'session' && (
           <SessionView
             sessionState={sessionState}
@@ -396,7 +396,7 @@ export default function App() {
             </div>
           </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }

@@ -47,6 +47,7 @@ const BootstrapIssue = struct {
 const ServerContext = struct {
     allocator: Allocator,
     store: controlplane_store.ControlPlaneStore,
+    base_dir: []const u8,
     log_dir: []const u8,
     host: []const u8,
     port: u16,
@@ -237,6 +238,7 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
     var ctx = ServerContext{
         .allocator = allocator,
         .store = store,
+        .base_dir = try allocator.dupe(u8, target_dir orelse "."),
         .log_dir = try getDefaultLogDir(allocator),
         .host = try allocator.dupe(u8, host),
         .port = port,
@@ -248,6 +250,7 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
         .bootstrap_tickets = std.StringHashMap(BootstrapTicket).init(allocator),
         .external_url = external_url,
     };
+    defer allocator.free(ctx.base_dir);
     defer allocator.free(ctx.log_dir);
     defer allocator.free(ctx.host);
     defer allocator.free(ctx.observe_token);
@@ -440,15 +443,17 @@ fn serveRequest(ctx: *ServerContext, req: *http.Server.Request) !void {
             return handleTasksApi(ctx, req, target, project_id);
         }
 
-        // /projects/:id/sessions/*
-        if (std.mem.startsWith(u8, after_project, "/sessions")) {
-            return handleSessionsApi(ctx, req, target, project_id);
-        }
-
         // /projects/:id/events
         if (std.mem.eql(u8, after_project, "/events")) {
             return handleProjectEvents(ctx, req, target, project_id);
         }
+    }
+
+    // === Global API ===
+
+    // /sessions/*
+    if (std.mem.startsWith(u8, target_path, "/sessions")) {
+        return handleSessionsApi(ctx, req, target);
     }
 
     return respondJson(req, .not_found, "{\"error\":\"not_found\"}");
@@ -1083,61 +1088,45 @@ fn handleTaskAction(ctx: *ServerContext, req: *http.Server.Request, project_id: 
 
 // === Sessions API Handlers ===
 
-fn handleSessionsApi(ctx: *ServerContext, req: *http.Server.Request, target: []const u8, project_id: []const u8) !void {
+fn handleSessionsApi(ctx: *ServerContext, req: *http.Server.Request, target: []const u8) !void {
     const path = pathNoQuery(target);
 
-    // GET /projects/:id/sessions/current
+    // GET /sessions/current
     if (std.mem.eql(u8, path, "/sessions/current")) {
-        return handleSessionCurrent(ctx, req, project_id);
+        return handleSessionCurrent(ctx, req);
     }
 
-    // POST /projects/:id/sessions/current/end
+    // POST /sessions/current/end
     if (std.mem.eql(u8, path, "/sessions/current/end")) {
-        return handleSessionEnd(ctx, req, project_id);
+        return handleSessionEnd(ctx, req);
     }
 
-    // POST /projects/:id/sessions/current/message
+    // POST /sessions/current/message
     if (std.mem.eql(u8, path, "/sessions/current/message")) {
-        return handleSessionMessage(ctx, req, project_id);
+        return handleSessionMessage(ctx, req);
     }
 
-    // POST /projects/:id/sessions/start
+    // POST /sessions/start
     if (std.mem.eql(u8, path, "/sessions/start")) {
-        return handleSessionStart(ctx, req, project_id);
+        return handleSessionStart(ctx, req);
     }
 
     return respondJson(req, .not_found, "{\"error\":\"not_found\"}");
 }
 
-fn handleSessionCurrent(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8) !void {
+fn handleSessionCurrent(ctx: *ServerContext, req: *http.Server.Request) !void {
     if (!authorizedObserve(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
     if (req.head.method != .GET) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
 
-    // Get project work_dir
-    const project = ctx.store.getProject(project_id, ctx.allocator) catch {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    } orelse {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    };
-    defer project.deinit(ctx.allocator);
-
-    const state = session_service.getSessionStateJson(ctx.allocator, project.work_dir) catch "{\"error\":\"session_not_found\"}";
+    const state = session_service.getSessionStateJson(ctx.allocator, ctx.base_dir) catch "{\"error\":\"session_not_found\"}";
     defer if (state.ptr != "{\"error\":\"session_not_found\"}".ptr) ctx.allocator.free(state);
     return respondJson(req, .ok, state);
 }
 
-fn handleSessionEnd(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8) !void {
+fn handleSessionEnd(ctx: *ServerContext, req: *http.Server.Request) !void {
     if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
     if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
     if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
-
-    // Get project work_dir
-    const project = ctx.store.getProject(project_id, ctx.allocator) catch {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    } orelse {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    };
-    defer project.deinit(ctx.allocator);
 
     var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
     defer if (request_id) |rid| ctx.allocator.free(rid);
@@ -1152,7 +1141,7 @@ fn handleSessionEnd(ctx: *ServerContext, req: *http.Server.Request, project_id: 
         if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
 
-    const end_result = session_service.endSession(ctx.allocator, project.work_dir) catch |err| {
+    const end_result = session_service.endSession(ctx.allocator, ctx.base_dir) catch |err| {
         ui.logWarn("session end failed: {any}", .{err});
         return respondJson(req, .bad_request, "{\"error\":\"session_end_failed\"}");
     };
@@ -1165,17 +1154,9 @@ fn handleSessionEnd(ctx: *ServerContext, req: *http.Server.Request, project_id: 
     return respondJson(req, .ok, body);
 }
 
-fn handleSessionMessage(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8) !void {
+fn handleSessionMessage(ctx: *ServerContext, req: *http.Server.Request) !void {
     if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
     if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
-
-    // Get project work_dir
-    const project = ctx.store.getProject(project_id, ctx.allocator) catch {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    } orelse {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    };
-    defer project.deinit(ctx.allocator);
 
     var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
     defer if (request_id) |rid| ctx.allocator.free(rid);
@@ -1198,7 +1179,7 @@ fn handleSessionMessage(ctx: *ServerContext, req: *http.Server.Request, project_
     }
     const rid = request_id orelse return respondJson(req, .bad_request, "{\"error\":\"request_id_required\"}");
 
-    const queue_result = session_service.enqueueMessage(ctx.allocator, project.work_dir, message.?, rid) catch |err| {
+    const queue_result = session_service.enqueueMessage(ctx.allocator, ctx.base_dir, message.?, rid) catch |err| {
         switch (err) {
             error.RequestIdRequired => return respondJson(req, .bad_request, "{\"error\":\"request_id_required\"}"),
             error.SessionBusy => return respondJson(req, .conflict, "{\"error\":\"session_busy\"}"),
@@ -1212,9 +1193,9 @@ fn handleSessionMessage(ctx: *ServerContext, req: *http.Server.Request, project_
     defer if (queue_result.reply) |reply| ctx.allocator.free(reply);
 
     if (queue_result.accepted) {
-        const started = startSessionMessageWorker(ctx.allocator, project.work_dir, rid) catch |spawn_err| {
+        const started = startSessionMessageWorker(ctx.allocator, ctx.base_dir, rid) catch |spawn_err| {
             ui.logWarn("session worker spawn failed, fallback sync: {any}", .{spawn_err});
-            const send_result = session_service.processInFlightMessage(ctx.allocator, project.work_dir, rid) catch |err| {
+            const send_result = session_service.processInFlightMessage(ctx.allocator, ctx.base_dir, rid) catch |err| {
                 ui.logWarn("session send failed after fallback: {any}", .{err});
                 return respondJson(req, .bad_request, "{\"error\":\"session_send_failed\"}");
             };
@@ -1255,18 +1236,10 @@ fn handleSessionMessage(ctx: *ServerContext, req: *http.Server.Request, project_
     return respondJson(req, .ok, body);
 }
 
-fn handleSessionStart(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8) !void {
+fn handleSessionStart(ctx: *ServerContext, req: *http.Server.Request) !void {
     if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
     if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
     if (!allowControlRequest(ctx)) return respondJson(req, .too_many_requests, "{\"error\":\"rate_limited\"}");
-
-    // Get project work_dir
-    const project = ctx.store.getProject(project_id, ctx.allocator) catch {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    } orelse {
-        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
-    };
-    defer project.deinit(ctx.allocator);
 
     var request_id: ?[]u8 = requestIdFromHeader(ctx.allocator, req);
     defer if (request_id) |rid| ctx.allocator.free(rid);
@@ -1292,7 +1265,7 @@ fn handleSessionStart(ctx: *ServerContext, req: *http.Server.Request, project_id
         if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
 
-    const session_id = session_service.startSession(ctx.allocator, project.work_dir, provider, model) catch |err| {
+    const session_id = session_service.startSession(ctx.allocator, ctx.base_dir, provider, model) catch |err| {
         ui.logWarn("session start failed: {any}", .{err});
         return respondJson(req, .bad_request, "{\"error\":\"session_start_failed\"}");
     };
@@ -2150,7 +2123,9 @@ fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, reque
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
-    child.cwd = target_dir;
+    // Inherit parent CWD so --dir target_dir resolves correctly.
+    // Setting child.cwd = target_dir would cause path doubling since
+    // processInFlightMessage joins target_dir with .techlead/ again.
     try child.spawn();
 
     const target_dir_copy = try std.heap.c_allocator.dupe(u8, target_dir);
