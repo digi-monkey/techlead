@@ -46,7 +46,7 @@ fn showHelp() void {
             "    zig build run -- observe rotate-tokens [--dir 目录]\n" ++
             "    zig build run -- trace show [--dir 目录]\n\n" ++
             "说明:\n" ++
-            "    - init: 在目标目录生成 .techlead/techlead.json 和 .techlead/program.md\n" ++
+            "    - init: 在目标目录生成 .techlead/techlead.json\n" ++
             "    - init-agent: 创建目标目录下的 sisyphus 代理项目\n" ++
             "    - run: 从目标目录读取配置并执行迭代（默认 mode=project）\n" ++
             "    - observe start: 启动 Web 观察与控制接口\n" ++
@@ -159,7 +159,6 @@ pub fn main() !void {
         ui.logInfo("配置:", .{});
         ui.logInfo("  - 配置文件: {s}", .{CONFIG_REL_PATH});
         ui.logInfo("  - 迭代次数: {d}", .{cfg.iterations});
-        ui.logInfo("  - Program 文件: {s}", .{cfg.program_file});
         ui.logInfo("  - 主分支: {s}", .{cfg.main_branch});
         ui.logInfo("  - 日志目录: {s}", .{cfg.log_dir});
         ui.logInfo("  - 运行模式: {s}", .{@tagName(mode)});

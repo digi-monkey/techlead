@@ -11,25 +11,6 @@ pub const ExecutionMode = enum {
     project,
 };
 
-pub fn validateRunEnvironment(cfg: config.Config, allocator: std.mem.Allocator) !void {
-    ui.logInfo("检查运行环境...", .{});
-
-    const abs_work_dir = try std.fs.cwd().realpathAlloc(allocator, cfg.work_dir);
-    defer allocator.free(abs_work_dir);
-    ui.logInfo("工作目录: {s}", .{abs_work_dir});
-
-    const program_path = try std.fs.path.join(allocator, &[_][]const u8{ cfg.work_dir, cfg.program_file });
-    defer allocator.free(program_path);
-
-    std.fs.cwd().access(program_path, .{}) catch {
-        ui.logError("找不到 {s}", .{program_path});
-        return error.MissingProgramFile;
-    };
-
-    try git.verifyGitRepo(cfg.work_dir, allocator);
-    ui.logSuccess("环境检查通过", .{});
-    std.debug.print("\n", .{});
-}
 
 pub fn validatePoolRunEnvironment(cfg: config.Config, allocator: std.mem.Allocator) !void {
     ui.logInfo("检查 project 运行环境...", .{});

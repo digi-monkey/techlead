@@ -35,26 +35,12 @@ Document your findings briefly.
 
 1. Navigate to the project: `cd {{PROJECT_PATH}}`
 2. Run initialization: `techlead init "{{GOAL}}"`
-3. This creates `.techlead/techlead.json` and `.techlead/program.md`
-4. Review the generated `program.md` - it's a basic template
+3. This creates `.techlead/techlead.json`
 
-### Phase 3: Refine Program.md
+### Phase 3: Validate
 
-The initial program.md is generic. Enhance it with your Phase 1 insights:
-
-1. **Enhance CONSTRAINTS section**: Add tech-specific constraints (e.g., "Use async/await for I/O", "Maintain backward compatibility")
-2. **Enhance CRITERIA section**: Define concrete, verifiable acceptance criteria
-3. **Add TASK_DELEGATION section**: Include examples for this tech stack's task() calls
-4. **Consider edge cases**: What could go wrong? How should the agent handle failures?
-
-Use your preferred editor or file operations to modify `.techlead/program.md`.
-
-### Phase 4: Validate
-
-1. **Review your enhanced program.md** - does it provide clear guidance?
-2. **Verify file structure**: Ensure `.techlead/techlead.json` exists and is valid JSON
-3. **Test understanding**: Can you explain the goal in your own words?
-4. **Check constraints**: Are all "Must NOT" items clearly stated?
+1. **Verify file structure**: Ensure `.techlead/techlead.json` exists and is valid JSON
+2. **Test understanding**: Can you explain the goal in your own words?
 
 Output: "Initialization complete. The project is ready for iterations."
 Output: "Next step: Run `techlead run` to start the iteration cycle."
@@ -69,10 +55,7 @@ Output: "Next step: Run `techlead run` to start the iteration cycle."
 
 ## Success Criteria
 
-- [ ] `.techlead/program.md` exists and is enhanced beyond the template
-- [ ] Constraints are tech-specific and actionable
-- [ ] Criteria are concrete and verifiable
-- [ ] Task delegation examples match the project's tech stack
+- [ ] `.techlead/techlead.json` exists and is properly configured
 - [ ] All edge cases you identified are documented
 
 ---

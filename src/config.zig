@@ -6,7 +6,6 @@ const Allocator = std.mem.Allocator;
 
 pub const CONFIG_FILE_NAME = "techlead.json";
 pub const CONFIG_REL_PATH = ".techlead/techlead.json";
-pub const DEFAULT_PROGRAM_REL_PATH = ".techlead/program.md";
 pub const DEFAULT_LOG_DIR = ".techlead/iteration-logs";
 
 /// Technology stack indicators for detection
@@ -54,7 +53,6 @@ pub const TechStackDetection = struct {
 /// This is the on-disk format used in techlead.json config files.
 pub const ConfigFile = struct {
     iterations: usize,
-    program_file: []const u8,
     opencode_url: []const u8 = "",
     work_dir: []const u8,
     log_dir: []const u8,
@@ -74,7 +72,6 @@ pub const ConfigFile = struct {
 /// The `provider` field is the acpx agent name (e.g. "codex", "claude", "opencode").
 pub const Config = struct {
     iterations: usize,
-    program_file: []u8,
     opencode_url: []u8,
     work_dir: []u8,
     log_dir: []u8,
@@ -92,7 +89,6 @@ pub const Config = struct {
 /// Free all memory owned by a Config struct.
 /// Must be called when the Config is no longer needed.
 pub fn deinitConfig(allocator: Allocator, config: *const Config) void {
-    allocator.free(config.program_file);
     allocator.free(config.opencode_url);
     allocator.free(config.work_dir);
     allocator.free(config.log_dir);
@@ -146,13 +142,12 @@ pub fn loadConfigFromJson(allocator: Allocator, base_dir: []const u8) !Config {
     defer parsed.deinit();
 
     const value = parsed.value;
-    if (value.program_file.len == 0 or value.work_dir.len == 0 or value.log_dir.len == 0 or value.main_branch.len == 0) {
+    if (value.work_dir.len == 0 or value.log_dir.len == 0 or value.main_branch.len == 0) {
         return error.InvalidConfig;
     }
 
     return .{
         .iterations = value.iterations,
-        .program_file = try allocator.dupe(u8, value.program_file),
         .opencode_url = try allocator.dupe(u8, value.opencode_url),
         .work_dir = std.fs.cwd().realpathAlloc(allocator, base_dir) catch try allocator.dupe(u8, value.work_dir),
         .log_dir = try allocator.dupe(u8, value.log_dir),
@@ -177,7 +172,6 @@ pub fn writeDefaultConfig(allocator: Allocator, force: bool, target_dir: []const
 
     const cfg = ConfigFile{
         .iterations = 20,
-        .program_file = DEFAULT_PROGRAM_REL_PATH,
         .work_dir = abs_work_dir,
         .log_dir = DEFAULT_LOG_DIR,
         .model = "",
