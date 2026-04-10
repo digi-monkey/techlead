@@ -996,33 +996,100 @@ fn handleCreateTask(ctx: *ServerContext, req: *http.Server.Request, project_id: 
     return respondJson(req, .created, response);
 }
 
+const DraftTaskBody = struct {
+    intent: ?[]const u8 = null,
+    provider: ?[]const u8 = null,
+    request_id: ?[]const u8 = null,
+};
+
+fn extractJsonBlock(text: []const u8) []const u8 {
+    const start_idx = std.mem.indexOf(u8, text, "{");
+    const end_idx = std.mem.lastIndexOf(u8, text, "}");
+    if (start_idx != null and end_idx != null and end_idx.? > start_idx.?) {
+        return text[start_idx.? .. end_idx.? + 1];
+    }
+    return text;
+}
+
 fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8) !void {
     if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
     if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
 
     _ = project_id; // Used for validation
 
-    if (req.head.content_length) |len| {
-        if (len > 0 and len < 65536) {
-            var buf: [1024]u8 = undefined;
-            var reader = req.readerExpectNone(&buf);
-            const body_raw = reader.readAlloc(ctx.allocator, @intCast(len)) catch null;
-            if (body_raw) |raw| ctx.allocator.free(raw);
-        }
-    }
+    const len_u64 = req.head.content_length orelse return respondJson(req, .bad_request, "{\"error\":\"missing_content_length\"}");
+    if (len_u64 == 0 or len_u64 > 1024 * 1024) return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
+
+    var buf: [1024]u8 = undefined;
+    var reader = req.readerExpectNone(&buf);
+    const body_raw = reader.readAlloc(ctx.allocator, @intCast(len_u64)) catch return respondJson(req, .bad_request, "{\"error\":\"read_failed\"}");
+    defer ctx.allocator.free(body_raw);
+
+    const parsed = std.json.parseFromSlice(DraftTaskBody, ctx.allocator, body_raw, .{ .ignore_unknown_fields = true }) catch return respondJson(req, .bad_request, "{\"error\":\"invalid_json\"}");
+    defer parsed.deinit();
+
+    const intent = parsed.value.intent orelse return respondJson(req, .bad_request, "{\"error\":\"intent_required\"}");
+    const arg_provider = parsed.value.provider orelse "opencode";
+    const provider = if (arg_provider.len > 0) arg_provider else "opencode";
+
+    const prompt = try std.fmt.allocPrint(ctx.allocator,
+        \\Please act as a Senior Technical Lead. I have an intent for a new task.
+        \\Convert my handwritten intent into a structured, executable task.
+        \\
+        \\Output MUST be a valid JSON object matching exactly this schema, without any backticks, markdown, or extra explanations outside the JSON block:
+        \\{{
+        \\  "title": "A short descriptive task title",
+        \\  "prompt": "Detailed step-by-step instructions, constraints, and architecture considerations for an AI coding agent to implement this task"
+        \\}}
+        \\
+        \\User Intent:
+        \\{s}
+    , .{intent});
+    defer ctx.allocator.free(prompt);
+
+    const tmp_path = try std.fmt.allocPrint(ctx.allocator, ".techlead/draft-prompt-{d}.txt", .{std.time.timestamp()});
+    defer ctx.allocator.free(tmp_path);
     
-    // Minimal mock to restore the UI flow since this was wiped out.
-    // The user can connect back their acpx integration!
-    const mock_response = 
-        \\{
-        \\  "ok": true,
-        \\  "draft": {
-        \\    "title": "[Smart Draft] Recovered Draft",
-        \\    "prompt": "This is a recovered smart draft generated natively from the backend.\n\nPlease connect your local acpx logic here again (wiped out during testing fix)."
-        \\  }
-        \\}
-    ;
-    return respondJson(req, .ok, mock_response);
+    const file = std.fs.cwd().createFile(tmp_path, .{ .truncate = true }) catch return respondJson(req, .internal_server_error, "{\"error\":\"fs_error\"}");
+    try file.writeAll(prompt);
+    file.close();
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    var child = std.process.Child.init(&[_][]const u8{
+        "acpx", "--approve-all", provider, "exec", "--file", tmp_path
+    }, ctx.allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Ignore;
+
+    child.spawn() catch return respondJson(req, .internal_server_error, "{\"error\":\"spawn_failed\"}");
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(ctx.allocator);
+    var tmp_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = child.stdout.?.read(&tmp_buf) catch break;
+        if (n == 0) break;
+        out.appendSlice(ctx.allocator, tmp_buf[0..n]) catch break;
+    }
+    const stdout_bytes = out.items;
+
+    _ = child.wait() catch {};
+
+    const clean_json = extractJsonBlock(stdout_bytes);
+
+    var res_buf = std.ArrayList(u8).empty;
+    defer res_buf.deinit(ctx.allocator);
+
+    try res_buf.appendSlice(ctx.allocator, "{\"ok\":true,\"draft\":");
+    if (clean_json.len > 0 and clean_json[0] == '{') {
+        try res_buf.appendSlice(ctx.allocator, clean_json);
+    } else {
+        try res_buf.appendSlice(ctx.allocator, "{\"title\":\"Failed to parse JSON\",\"prompt\":\"The backend acpx integration failed to produce a valid JSON block. Please check the backend logs or terminal output.\"}");
+    }
+    try res_buf.appendSlice(ctx.allocator, "}");
+
+    return respondJson(req, .ok, res_buf.items);
 }
 
 fn handleGetTask(ctx: *ServerContext, req: *http.Server.Request, project_id: []const u8, task_id: []const u8) !void {
