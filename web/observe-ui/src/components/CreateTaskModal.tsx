@@ -14,7 +14,7 @@ export function CreateTaskModal({
   onSuccess: () => void
 }) {
   const [intent, setIntent] = useState('')
-  const [provider, setProvider] = useState('')
+  const [provider, setProvider] = useState('opencode')
   
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -111,13 +111,21 @@ export function CreateTaskModal({
                 onChange={(e) => setIntent(e.target.value)}
               />
               <div className="flex items-center gap-3">
-                <input 
-                  type="text" 
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  placeholder="Provider (Optional, e.g., opencode)"
-                  className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-500 w-48"
-                />
+                <div className="flex bg-white rounded-lg border border-blue-200 p-1">
+                  {['opencode', 'codex', 'claude'].map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setProvider(p)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                        provider === p
+                          ? 'bg-blue-100 text-blue-700 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
                 <button
                   onClick={handleDraft}
                   disabled={drafting || !intent.trim()}
