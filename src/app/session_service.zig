@@ -208,13 +208,13 @@ pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, requ
         user_text,
     ) catch |err| {
         const err_name = @errorName(err);
-        const fail_text = try std.fmt.allocPrint(allocator, "session send failed: {s}", .{err_name});
-        defer allocator.free(fail_text);
+        const fail_text = std.fmt.allocPrint(allocator, "session send failed: {s}", .{err_name}) catch "session send failed";
+        defer if (!std.mem.eql(u8, fail_text, "session send failed")) allocator.free(fail_text);
 
-        _ = try store.addMessage(session.session_id, "system", fail_text, rid);
-        try store.updateSessionStatus(session.session_id, "error");
-        try store.setInFlightRequestId(session.session_id, null);
-        try store.setLastError(session.session_id, err_name);
+        _ = store.addMessage(session.session_id, "system", fail_text, rid) catch {};
+        store.updateSessionStatus(session.session_id, "error") catch {};
+        store.setInFlightRequestId(session.session_id, null) catch {};
+        store.setLastError(session.session_id, err_name) catch {};
         return err;
     };
     errdefer allocator.free(assistant.reply);
