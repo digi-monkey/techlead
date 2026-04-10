@@ -14,6 +14,7 @@ import {
   type TaskReviewSummary,
 } from '../lib/taskPoolApi'
 import { useDebouncedState } from '../hooks/useDebouncedState'
+import { CreateTaskModal } from '../components/CreateTaskModal'
 
 type TaskPoolViewProps = {
   projectId: string
@@ -192,6 +193,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
   const [searchInput, searchQuery, setSearchInput] = useDebouncedState('', 250)
   const [cursor, setCursor] = useState(0)
   const [cursorHistory, setCursorHistory] = useState<number[]>([])
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   const [tasks, setTasks] = useState<TaskPoolTask[]>([])
   const [summary, setSummary] = useState<Record<string, number>>({})
@@ -440,6 +442,12 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-slate-800">Task Pool</h2>
             <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">{projectId}</span>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow hover:bg-blue-700 transition"
+            >
+              + New Task
+            </button>
           </div>
           <p className="mt-1 text-xs text-slate-500">分组列表 / 搜索 / 分页</p>
         </header>
@@ -674,6 +682,18 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
           )}
         </div>
       </section>
+
+      {showCreateModal && (
+        <CreateTaskModal
+          projectId={projectId}
+          token={controlAuth}
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={() => {
+            setShowCreateModal(false)
+            void refreshList(false)
+          }}
+        />
+      )}
     </div>
   )
 }

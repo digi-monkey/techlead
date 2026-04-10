@@ -3,6 +3,8 @@ import {
   TaskPoolListResultSchema,
   TaskPoolDetailResultSchema,
   TaskPoolEventsResultSchema,
+  DraftTaskResultSchema,
+  CreateTaskResultSchema,
 } from './schemas'
 import type {
   TaskPoolTask,
@@ -10,6 +12,8 @@ import type {
   TaskPoolListResult,
   TaskPoolDetailResult,
   TaskPoolEventsResult,
+  DraftTaskResult,
+  CreateTaskResult,
 } from './schemas'
 
 export const TASK_STATUS_ORDER = ['queued', 'running', 'review', 'done', 'failed', 'canceled'] as const
@@ -142,5 +146,61 @@ export async function runTaskPoolAction(params: {
       headers: { 'X-Request-Id': requestId },
       body: JSON.stringify({ action: params.action, request_id: requestId }),
     })
+  })
+}
+
+export async function draftTask(params: {
+  projectId: string
+  intent: string
+  provider?: string
+  token?: string
+  signal?: AbortSignal
+}): Promise<DraftTaskResult> {
+  const requestId = newRequestId()
+  return requestWith429Backoff(async () => {
+    return await apiRequest(
+      `/projects/${encodeURIComponent(params.projectId)}/tasks/draft`,
+      params.token ?? null,
+      {
+        method: 'POST',
+        signal: params.signal,
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({
+          intent: params.intent,
+          provider: params.provider,
+          request_id: requestId,
+        }),
+      },
+      DraftTaskResultSchema
+    )
+  })
+}
+
+export async function createTask(params: {
+  projectId: string
+  title: string
+  prompt: string
+  max_retries?: number
+  token?: string
+  signal?: AbortSignal
+}): Promise<CreateTaskResult> {
+  const requestId = newRequestId()
+  return requestWith429Backoff(async () => {
+    return await apiRequest(
+      `/projects/${encodeURIComponent(params.projectId)}/tasks`,
+      params.token ?? null,
+      {
+        method: 'POST',
+        signal: params.signal,
+        headers: { 'X-Request-Id': requestId },
+        body: JSON.stringify({
+          title: params.title,
+          prompt: params.prompt,
+          max_retries: params.max_retries,
+          request_id: requestId,
+        }),
+      },
+      CreateTaskResultSchema
+    )
   })
 }

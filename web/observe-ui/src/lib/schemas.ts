@@ -223,3 +223,35 @@ export const SessionSyncStateSchema = z.object({
 })
 
 export type SessionSyncState = z.infer<typeof SessionSyncStateSchema>
+
+export const DraftTaskPayloadSchema = z.object({
+  intent: z.string(),
+  provider: z.string().optional(),
+})
+
+export type DraftTaskPayload = z.infer<typeof DraftTaskPayloadSchema>
+
+export const DraftTaskResultSchema = z.object({
+  ok: z.boolean(),
+  draft: z.object({
+    title: z.string(),
+    prompt: z.string(),
+  }).optional(),
+})
+
+export type DraftTaskResult = z.infer<typeof DraftTaskResultSchema>
+
+export const CreateTaskPayloadSchema = z.object({
+  title: z.string(),
+  prompt: z.string(),
+  max_retries: z.number().optional(),
+})
+
+export type CreateTaskPayload = z.infer<typeof CreateTaskPayloadSchema>
+
+export const CreateTaskResultSchema = z.object({
+  ok: z.boolean(),
+  task_id: z.string().optional(),
+})
+
+export type CreateTaskResult = z.infer<typeof CreateTaskResultSchema>
