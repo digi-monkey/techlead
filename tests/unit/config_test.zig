@@ -43,7 +43,6 @@ test "loadConfigFromJson parses valid minimal config" {
     const minimal_json =
         \\{
         \\  "iterations": 10,
-        \\  "program_file": ".techlead/program.md",
         \\  "work_dir": "/tmp/project",
         \\  "log_dir": ".techlead/logs",
         \\  "model": "gpt-4",
@@ -59,7 +58,6 @@ test "loadConfigFromJson parses valid minimal config" {
     defer config.deinitConfig(allocator, &cfg);
 
     try std.testing.expectEqual(@as(usize, 10), cfg.iterations);
-    try std.testing.expectEqualStrings(".techlead/program.md", cfg.program_file);
     const expected_work_dir = std.fs.cwd().realpathAlloc(allocator, test_dir) catch test_dir;
     defer if (expected_work_dir.ptr != test_dir.ptr) allocator.free(expected_work_dir);
     try std.testing.expectEqualStrings(expected_work_dir, cfg.work_dir);
@@ -90,7 +88,6 @@ test "loadConfigFromJson parses config with all optional fields" {
     const full_json =
         \\{
         \\  "iterations": 20,
-        \\  "program_file": "custom/program.md",
         \\  "opencode_url": "http://localhost:3000",
         \\  "work_dir": "/home/user/project",
         \\  "log_dir": "logs",
@@ -112,13 +109,12 @@ test "loadConfigFromJson parses config with all optional fields" {
     defer config.deinitConfig(allocator, &cfg);
 
     try std.testing.expectEqual(@as(usize, 20), cfg.iterations);
-    try std.testing.expectEqualStrings("custom/program.md", cfg.program_file);
     try std.testing.expect(cfg.project_test_cmd != null);
     try std.testing.expectEqualStrings("npm test", cfg.project_test_cmd.?);
 }
 
-// Test 3: Reject empty program_file
-test "loadConfigFromJson rejects empty program_file" {
+// Test 3: Reject empty work_dir
+test "loadConfigFromJson rejects empty work_dir" {
     const allocator = std.testing.allocator;
 
     const test_dir = try createTempDir(allocator);
@@ -130,8 +126,7 @@ test "loadConfigFromJson rejects empty program_file" {
     const bad_json =
         \\{
         \\  "iterations": 10,
-        \\  "program_file": "",
-        \\  "work_dir": "/tmp",
+        \\  "work_dir": "",
         \\  "log_dir": "logs",
         \\  "model": "gpt-4",
         \\  "agent": "Test",
@@ -159,7 +154,6 @@ test "loadConfigFromJson applies correct defaults for omitted fields" {
     const json_no_defaults =
         \\{
         \\  "iterations": 5,
-        \\  "program_file": "prog.md",
         \\  "work_dir": "/tmp",
         \\  "log_dir": "logs",
         \\  "model": "gpt-3",
@@ -226,7 +220,6 @@ test "deinitConfig frees all allocated strings" {
     const full_json =
         \\{
         \\  "iterations": 10,
-        \\  "program_file": "prog.md",
         \\  "opencode_url": "http://example.com",
         \\  "work_dir": "/tmp/work",
         \\  "log_dir": "logs",
@@ -268,7 +261,6 @@ test "deinitConfig handles optional null fields" {
     const minimal_json =
         \\{
         \\  "iterations": 10,
-        \\  "program_file": "prog.md",
         \\  "work_dir": "/tmp",
         \\  "log_dir": "logs",
         \\  "model": "gpt-4",

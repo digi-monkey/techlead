@@ -17,53 +17,8 @@ pub const AcpxProvider = struct {
     }
 
     const vtable = provider_api.Provider.VTable{
-        .runIteration = runIteration,
         .runPrompt = runPrompt,
     };
-
-    fn runIteration(
-        ctx: *anyopaque,
-        cfg: config.Config,
-        allocator: std.mem.Allocator,
-        iteration: usize,
-        experiment_branch: ?[]const u8,
-        prompt_patch: ?[]const u8,
-    ) anyerror!provider_api.ExecutionResult {
-        _ = ctx;
-        _ = experiment_branch;
-
-        // Build a prompt from the program file + optional patch
-        const program_path = try std.fs.path.join(allocator, &[_][]const u8{ cfg.work_dir, cfg.program_file });
-        defer allocator.free(program_path);
-
-        const program_content = std.fs.cwd().readFileAlloc(allocator, program_path, 1024 * 1024) catch |err| {
-            ui.logError("读取 program file 失败: {any}", .{err});
-            return .{ .success = false };
-        };
-        defer allocator.free(program_content);
-
-        const prompt = if (prompt_patch) |patch|
-            try std.fmt.allocPrint(allocator,
-                \\iteration {d}/{d}
-                \\
-                \\{s}
-                \\
-                \\=== 运行中追加指令 ===
-                \\{s}
-            , .{ iteration, cfg.iterations, program_content, patch })
-        else
-            try std.fmt.allocPrint(allocator,
-                \\iteration {d}/{d}
-                \\
-                \\{s}
-            , .{ iteration, cfg.iterations, program_content });
-        defer allocator.free(prompt);
-
-        const log_label = try std.fmt.allocPrint(allocator, "iteration-{d}", .{iteration});
-        defer allocator.free(log_label);
-
-        return execAcpx(cfg, allocator, prompt, log_label);
-    }
 
     fn runPrompt(
         ctx: *anyopaque,

@@ -5,7 +5,6 @@ const event_store = @import("storage/store.zig");
 const sqlite_store = @import("storage/sqlite_store.zig");
 const run_service = @import("app/run_service.zig");
 const init_service = @import("app/init_service.zig");
-const agent_service = @import("app/agent_service.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -50,8 +49,3 @@ pub fn runInitCommand(allocator: Allocator, goal: []const u8, force: bool, targe
     return init_service.runInitCommand(allocator, goal, force, target_dir);
 }
 
-/// Runs the init-agent command to detect tech stack and generate agent prompt.
-/// Detects technology stack, builds an agent prompt, and copies it to clipboard.
-pub fn runInitAgentCommand(allocator: Allocator, args: []const []const u8) !void {
-    return agent_service.runInitAgentCommand(allocator, args);
-}

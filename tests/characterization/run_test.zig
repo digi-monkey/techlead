@@ -3,7 +3,7 @@
 //! These tests capture the current behavior of the run command to establish
 //! a baseline for refactoring. They verify:
 //! - Configuration loading behavior
-//! - Environment validation (git repo, program.md)
+//! - Environment validation (git repo)
 //! - Error handling for missing dependencies
 //! - Iteration loop behavior
 //! - Output format and messages
@@ -60,7 +60,6 @@ test "run: prints configuration details at startup" {
     // [INFO] 配置:
     // [INFO]   - 配置文件: {CONFIG_REL_PATH}
     // [INFO]   - 迭代次数: {iterations}
-    // [INFO]   - Program 文件: {program_file}
     // [INFO]   - OpenCode URL: {opencode_url}
     // [INFO]   - 主分支: {main_branch}
     // [INFO]   - 日志目录: {log_dir}
@@ -74,24 +73,6 @@ test "run: validates work_dir is a git repository" {
     // Log output: "work_dir 不是 git 仓库"
 }
 
-// Characterization: run command requires program.md
-test "run: fails when program.md is missing" {
-    // Behavior: validateRunEnvironment checks file access
-    // Error: error.MissingProgramFile
-    // Log output: "找不到 {program_path}" followed by
-    //           ".techlead/program.md 缺失，请重新执行 init --force"
-}
-
-// Characterization: run command validates program.md template
-test "run: fails when program.md is missing required blocks" {
-    // Behavior: preparePrompt calls extractTemplateBlock for:
-    // - GOAL
-    // - CONSTRAINTS
-    // - CRITERIA
-    // - MODE_A or MODE_B
-    // Error: error.InvalidProgramTemplate if any block missing
-    // Log output: ".techlead/program.md 模板块缺失，请重新执行 init --force"
-}
 
 // Characterization: run command checks OpenCode server availability
 test "run: fails when OpenCode server is not reachable" {
@@ -131,15 +112,6 @@ test "run: detects when on experiment branch" {
     // This affects MODE_A vs MODE_B in prompt
 }
 
-// Characterization: run command prompt preparation
-test "run: builds prompt with template blocks" {
-    // Behavior: preparePrompt extracts blocks from program.md:
-    // - GOAL
-    // - CONSTRAINTS
-    // - CRITERIA
-    // - MODE_A (if on experiment branch) or MODE_B (if on main branch)
-    // Mode instructions have <MAIN_BRANCH> replaced with config.main_branch
-}
 
 // Characterization: run command opencode invocation
 test "run: invokes oh-my-opencode with correct arguments" {
@@ -227,8 +199,7 @@ test "run: environment check execution order" {
     // Behavior: validateRunEnvironment executes:
     // 1. logInfo("检查运行环境...")
     // 2. Get absolute work_dir path, log it
-    // 3. Check program.md exists
-    // 4. verifyGitRepo
+    // 3. verifyGitRepo
     // 5. logSuccess("环境检查通过")
 }
 
@@ -245,37 +216,11 @@ test "run: error handling summary" {
     // Document all error conditions and their handling:
     // - MissingOpencode: logged in runCommand, no stack trace
     // - NotGitRepo: logged in main's catch block
-    // - MissingProgramFile: logged in main's catch block
-    // - InvalidProgramTemplate: logged in main's catch block
+
     // - OpencodeUnavailable: silent in main (already logged in checkOpencode)
     // - ConfigFileNotFound: logged in main
     // - ConfigParseFailed: logged in main
     // - InvalidConfig: logged in main
 }
 
-// Characterization: run command prompt structure
-test "run: prompt structure sent to opencode" {
-    // Behavior: preparePrompt builds prompt with sections:
-    // === 系统消息 ===
-    // 你是一个代码改进助手。这是第 {i} 次迭代。
-    //
-    // === 当前状态 ===
-    // - 当前迭代: {i} / {N}
-    // - 当前分支: {branch}（需要评估） 或
-    // - 当前分支: {main_branch}（需要开始新的实验）
-    // - 工作模式: EVALUATE_EXPERIMENT 或 CREATE_EXPERIMENT
-    //
-    // === Goal ===
-    // {extracted goal}
-    //
-    // === 重要约束 ===
-    // {extracted constraints}
-    //
-    // === 评估标准 ===
-    // {extracted criteria}
-    //
-    // === 任务指令 ===
-    // {mode instructions}
-    //
-    // 请直接执行 git 命令，不要只输出命令。
-}
+
