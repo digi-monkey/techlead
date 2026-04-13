@@ -16,6 +16,8 @@ type MainView = 'session' | 'projects' | 'project-detail'
 const SESSION_PROVIDER_STORAGE_KEY = 'techlead.observe.session.provider'
 const MAIN_VIEW_STORAGE_KEY = 'techlead.observe.main.view'
 const PROJECT_ID_STORAGE_KEY = 'techlead.observe.project.id'
+const OBSERVE_TOKEN_STORAGE_KEY = 'techlead.observe.auth.observe'
+const CONTROL_TOKEN_STORAGE_KEY = 'techlead.observe.auth.control'
 const AUTH_COOKIE_OBSERVE = 'tl_observe'
 const AUTH_COOKIE_CONTROL = 'tl_control'
 
@@ -26,14 +28,24 @@ function getCookie(name: string): string | null {
   return null
 }
 
+function getStoredToken(key: string): string {
+  try {
+    return window.localStorage.getItem(key) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 export default function App() {
   const query = useMemo(() => readAuthQuery(window.location.search), [])
 
   const cookieObserve = getCookie(AUTH_COOKIE_OBSERVE) ?? ''
   const cookieControl = getCookie(AUTH_COOKIE_CONTROL) ?? ''
+  const storedObserve = getStoredToken(OBSERVE_TOKEN_STORAGE_KEY)
+  const storedControl = getStoredToken(CONTROL_TOKEN_STORAGE_KEY)
 
-  const [observeToken, setObserveToken] = useState(query.observe || cookieObserve)
-  const [controlToken, setControlToken] = useState(query.control || cookieControl)
+  const [observeToken, setObserveToken] = useState(query.observe || cookieObserve || storedObserve)
+  const [controlToken, setControlToken] = useState(query.control || cookieControl || storedControl)
   const [showTokenDebug, setShowTokenDebug] = useState(false)
 
   const [showScanner, setShowScanner] = useState(false)
@@ -76,6 +88,24 @@ export default function App() {
       window.localStorage.removeItem(PROJECT_ID_STORAGE_KEY)
     }
   }, [selectedProjectId])
+
+  useEffect(() => {
+    const value = observeToken.trim()
+    if (value) {
+      window.localStorage.setItem(OBSERVE_TOKEN_STORAGE_KEY, value)
+    } else {
+      window.localStorage.removeItem(OBSERVE_TOKEN_STORAGE_KEY)
+    }
+  }, [observeToken])
+
+  useEffect(() => {
+    const value = controlToken.trim()
+    if (value) {
+      window.localStorage.setItem(CONTROL_TOKEN_STORAGE_KEY, value)
+    } else {
+      window.localStorage.removeItem(CONTROL_TOKEN_STORAGE_KEY)
+    }
+  }, [controlToken])
 
   const handleViewProject = useCallback((projectId: string) => {
     setSelectedProjectId(projectId)
@@ -130,7 +160,7 @@ export default function App() {
       if (observe) setObserveToken(observe)
       if (control) setControlToken(control)
       return true
-    } catch (err) {
+    } catch {
       return false
     }
   }, [])
@@ -174,12 +204,12 @@ export default function App() {
       })
       clearOutbox()
       setSessionInput('')
-    } catch (err: any) {
+    } catch (err) {
       alert("Start Session Failed: " + getErrorMessage(err))
     } finally {
       setIsStartingSession(false)
     }
-  }, [sessionProvider, clearOutbox, isStartingSession])
+  }, [sessionProvider, clearOutbox, isStartingSession, controlAuth])
 
   const endSession = useCallback(async () => {
     if (isEndingSession) return
@@ -193,7 +223,7 @@ export default function App() {
       })
       clearOutbox()
       setSessionInput('')
-    } catch (err: any) {
+    } catch (err) {
       alert("End Session Failed: " + getErrorMessage(err))
     } finally {
       setIsEndingSession(false)
@@ -243,8 +273,8 @@ export default function App() {
   })
 
   return (
-    <div className="mx-auto flex h-full max-h-dvh w-full max-w-[1700px] flex-col">
-      <header className="bg-slate-900 py-3 text-white">
+    <div className="mx-auto flex min-h-dvh w-full max-w-425 flex-col">
+      <header className="sticky top-0 z-20 bg-slate-900 py-3 text-white">
         <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
           <div className="flex items-center gap-3">
             <h1 className="text-base font-semibold sm:text-lg">techlead</h1>
@@ -351,7 +381,7 @@ export default function App() {
         ) : null}
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-0 sm:px-4 sm:pt-4">
+      <main className="min-h-0 flex-1 overflow-y-auto px-0 pb-[env(safe-area-inset-bottom)] sm:px-4 sm:pt-4">
         {mainView === 'session' && (
           <SessionView
             sessionState={sessionState}

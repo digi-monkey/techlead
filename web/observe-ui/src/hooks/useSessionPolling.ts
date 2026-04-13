@@ -1,19 +1,8 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 
 import { apiRequest } from '../lib/api'
 import type { OutboxItem } from './useSessionOutbox'
 import type { JsonValue, SessionMessage } from '../types'
-
-function useDeepMemo<T>(factory: () => T, deps: React.DependencyList): T {
-  const ref = useRef<{ deps: React.DependencyList; value: T } | null>(null)
-  const depsString = JSON.stringify(deps)
-
-  if (ref.current === null || JSON.stringify(ref.current.deps) !== depsString) {
-    ref.current = { deps, value: factory() }
-  }
-
-  return ref.current.value
-}
 
 export type SessionSyncState = {
   lastOkAt: number | null
@@ -49,7 +38,7 @@ export function useSessionPolling(options: UseSessionPollingOptions) {
 
   const sessionStatus = String(sessionState.status ?? '')
   const sessionInFlightRequestId = typeof sessionState.in_flight_request_id === 'string' ? sessionState.in_flight_request_id : ''
-  const sessionMessages = useDeepMemo(
+  const sessionMessages = useMemo(
     () => (Array.isArray(sessionState.messages) ? sessionState.messages : []) as SessionMessage[],
     [sessionState.messages],
   )

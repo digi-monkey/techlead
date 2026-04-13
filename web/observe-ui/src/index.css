@@ -20,22 +20,22 @@
 html, body {
   margin: 0;
   padding: 0;
-  height: 100%;
-  height: 100dvh;
-  overflow: hidden;
-  background: #ffffff;
+  min-height: 100%;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--bg);
   color: var(--ink);
   font-family: "IBM Plex Sans", "Noto Sans SC", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overscroll-behavior: none;
+  overscroll-behavior-x: none;
   touch-action: manipulation;
 }
 
 #root {
-  height: 100%;
-  height: 100dvh;
-  overflow: hidden;
+  min-height: 100%;
+  min-height: 100dvh;
 }
 
 pre {
