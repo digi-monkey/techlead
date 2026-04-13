@@ -43,6 +43,11 @@ const BootstrapIssue = struct {
     url: []u8,
 };
 
+fn maskedToken(token: []const u8) []const u8 {
+    if (token.len == 0) return "<empty>";
+    return token[0..@min(token.len, 6)];
+}
+
 // ServerContext for multi-project API
 const ServerContext = struct {
     allocator: Allocator,
@@ -280,8 +285,8 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
     } else {
         ui.logSuccess("observe 服务已启动: http://{s}:{d}", .{ host, server.listen_address.getPort() });
     }
-    ui.logInfo("observe token: {s}", .{ctx.observe_token});
-    ui.logInfo("control token: {s}", .{ctx.control_token});
+    ui.logInfo("observe token: {s}...", .{maskedToken(ctx.observe_token)});
+    ui.logInfo("control token: {s}...", .{maskedToken(ctx.control_token)});
     const share_issue = try issueBootstrapTicket(&ctx, SHARE_BOOTSTRAP_TTL_SECONDS);
     defer allocator.free(share_issue.bootstrap_id);
     defer allocator.free(share_issue.code);
@@ -292,9 +297,15 @@ pub fn runObserveStartCommand(allocator: Allocator, target_dir: ?[]const u8, hos
         ui.logWarn("当前 host=0.0.0.0；扫码前请将链接中的主机替换为本机局域网 IP", .{});
     }
     if (ctx.external_url) |ext_url| {
-        ui.logInfo("兼容入口: {s}/?token={s}", .{ ext_url, ctx.observe_token });
+        ui.logInfo(
+            "兼容入口: {s}/?observe_token={s}&control_token={s}",
+            .{ ext_url, ctx.observe_token, ctx.control_token },
+        );
     } else {
-        ui.logInfo("兼容入口: http://{s}:{d}/?token={s}", .{ host, server.listen_address.getPort(), ctx.observe_token });
+        ui.logInfo(
+            "兼容入口: http://{s}:{d}/?observe_token={s}&control_token={s}",
+            .{ host, server.listen_address.getPort(), ctx.observe_token, ctx.control_token },
+        );
     }
 
     while (true) {
@@ -323,8 +334,8 @@ pub fn runObserveRotateTokensCommand(allocator: Allocator) !void {
     defer allocator.free(tokens.observe_token);
     defer allocator.free(tokens.control_token);
     ui.logSuccess("tokens 已轮换", .{});
-    ui.logInfo("observe token: {s}", .{tokens.observe_token});
-    ui.logInfo("control token: {s}", .{tokens.control_token});
+    ui.logInfo("observe token: {s}...", .{maskedToken(tokens.observe_token)});
+    ui.logInfo("control token: {s}...", .{maskedToken(tokens.control_token)});
 }
 
 fn printStartupQr(allocator: Allocator, url: []const u8) void {
@@ -1052,15 +1063,13 @@ fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
 
     const tmp_path = try std.fmt.allocPrint(ctx.allocator, ".techlead/draft-prompt-{d}.txt", .{std.time.timestamp()});
     defer ctx.allocator.free(tmp_path);
-    
+
     const file = std.fs.cwd().createFile(tmp_path, .{ .truncate = true }) catch return respondJson(req, .internal_server_error, "{\"error\":\"fs_error\"}");
     try file.writeAll(prompt);
     file.close();
     defer std.fs.cwd().deleteFile(tmp_path) catch {};
 
-    var child = std.process.Child.init(&[_][]const u8{
-        "acpx", "--approve-all", provider, "exec", "--file", tmp_path
-    }, ctx.allocator);
+    var child = std.process.Child.init(&[_][]const u8{ "acpx", "--approve-all", provider, "exec", "--file", tmp_path }, ctx.allocator);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;

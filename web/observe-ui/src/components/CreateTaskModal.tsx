@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { draftTask, createTask } from '../lib/taskPoolApi'
 
-// Use lucid react icons if available, else emojis
+function errorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.trim().length > 0) return err.message
+  return 'Unknown error'
+}
+
 export function CreateTaskModal({
   projectId,
   token,
@@ -44,8 +48,8 @@ export function CreateTaskModal({
       } else {
         setError('Failed to draft task')
       }
-    } catch (err: any) {
-      setError(err?.message || 'Error drafting task')
+    } catch (err) {
+      setError(errorMessage(err) || 'Error drafting task')
     } finally {
       setDrafting(false)
     }
@@ -71,22 +75,22 @@ export function CreateTaskModal({
       } else {
         setError('Failed to create task')
       }
-    } catch (err: any) {
-      setError(err?.message || 'Error creating task')
+    } catch (err) {
+      setError(errorMessage(err) || 'Error creating task')
     } finally {
       setCreating(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl p-6 relative flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="relative flex h-[92dvh] max-h-[92dvh] w-full flex-col rounded-t-2xl bg-white p-4 shadow-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl sm:p-6">
         
-        <header className="flex items-center justify-between mb-4 shrink-0">
+        <header className="mb-4 flex items-center justify-between shrink-0">
           <h2 className="text-lg font-semibold text-slate-800">Create New Task</h2>
           <button 
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 rounded-full p-1 transition"
+            className="rounded-full p-2 text-slate-400 transition hover:text-slate-600"
           >
             ✕
           </button>
@@ -98,25 +102,25 @@ export function CreateTaskModal({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto pr-2 space-y-6">
+        <div className="flex-1 space-y-6 overflow-y-auto pr-1 sm:pr-2">
           {/* Smart Draft Area */}
           <section className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-2 opacity-10">✨</div>
             <div className="flex flex-col gap-3 relative z-10">
-              <label className="text-sm font-medium text-slate-700">🔮 Smart Draft</label>
+              <label className="text-sm font-medium text-slate-700">Smart Draft</label>
               <textarea
-                className="w-full rounded-lg border border-blue-200 bg-white p-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 min-h-[80px]"
+                className="min-h-20 w-full rounded-lg border border-blue-200 bg-white p-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 placeholder="E.g., Implement a quick sort algorithm in utils.js..."
                 value={intent}
                 onChange={(e) => setIntent(e.target.value)}
               />
-              <div className="flex items-center gap-3">
-                <div className="flex bg-white rounded-lg border border-blue-200 p-1">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex flex-wrap rounded-lg border border-blue-200 bg-white p-1">
                   {['opencode', 'codex', 'claude'].map(p => (
                     <button
                       key={p}
                       onClick={() => setProvider(p)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                      className={`rounded-md px-3 py-2 text-xs font-medium transition ${
                         provider === p
                           ? 'bg-blue-100 text-blue-700 shadow-sm'
                           : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
@@ -129,7 +133,7 @@ export function CreateTaskModal({
                 <button
                   onClick={handleDraft}
                   disabled={drafting || !intent.trim()}
-                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition ml-auto"
+                  className="ml-auto flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
                 >
                   {drafting ? (
                     <span className="animate-spin text-lg">⚙️</span>
@@ -155,7 +159,7 @@ export function CreateTaskModal({
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Prompt (Task Details)</label>
               <textarea
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-blue-500 focus:bg-white transition min-h-[160px] font-mono"
+                className="min-h-40 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-mono outline-none transition focus:border-blue-500 focus:bg-white"
                 placeholder="Detailed instructions for the AI..."
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -168,7 +172,7 @@ export function CreateTaskModal({
                 type="number"
                 min="0"
                 max="10"
-                className="w-32 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm outline-none focus:border-blue-500 focus:bg-white transition"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm outline-none transition focus:border-blue-500 focus:bg-white sm:w-32"
                 value={maxRetries}
                 onChange={(e) => setMaxRetries(parseInt(e.target.value) || 0)}
               />
@@ -176,17 +180,17 @@ export function CreateTaskModal({
           </section>
         </div>
 
-        <footer className="mt-6 flex items-center justify-end gap-3 shrink-0 pt-4 border-t border-slate-100">
+        <footer className="mt-6 flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 pt-4 pb-[env(safe-area-inset-bottom)]">
           <button
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition"
+            className="h-10 rounded-lg px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
           >
             Cancel
           </button>
           <button
             onClick={handleCreate}
             disabled={creating || !title.trim() || !prompt.trim()}
-            className="rounded-lg bg-slate-800 px-5 py-2 text-sm font-medium text-white shadow hover:bg-slate-900 disabled:opacity-50 transition"
+            className="h-10 rounded-lg bg-slate-800 px-5 text-sm font-medium text-white shadow transition hover:bg-slate-900 disabled:opacity-50"
           >
             {creating ? 'Creating...' : 'Create Task'}
           </button>

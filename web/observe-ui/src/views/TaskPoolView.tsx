@@ -293,7 +293,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
     } finally {
       if (!silent) setListLoading(false)
     }
-  }, [observeAuth, statusFilter, searchQuery, cursor])
+  }, [projectId, observeAuth, statusFilter, searchQuery, cursor])
 
   const refreshDetail = useCallback(async (taskId: string, silent: boolean) => {
     if (!silent) setDetailLoading(true)
@@ -317,7 +317,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
     } finally {
       if (!silent) setDetailLoading(false)
     }
-  }, [observeAuth])
+  }, [projectId, observeAuth])
 
   const refreshTimeline = useCallback(async (taskId: string) => {
     try {
@@ -340,7 +340,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
     } catch (err) {
       setTimelineError(formatError(err, '时间线刷新失败'))
     }
-  }, [observeAuth])
+  }, [projectId, observeAuth])
 
   useEffect(() => {
     let cancelled = false
@@ -421,7 +421,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
     } finally {
       setActionBusy(null)
     }
-  }, [selectedTaskId, controlAuth, refreshList, refreshDetail, refreshTimeline])
+  }, [projectId, selectedTaskId, controlAuth, refreshList, refreshDetail, refreshTimeline])
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-[320px_minmax(420px,1fr)_minmax(360px,1fr)]">
