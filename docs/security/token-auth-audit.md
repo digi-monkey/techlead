@@ -3,7 +3,7 @@
 **Project:** Techlead Observe UI  
 **Audit Date:** 2026-04-02  
 **Auditor:** AI Security Audit  
-**Scope:** `web/observe-ui/src/lib/auth.ts` and related authentication flows  
+**Scope:** `web/src/lib/auth.ts` and related authentication flows  
 
 ---
 
@@ -55,8 +55,8 @@ The Techlead Observe UI implements a dual-token authentication system with obser
 ### 2.1 HIGH: Token Transmission via URL Query Parameters
 
 **Location:** 
-- `web/observe-ui/src/lib/auth.ts` lines 9-37
-- `web/observe-ui/src/App.tsx` lines 31-37, 217-236
+- `web/src/lib/auth.ts` lines 9-37
+- `web/src/App.tsx` lines 31-37, 217-236
 
 **Description:**
 The application accepts tokens through URL query parameters (`?token=`, `?observe_token=`, `?control_token=`) as a legacy/debugging mechanism. While the code does clean these from the URL after reading (via `history.replaceState`), the tokens are exposed in:
@@ -164,7 +164,7 @@ const observe_cookie = try std.fmt.allocPrint(
 ### 2.4 MEDIUM: Token Display in Debug Mode
 
 **Location:**
-- `web/observe-ui/src/App.tsx` lines 299-307, 343-364
+- `web/src/App.tsx` lines 299-307, 343-364
 
 **Description:**
 The debug mode (`isDebugBuild`) allows direct viewing and editing of tokens in the UI. While this is intended for development, there's no additional confirmation or warning before displaying sensitive tokens.
@@ -182,7 +182,7 @@ Medium - Could lead to accidental token exposure if screenshots are shared.
 ### 2.5 LOW: No Token Rotation on Privilege Escalation
 
 **Location:**
-- `web/observe-ui/src/App.tsx` lines 124-138
+- `web/src/App.tsx` lines 124-138
 
 **Description:**
 When exchanging a bootstrap ticket, the system does not rotate or invalidate existing tokens. While this is generally acceptable, it means:
@@ -201,7 +201,7 @@ Low - This is standard behavior for many systems, but limits security controls.
 ### 2.6 LOW: URL Parameter Parsing Permissive
 
 **Location:**
-- `web/observe-ui/src/lib/auth.ts` lines 43-64
+- `web/src/lib/auth.ts` lines 43-64
 
 **Description:**
 The `extractBootstrapParams` function accepts various URL formats including plain query strings without protocol validation. While this flexibility is useful for QR scanning, it could potentially allow unexpected input formats.

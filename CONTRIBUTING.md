@@ -34,7 +34,7 @@ zig build
 zig build install
 
 # Build frontend (optional, for observe dashboard)
-cd web/observe-ui
+cd web
 pnpm install
 pnpm build
 cd ../..
@@ -71,7 +71,7 @@ zig build test -- --test-filter "config"
 ### Frontend Tests
 
 ```bash
-cd web/observe-ui
+cd web
 
 # Run tests in watch mode
 pnpm test
@@ -132,7 +132,7 @@ The observe-ui follows standard React/TypeScript patterns:
 zig fmt src/
 
 # Format and lint frontend
-cd web/observe-ui
+cd web
 pnpm lint
 pnpm format
 ```
@@ -155,7 +155,7 @@ techlead/
 ├── tests/                   # Test suites
 │   ├── unit/               # Unit tests
 │   └── characterization/   # Behavior baselines
-├── web/observe-ui/         # Frontend dashboard
+├── web/         # Frontend dashboard
 │   ├── src/
 │   └── package.json
 ├── docs/                   # Documentation
