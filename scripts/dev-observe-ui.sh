@@ -63,7 +63,7 @@ if [ -n "$TOKEN" ]; then
 fi
 echo "stop all: Ctrl+C"
 
-cd "$ROOT_DIR/web/observe-ui"
+cd "$ROOT_DIR/web"
 if [ ! -d node_modules ]; then
   pnpm install
 fi

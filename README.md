@@ -60,7 +60,7 @@ AI-powered task execution engine with automated implement → review → merge p
 - `src/providers/acpx_provider.zig` — Unified agent execution via [acpx](https://www.npmjs.com/package/acpx)
 - `src/pool/` — Result parsing and prompt templates
 - `src/storage/` — SQLite-backed stores (controlplane, tasks, sessions)
-- `web/observe-ui/` — Real-time observe dashboard (Vite + React)
+- `web/` — Real-time observe dashboard (Vite + React)
 - `demo-topk/` — Minimal JS demo for manual `init-agent` testing
 
 ## Prerequisites

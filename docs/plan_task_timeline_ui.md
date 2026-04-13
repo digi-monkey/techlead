@@ -29,7 +29,7 @@ During `acpx` execution, we will enhance the process to emit fine-grained progre
 
 The UI will be overhauled to present a vertically scrolling or side-panel "Task Timeline".
 
-#### [MODIFY] `web/observe-ui/src/views/TaskPoolView.tsx` (or new component `TaskTimeline.tsx`)
+#### [MODIFY] `web/src/views/TaskPoolView.tsx` (or new component `TaskTimeline.tsx`)
 - Given that the `getTaskDetailJson` API already bundles `events: TaskPoolEvent[]` and `latest_reviews: TaskReviewSummary[]`, we will create a dedicated `TaskTimeline` sub-component.
 - **Progress Events**: Map the `task.acpx.progress`, `task.running`, `task.done` events over a visual timeline tree (similar to GitHub Actions logs).
 - **Review Events Display**: For `task.review.opened`, `task.review.approved`, `task.review.changes_requested`, parse the `payload_text` (or map directly from the `latest_reviews` array). 
