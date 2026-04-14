@@ -54,7 +54,7 @@ export function GlobalDashboard({ observeAuth, onViewProject }: GlobalDashboardP
 
   if (loading && projects.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="tl-card flex h-full items-center justify-center p-8">
         <div className="text-center">
           <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600"></div>
           <p className="text-sm text-slate-500">Loading dashboard...</p>
@@ -64,7 +64,7 @@ export function GlobalDashboard({ observeAuth, onViewProject }: GlobalDashboardP
   }
 
   return (
-    <div className="h-full overflow-y-auto px-2 py-4">
+    <div className="tl-card h-full overflow-y-auto p-4 sm:p-5">
       <header className="mb-6">
         <h1 className="text-xl font-semibold text-slate-800">Techlead Multi-Project Dashboard</h1>
         <p className="mt-1 text-sm text-slate-500">Overview of all projects and tasks</p>

@@ -24,7 +24,7 @@ export function ControlView(props: ControlViewProps) {
       <Panel title="Run Bootstrap">
         <div className="flex flex-wrap items-center gap-2">
           <select
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+            className="tl-select w-auto px-3 text-sm"
             value={runMode}
             onChange={(e) => onRunModeChange(e.target.value as 'optimize' | 'pool')}
           >
@@ -34,7 +34,7 @@ export function ControlView(props: ControlViewProps) {
           <button
             type="button"
             onClick={onStartRun}
-            className="rounded-lg border border-sky-300 bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
+            className="tl-primary-btn px-4 py-2 text-sm"
           >
             Start Run
           </button>
@@ -43,19 +43,19 @@ export function ControlView(props: ControlViewProps) {
 
       <Panel title="Run Actions">
         <div className="mb-3 flex flex-wrap gap-2">
-          <button type="button" onClick={() => onControlRun('pause')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+          <button type="button" onClick={() => onControlRun('pause')} className="tl-soft-btn px-3 py-2 text-sm">
             Pause
           </button>
-          <button type="button" onClick={() => onControlRun('resume')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+          <button type="button" onClick={() => onControlRun('resume')} className="tl-soft-btn px-3 py-2 text-sm">
             Resume
           </button>
-          <button type="button" onClick={() => onControlRun('abort')} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <button type="button" onClick={() => onControlRun('abort')} className="tl-danger-btn px-3 py-2 text-sm">
             Abort
           </button>
         </div>
         <div className="flex gap-2">
           <input
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="tl-input"
             value={askPrompt}
             onChange={(e) => onAskPromptChange(e.target.value)}
             placeholder="ask prompt"
@@ -63,7 +63,7 @@ export function ControlView(props: ControlViewProps) {
           <button
             type="button"
             onClick={() => onControlRun('ask')}
-            className="rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-sm text-amber-900"
+            className="tl-soft-btn px-3 py-2 text-sm"
           >
             Ask
           </button>

@@ -424,8 +424,8 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
   }, [projectId, selectedTaskId, controlAuth, refreshList, refreshDetail, refreshTimeline])
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-[320px_minmax(420px,1fr)_minmax(360px,1fr)]">
-      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50 p-3">
+    <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <section className="tl-card flex min-h-0 flex-col p-3">
         <header className="mb-2">
           {onBack && (
             <button
@@ -444,7 +444,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
             <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">{projectId}</span>
             <button
               onClick={() => setShowCreateModal(true)}
-              className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow hover:bg-blue-700 transition"
+              className="tl-primary-btn ml-auto"
             >
               + New Task
             </button>
@@ -456,7 +456,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as TaskListStatusFilter)}
-            className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-slate-500"
+            className="tl-select text-xs"
           >
             {ALL_STATUS_FILTERS.map((status) => (
               <option key={status} value={status}>
@@ -468,7 +468,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="search title/prompt"
-            className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-slate-500"
+            className="tl-input text-xs"
           />
         </div>
 
@@ -536,7 +536,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
               })
             }}
             disabled={cursorHistory.length === 0}
-            className="h-8 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="tl-soft-btn h-8"
           >
             Prev
           </button>
@@ -548,14 +548,14 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
               setCursor(nextCursor)
             }}
             disabled={nextCursor === null}
-            className="h-8 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="tl-soft-btn h-8"
           >
             Next
           </button>
         </footer>
       </section>
 
-      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50 p-3">
+      <section className="tl-card flex min-h-0 flex-col p-3">
         <header className="mb-2 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-slate-800">Task Detail</h2>
@@ -633,7 +633,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
             type="button"
             disabled={!canRetryReview || actionBusy !== null}
             onClick={() => void executeAction('retry_review')}
-            className="h-9 rounded-lg border border-slate-300 bg-white text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="tl-soft-btn h-9"
           >
             {actionBusy === 'retry_review' ? 'retrying...' : 'retry_review'}
           </button>
@@ -641,7 +641,7 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
             type="button"
             disabled={!canRequeue || actionBusy !== null}
             onClick={() => void executeAction('requeue')}
-            className="h-9 rounded-lg border border-slate-300 bg-white text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="tl-soft-btn h-9"
           >
             {actionBusy === 'requeue' ? 'requeueing...' : 'requeue'}
           </button>
@@ -649,14 +649,14 @@ export function TaskPoolView({ projectId, observeAuth, controlAuth, onBack }: Ta
             type="button"
             disabled={!canCancel || actionBusy !== null}
             onClick={() => void executeAction('cancel')}
-            className="h-9 rounded-lg border border-rose-300 bg-rose-50 text-xs text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="tl-danger-btn h-9"
           >
             {actionBusy === 'cancel' ? 'canceling...' : 'cancel'}
           </button>
         </footer>
       </section>
 
-      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50 p-3 lg:col-span-2 xl:col-span-1">
+      <section className="tl-card flex min-h-0 flex-col p-3 lg:col-span-2">
         <header className="mb-2">
           <h2 className="text-sm font-semibold text-slate-800">Timeline</h2>
           <p className="text-xs text-slate-500">task_events（2s polling）</p>
