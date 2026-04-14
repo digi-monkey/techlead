@@ -214,6 +214,7 @@ export default function App() {
   const endSession = useCallback(async () => {
     if (isEndingSession) return
     setIsEndingSession(true)
+    clearOutbox()
     try {
       const requestId = newRequestId()
       await apiRequest<JsonValue>('/sessions/current/end', controlAuth ?? null, {

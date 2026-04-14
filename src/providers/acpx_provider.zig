@@ -1,8 +1,24 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const config = @import("../config.zig");
 const provider_api = @import("provider.zig");
 const ui = @import("../ui.zig");
 const utils = @import("../utils.zig");
+
+const ACPX_EXEC_TIMEOUT_SECONDS: u64 = 2 * 60 * 60;
+const WATCHDOG_POLL_NS: u64 = 250 * std.time.ns_per_ms;
+
+const ProcessWatchdogState = struct {
+    mutex: std.Thread.Mutex = .{},
+    done: bool = false,
+    timed_out: bool = false,
+};
+
+const ProcessWatchdogArgs = struct {
+    child_id: std.process.Child.Id,
+    timeout_seconds: u64,
+    state: *ProcessWatchdogState,
+};
 
 /// Provider backed by `acpx` — the unified ACP CLI client.
 /// All agent execution is delegated to acpx, which manages
@@ -85,6 +101,16 @@ fn execAcpx(
 
     try child.spawn();
 
+    var watchdog_state = ProcessWatchdogState{};
+    const watchdog_thread = if (ACPX_EXEC_TIMEOUT_SECONDS > 0)
+        std.Thread.spawn(.{}, killChildAfterTimeout, .{ProcessWatchdogArgs{
+            .child_id = child.id,
+            .timeout_seconds = ACPX_EXEC_TIMEOUT_SECONDS,
+            .state = &watchdog_state,
+        }}) catch null
+    else
+        null;
+
     // Read stderr in background thread
     const stderr_thread = try std.Thread.spawn(.{}, readPipeToFileAndDebug, .{ child.stderr.?, log_file });
 
@@ -102,11 +128,53 @@ fn execAcpx(
     stderr_thread.join();
     const term = try child.wait();
 
+    watchdog_state.mutex.lock();
+    watchdog_state.done = true;
+    const timed_out = watchdog_state.timed_out;
+    watchdog_state.mutex.unlock();
+    if (watchdog_thread) |thread| thread.join();
+
     const success = (term == .Exited and term.Exited == 0);
     if (!success) {
-        ui.logError("acpx 执行失败 (label={s})", .{log_label});
+        if (timed_out) {
+            ui.logError("acpx 执行超时并已终止 (label={s}, timeout={d}s)", .{ log_label, ACPX_EXEC_TIMEOUT_SECONDS });
+        } else {
+            ui.logError("acpx 执行失败 (label={s})", .{log_label});
+        }
     }
     return .{ .success = success };
+}
+
+fn killChildAfterTimeout(args: ProcessWatchdogArgs) void {
+    const timeout_ns = args.timeout_seconds * std.time.ns_per_s;
+    var elapsed_ns: u64 = 0;
+
+    while (elapsed_ns < timeout_ns) {
+        args.state.mutex.lock();
+        const done = args.state.done;
+        args.state.mutex.unlock();
+        if (done) return;
+
+        const remaining = timeout_ns - elapsed_ns;
+        const sleep_ns = @min(remaining, WATCHDOG_POLL_NS);
+        std.Thread.sleep(sleep_ns);
+        elapsed_ns += sleep_ns;
+    }
+
+    args.state.mutex.lock();
+    const already_done = args.state.done;
+    args.state.mutex.unlock();
+    if (already_done) return;
+
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+        return;
+    }
+
+    std.posix.kill(args.child_id, std.posix.SIG.KILL) catch {};
+
+    args.state.mutex.lock();
+    args.state.timed_out = true;
+    args.state.mutex.unlock();
 }
 
 fn readPipeToFileAndDebug(pipe: std.fs.File, log_file: std.fs.File) void {

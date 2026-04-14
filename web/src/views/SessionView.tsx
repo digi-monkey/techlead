@@ -109,7 +109,7 @@ export function SessionView(props: SessionViewProps) {
     }
   }, [hasSession, sessionStatus, onEndSession, onStartSession])
 
-  const isToggleBusy = isSessionBusy || isStartingSession || isEndingSession
+  const isToggleBusy = isStartingSession || isEndingSession
   const showEnd = hasSession && sessionStatus !== 'ended'
 
   const headerRight = useMemo(
