@@ -83,14 +83,14 @@ export function CreateTaskModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="relative flex h-[92dvh] max-h-[92dvh] w-full flex-col rounded-t-2xl bg-white p-4 shadow-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="relative flex h-[92dvh] max-h-[92dvh] w-full flex-col rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl sm:p-6">
         
         <header className="mb-4 flex items-center justify-between shrink-0">
-          <h2 className="text-lg font-semibold text-slate-800">Create New Task</h2>
+          <h2 className="text-lg font-semibold text-slate-800">Create Task</h2>
           <button 
             onClick={onClose}
-            className="rounded-full p-2 text-slate-400 transition hover:text-slate-600"
+            className="tl-soft-btn rounded-full p-2 text-slate-500"
           >
             ✕
           </button>
@@ -104,25 +104,24 @@ export function CreateTaskModal({
 
         <div className="flex-1 space-y-6 overflow-y-auto pr-1 sm:pr-2">
           {/* Smart Draft Area */}
-          <section className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-2 opacity-10">✨</div>
-            <div className="flex flex-col gap-3 relative z-10">
+          <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+            <div className="flex flex-col gap-3">
               <label className="text-sm font-medium text-slate-700">Smart Draft</label>
               <textarea
-                className="min-h-20 w-full rounded-lg border border-blue-200 bg-white p-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="tl-textarea min-h-20"
                 placeholder="E.g., Implement a quick sort algorithm in utils.js..."
                 value={intent}
                 onChange={(e) => setIntent(e.target.value)}
               />
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="flex flex-wrap rounded-lg border border-blue-200 bg-white p-1">
+                <div className="flex flex-wrap rounded-lg border border-slate-200 bg-white p-1">
                   {['opencode', 'codex', 'claude'].map(p => (
                     <button
                       key={p}
                       onClick={() => setProvider(p)}
                       className={`rounded-md px-3 py-2 text-xs font-medium transition ${
                         provider === p
-                          ? 'bg-blue-100 text-blue-700 shadow-sm'
+                          ? 'bg-slate-900 text-white shadow-sm'
                           : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
                       }`}
                     >
@@ -133,11 +132,11 @@ export function CreateTaskModal({
                 <button
                   onClick={handleDraft}
                   disabled={drafting || !intent.trim()}
-                  className="ml-auto flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
+                  className="tl-primary-btn ml-auto flex h-10 items-center gap-2"
                 >
                   {drafting ? (
-                    <span className="animate-spin text-lg">⚙️</span>
-                  ) : '✨ Generate Detailed Task'}
+                    <span className="animate-spin text-lg">◌</span>
+                  ) : 'Generate Draft'}
                 </button>
               </div>
             </div>
@@ -149,7 +148,7 @@ export function CreateTaskModal({
               <label className="mb-1 block text-sm font-medium text-slate-700">Title</label>
               <input
                 type="text"
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-blue-500 focus:bg-white transition"
+                className="tl-input"
                 placeholder="Task title..."
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -159,7 +158,7 @@ export function CreateTaskModal({
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Prompt (Task Details)</label>
               <textarea
-                className="min-h-40 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-mono outline-none transition focus:border-blue-500 focus:bg-white"
+                className="tl-textarea min-h-40 font-mono"
                 placeholder="Detailed instructions for the AI..."
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -172,7 +171,7 @@ export function CreateTaskModal({
                 type="number"
                 min="0"
                 max="10"
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm outline-none transition focus:border-blue-500 focus:bg-white sm:w-32"
+                className="tl-input sm:w-32"
                 value={maxRetries}
                 onChange={(e) => setMaxRetries(parseInt(e.target.value) || 0)}
               />
@@ -183,14 +182,14 @@ export function CreateTaskModal({
         <footer className="mt-6 flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 pt-4 pb-[env(safe-area-inset-bottom)]">
           <button
             onClick={onClose}
-            className="h-10 rounded-lg px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+            className="tl-soft-btn h-10"
           >
             Cancel
           </button>
           <button
             onClick={handleCreate}
             disabled={creating || !title.trim() || !prompt.trim()}
-            className="h-10 rounded-lg bg-slate-800 px-5 text-sm font-medium text-white shadow transition hover:bg-slate-900 disabled:opacity-50"
+            className="tl-primary-btn h-10 px-5 text-sm"
           >
             {creating ? 'Creating...' : 'Create Task'}
           </button>

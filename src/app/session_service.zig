@@ -98,6 +98,23 @@ pub fn endSession(allocator: Allocator, target_dir: []const u8) !EndSessionResul
     return .{ .status = "ended" };
 }
 
+pub fn getCurrentInFlightRequestId(allocator: Allocator, target_dir: []const u8) !?[]u8 {
+    g_session_ops_mutex.lock();
+    defer g_session_ops_mutex.unlock();
+
+    var store = try getStore(allocator, target_dir);
+    const maybe_session = try store.getCurrentSession();
+    if (maybe_session == null) return null;
+
+    var session = maybe_session.?;
+    defer session.deinit(store.allocator);
+
+    if (!std.mem.eql(u8, session.status, "processing")) return null;
+    const rid = session.in_flight_request_id orelse return null;
+    if (rid.len == 0) return null;
+    return try allocator.dupe(u8, rid);
+}
+
 pub fn sendMessage(allocator: Allocator, target_dir: []const u8, text: []const u8, request_id: []const u8) !SendMessageResult {
     const queued = try enqueueMessage(allocator, target_dir, text, request_id);
     if (!queued.accepted) {
@@ -213,6 +230,12 @@ pub fn processInFlightMessage(allocator: Allocator, target_dir: []const u8, requ
     };
     errdefer allocator.free(assistant.reply);
     defer if (assistant.provider_session_id) |sid| allocator.free(sid);
+
+    // The in-flight request may have been canceled/ended by another process
+    // while provider execution was running; never overwrite newer session state.
+    if (!try isCurrentRequestStillInFlight(store, session.session_id, rid)) {
+        return error.SessionNoLongerInFlight;
+    }
 
     _ = try store.addMessage(session.session_id, "assistant", assistant.reply, rid);
     if (assistant.provider_session_id) |sid| {
@@ -605,6 +628,22 @@ fn jsonValueAsString(v: std.json.Value) ?[]const u8 {
 
 fn isSessionWritableStatus(status: []const u8) bool {
     return std.mem.eql(u8, status, "active") or std.mem.eql(u8, status, "error") or std.mem.eql(u8, status, "processing");
+}
+
+fn isCurrentRequestStillInFlight(
+    store: *sqlite_session_store.SqliteSessionStore,
+    session_id: []const u8,
+    request_id: []const u8,
+) !bool {
+    const latest_opt = try store.getSession(session_id);
+    if (latest_opt == null) return false;
+
+    var latest = latest_opt.?;
+    defer latest.deinit(store.allocator);
+
+    if (!std.mem.eql(u8, latest.status, "processing")) return false;
+    const latest_rid = latest.in_flight_request_id orelse return false;
+    return std.mem.eql(u8, latest_rid, request_id);
 }
 
 fn extractThreadIdFromJsonl(stdout_jsonl: []const u8) ?[]const u8 {

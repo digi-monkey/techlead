@@ -18,7 +18,7 @@ export function ProjectSelector({ projects, selectedId, onSelect, loading, disab
           value={selectedId || ''}
           onChange={(e) => onSelect(e.target.value)}
           disabled={loading || disabled || projects.length === 0}
-          className="h-9 appearance-none rounded-lg border border-slate-300 bg-white pl-3 pr-10 text-sm text-slate-700 outline-none focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
+          className="tl-select appearance-none pl-3 pr-10 text-sm"
         >
           {projects.length === 0 ? (
             <option value="">No projects</option>

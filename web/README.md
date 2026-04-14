@@ -16,7 +16,7 @@ zig build run -- observe start --dir /path/to/project --host 0.0.0.0 --port 7788
 2. 启动前端
 
 ```bash
-cd web/observe-ui
+cd web
 pnpm install
 pnpm dev
 ```

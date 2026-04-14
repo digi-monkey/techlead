@@ -54,7 +54,7 @@ export function ProjectList({ observeAuth, onViewProject }: ProjectListProps) {
 
   if (loading && projects.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="tl-card flex h-full items-center justify-center p-8">
         <div className="text-center">
           <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600"></div>
           <p className="text-sm text-slate-500">Loading projects...</p>
@@ -64,9 +64,9 @@ export function ProjectList({ observeAuth, onViewProject }: ProjectListProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto px-2 py-4">
+    <div className="tl-card h-full overflow-y-auto p-4 sm:p-5">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold text-slate-800">Projects</h1>
+        <h1 className="text-xl font-semibold text-slate-800">Projects</h1>
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-500">{projects.length} projects</span>
         </div>
@@ -84,19 +84,19 @@ export function ProjectList({ observeAuth, onViewProject }: ProjectListProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search projects..."
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-500"
+          className="tl-input"
         />
       </div>
 
       {filteredProjects.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
           {search ? (
             <>
               <p className="text-sm text-slate-500">No projects match &quot;{search}&quot;</p>
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                className="mt-2 text-xs text-slate-600 hover:text-slate-800"
+                className="tl-soft-btn mt-3"
               >
                 Clear search
               </button>

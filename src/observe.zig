@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const http = std.http;
 
 const config = @import("config.zig");
@@ -19,8 +20,11 @@ const BOOTSTRAP_TTL_SECONDS: i64 = 60;
 const SHARE_BOOTSTRAP_TTL_SECONDS: i64 = 10 * 60;
 const AUTH_COOKIE_OBSERVE = "tl_observe";
 const AUTH_COOKIE_CONTROL = "tl_control";
-const OBSERVE_UI_DIST_DIR = "web/observe-ui/dist";
-var g_session_worker_requests: std.StringHashMapUnmanaged(void) = .empty;
+const OBSERVE_UI_DIST_DIR = "web/dist";
+const SessionWorkerRegistryEntry = struct {
+    child_id: ?std.process.Child.Id = null,
+};
+var g_session_worker_requests: std.StringHashMapUnmanaged(SessionWorkerRegistryEntry) = .empty;
 var g_session_worker_mutex: std.Thread.Mutex = .{};
 const SESSION_WORKER_EXIT_REASON = "SessionWorkerExitedNonZero";
 
@@ -1255,6 +1259,21 @@ fn handleSessionEnd(ctx: *ServerContext, req: *http.Server.Request) !void {
         if (isDuplicateRequestId(ctx, rid)) return respondJson(req, .conflict, "{\"error\":\"duplicate_request_id\"}");
     }
 
+    const in_flight_request_id = session_service.getCurrentInFlightRequestId(ctx.allocator, ctx.base_dir) catch |err| blk: {
+        ui.logWarn("session in-flight lookup failed before end: {any}", .{err});
+        break :blk null;
+    };
+    defer if (in_flight_request_id) |rid| ctx.allocator.free(rid);
+
+    if (in_flight_request_id) |rid| {
+        if (terminateSessionWorker(rid)) {
+            ui.logInfo("session worker interrupted for request_id={s}", .{rid});
+        }
+        session_service.failInFlightMessage(ctx.allocator, ctx.base_dir, rid, "SessionInterruptedByUser") catch |err| {
+            ui.logWarn("session in-flight fail marker failed: {any}", .{err});
+        };
+    }
+
     const end_result = session_service.endSession(ctx.allocator, ctx.base_dir) catch |err| {
         ui.logWarn("session end failed: {any}", .{err});
         return respondJson(req, .bad_request, "{\"error\":\"session_end_failed\"}");
@@ -1308,26 +1327,11 @@ fn handleSessionMessage(ctx: *ServerContext, req: *http.Server.Request) !void {
 
     if (queue_result.accepted) {
         const started = startSessionMessageWorker(ctx.allocator, ctx.base_dir, rid) catch |spawn_err| {
-            ui.logWarn("session worker spawn failed, fallback sync: {any}", .{spawn_err});
-            const send_result = session_service.processInFlightMessage(ctx.allocator, ctx.base_dir, rid) catch |err| {
-                ui.logWarn("session send failed after fallback: {any}", .{err});
-                return respondJson(req, .bad_request, "{\"error\":\"session_send_failed\"}");
+            ui.logWarn("session worker spawn failed: {any}", .{spawn_err});
+            session_service.failInFlightMessage(ctx.allocator, ctx.base_dir, rid, "SessionWorkerSpawnFailed") catch |err| {
+                ui.logWarn("session enqueue rollback failed after spawn error: {any}", .{err});
             };
-            defer if (send_result.reply) |reply| ctx.allocator.free(reply);
-            const sync_body = if (send_result.reply) |reply|
-                try std.fmt.allocPrint(
-                    ctx.allocator,
-                    "{{\"ok\":true,\"status\":\"{s}\",\"deduplicated\":{{}},\"reply\":\"{s}\"}}",
-                    .{ send_result.status, reply },
-                )
-            else
-                try std.fmt.allocPrint(
-                    ctx.allocator,
-                    "{{\"ok\":true,\"status\":\"{s}\",\"deduplicated\":{{}},\"reply\":null}}",
-                    .{send_result.status},
-                );
-            defer ctx.allocator.free(sync_body);
-            return respondJson(req, .ok, sync_body);
+            return respondJson(req, .service_unavailable, "{\"error\":\"session_worker_spawn_failed\"}");
         };
         if (!started) {
             ui.logWarn("session worker already running for request_id={s}", .{rid});
@@ -2195,8 +2199,39 @@ fn registerSessionWorker(request_id: []const u8) !?[]const u8 {
     if (g_session_worker_requests.contains(request_id)) return null;
     const key = try std.heap.c_allocator.dupe(u8, request_id);
     errdefer std.heap.c_allocator.free(key);
-    try g_session_worker_requests.put(std.heap.c_allocator, key, {});
+    try g_session_worker_requests.put(std.heap.c_allocator, key, .{});
     return key;
+}
+
+fn setSessionWorkerChildId(request_id: []const u8, child_id: std.process.Child.Id) void {
+    g_session_worker_mutex.lock();
+    defer g_session_worker_mutex.unlock();
+
+    if (g_session_worker_requests.getPtr(request_id)) |entry| {
+        entry.child_id = child_id;
+    }
+}
+
+fn terminateSessionWorker(request_id: []const u8) bool {
+    g_session_worker_mutex.lock();
+    const entry = g_session_worker_requests.get(request_id);
+    g_session_worker_mutex.unlock();
+
+    if (entry == null) return false;
+    const child_id = entry.?.child_id orelse return false;
+
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+        return false;
+    }
+
+    std.posix.kill(child_id, std.posix.SIG.KILL) catch |err| switch (err) {
+        error.ProcessNotFound => return false,
+        else => {
+            ui.logWarn("session worker kill failed for request_id={s}: {any}", .{ request_id, err });
+            return false;
+        },
+    };
+    return true;
 }
 
 fn unregisterSessionWorker(request_id: []const u8) void {
@@ -2241,6 +2276,7 @@ fn startSessionMessageWorker(allocator: Allocator, target_dir: []const u8, reque
     // Setting child.cwd = target_dir would cause path doubling since
     // processInFlightMessage joins target_dir with .techlead/ again.
     try child.spawn();
+    setSessionWorkerChildId(tracked_request_id, child.id);
 
     const target_dir_copy = try std.heap.c_allocator.dupe(u8, target_dir);
     errdefer std.heap.c_allocator.free(target_dir_copy);

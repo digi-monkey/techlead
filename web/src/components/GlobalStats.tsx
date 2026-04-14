@@ -10,7 +10,7 @@ export function GlobalStats({ summary, loading }: GlobalStatsProps) {
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="animate-pulse rounded-xl bg-slate-100 p-4">
+          <div key={i} className="animate-pulse rounded-xl border border-slate-200 bg-white p-4">
             <div className="h-4 w-16 rounded bg-slate-200"></div>
             <div className="mt-2 h-8 w-12 rounded bg-slate-200"></div>
           </div>
@@ -35,7 +35,7 @@ export function GlobalStats({ summary, loading }: GlobalStatsProps) {
       {stats.map((stat) => (
         <div
           key={stat.label}
-          className="rounded-xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-sm"
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
         >
           <p className="text-xs font-medium text-slate-500">{stat.label}</p>
           <p className={`mt-1 text-2xl font-semibold ${stat.color}`}>{stat.value}</p>

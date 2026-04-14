@@ -109,7 +109,7 @@ export function SessionView(props: SessionViewProps) {
     }
   }, [hasSession, sessionStatus, onEndSession, onStartSession])
 
-  const isToggleBusy = isSessionBusy || isStartingSession || isEndingSession
+  const isToggleBusy = isStartingSession || isEndingSession
   const showEnd = hasSession && sessionStatus !== 'ended'
 
   const headerRight = useMemo(
@@ -122,7 +122,7 @@ export function SessionView(props: SessionViewProps) {
         <select
           value={sessionProvider}
           onChange={(e) => onSessionProviderChange(e.target.value as SessionProvider)}
-          className="h-7 rounded-lg bg-slate-100 px-2 text-xs font-medium text-slate-600 outline-none transition-colors hover:bg-slate-200 focus:bg-slate-200"
+          className="tl-select h-8 min-h-0 w-auto px-2 text-xs font-medium"
           title="Session provider"
         >
           <option value="codex">codex</option>
@@ -132,10 +132,10 @@ export function SessionView(props: SessionViewProps) {
           type="button"
           onClick={handleSessionToggle}
           disabled={isToggleBusy}
-          className={`flex h-7 items-center justify-center rounded-lg px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`flex h-8 items-center justify-center px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
             showEnd
-              ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
-              : 'bg-slate-900 text-white hover:bg-slate-800'
+              ? 'tl-danger-btn'
+              : 'tl-soft-btn'
           } ${isStartingSession || isEndingSession ? 'w-auto whitespace-nowrap' : 'w-7'}`}
           title={showEnd ? 'End session' : 'New session'}
         >
@@ -164,9 +164,9 @@ export function SessionView(props: SessionViewProps) {
     <Panel title={panelTitle} right={headerRight}>
       <div className="flex h-full flex-col">
 
-        <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-0.5 py-1">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto py-1">
           {chatItems.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-400">No messages yet</div>
+            <div className="flex h-full items-center justify-center text-sm text-slate-400">No messages yet. Start with a clear goal.</div>
           ) : (
             chatItems.map((item) => {
               if (item.type === 'pending') {
@@ -182,7 +182,7 @@ export function SessionView(props: SessionViewProps) {
         <div className="mt-3 pt-2">
           <div className="relative">
             <textarea
-              className="min-h-25 w-full resize-none rounded-2xl bg-slate-100 px-4 py-3 pr-14 text-base text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-70 sm:text-sm"
+              className="tl-textarea min-h-25 pr-14 text-sm placeholder:text-slate-400"
               value={sessionInput}
               onChange={(e) => onSessionInputChange(e.target.value)}
               placeholder={!hasSession ? 'Create a new session first...' : sessionStatus === 'ended' ? 'Session ended. Start a new one.' : isSessionBusy ? 'Agent is thinking...' : 'Type your message...'}
@@ -198,12 +198,10 @@ export function SessionView(props: SessionViewProps) {
               type="button"
               onClick={onSendMessage}
               disabled={!canSend || sessionInput.trim().length === 0}
-              className="absolute right-2 bottom-2 flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm transition-all hover:scale-105 hover:bg-slate-800 active:scale-95 disabled:scale-100 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+              className="tl-primary-btn absolute right-2 bottom-2 h-8 px-3 text-[11px]"
               title="Send message"
             >
-              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4.5 10h11M12.5 7l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              Send
             </button>
           </div>
         </div>

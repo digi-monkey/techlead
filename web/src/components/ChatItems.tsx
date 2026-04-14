@@ -19,14 +19,18 @@ export const ChatMessageItem = memo(function ChatMessageItem({ item, defaultProv
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[90%] rounded-2xl px-4 py-3 md:max-w-[75%] ${
-          isUser ? 'bg-slate-900 text-white' : isSystem ? 'bg-amber-100 text-amber-900' : 'bg-slate-50 text-slate-800'
+        className={`max-w-[90%] rounded-md border px-3 py-2 md:max-w-[78%] ${
+          isUser
+            ? 'border-slate-800 bg-slate-900 text-white'
+            : isSystem
+              ? 'border-amber-200 bg-amber-50 text-amber-900'
+              : 'border-slate-200 bg-white text-slate-800'
         }`}
       >
         <div className={`mb-1 text-[11px] ${isUser ? 'text-slate-300' : 'text-slate-500'}`}>
           {roleLabel || 'unknown'} · {ts}
         </div>
-        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.content}</div>
+        <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed">{item.content}</div>
       </div>
     </div>
   )
@@ -42,10 +46,10 @@ export const ChatPendingItem = memo(function ChatPendingItem({ item, onRetry }: 
 
   return (
     <div className="flex justify-end">
-      <div className="max-w-[90%] rounded-2xl bg-slate-700/50 px-4 py-3 text-white/90 md:max-w-[75%]">
+      <div className="max-w-[90%] rounded-md border border-slate-300 bg-slate-700 px-3 py-2 text-white/90 md:max-w-[78%]">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-slate-300">
           <span>you</span>
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
           <span>{statusText}</span>
           {item.state === 'failed' ? (
             <button
@@ -57,7 +61,7 @@ export const ChatPendingItem = memo(function ChatPendingItem({ item, onRetry }: 
             </button>
           ) : null}
         </div>
-        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed opacity-80">{item.text}</div>
+        <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed opacity-80">{item.text}</div>
       </div>
     </div>
   )
@@ -72,7 +76,7 @@ export const ChatTypingIndicator = memo(function ChatTypingIndicator({ show }: C
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[90%] rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 md:max-w-[75%]">
+      <div className="max-w-[90%] rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 md:max-w-[78%]">
         <div className="mb-1 text-[11px] text-slate-500">assistant · typing</div>
         <div className="flex items-center gap-1.5">
           <span className="typing-dot" />

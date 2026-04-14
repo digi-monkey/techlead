@@ -214,6 +214,7 @@ export default function App() {
   const endSession = useCallback(async () => {
     if (isEndingSession) return
     setIsEndingSession(true)
+    clearOutbox()
     try {
       const requestId = newRequestId()
       await apiRequest<JsonValue>('/sessions/current/end', controlAuth ?? null, {
@@ -273,17 +274,17 @@ export default function App() {
   })
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-425 flex-col">
-      <header className="sticky top-0 z-20 bg-slate-900 py-3 text-white">
-        <div className="flex items-center justify-between gap-2 px-3 sm:px-4">
+    <div className="tl-shell">
+      <header className="tl-topbar">
+        <div className="tl-topbar-inner">
           <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold sm:text-lg">techlead</h1>
-            <nav className="flex items-center gap-1 rounded-lg bg-slate-800 p-1">
+            <h1 className="tl-brand">techlead</h1>
+            <nav className="tl-nav">
               <button
                 type="button"
                 onClick={() => setMainView('session')}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  mainView === 'session' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
+                className={`tl-nav-btn ${
+                  mainView === 'session' ? 'is-active' : ''
                 }`}
               >
                 Session
@@ -291,8 +292,8 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setMainView('projects')}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  mainView === 'projects' || mainView === 'project-detail' ? 'bg-white text-slate-900' : 'text-slate-200 hover:bg-slate-700'
+                className={`tl-nav-btn ${
+                  mainView === 'projects' || mainView === 'project-detail' ? 'is-active' : ''
                 }`}
               >
                 Projects
@@ -309,7 +310,7 @@ export default function App() {
                   return next
                 })
               }}
-              className="rounded-xl bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 sm:px-3"
+              className="tl-soft-btn"
             >
               {showScanner ? 'Hide QR' : 'Scan QR'}
             </button>
@@ -317,7 +318,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowTokenDebug((v) => !v)}
-                className="rounded-xl bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 sm:px-3"
+                className="tl-soft-btn"
               >
                 {showTokenDebug ? 'Hide' : 'Debug'}
               </button>
@@ -326,13 +327,13 @@ export default function App() {
         </div>
 
         {showScanner ? (
-          <div className="mt-2 bg-slate-50 p-2 text-xs text-slate-700 sm:mt-3 sm:p-3">
+          <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-700 sm:px-4">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => void startScanner()}
                 disabled={scannerActive}
-                className="rounded-xl bg-white px-3 py-1.5 text-xs hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="tl-soft-btn"
               >
                 Start Camera
               </button>
@@ -340,7 +341,7 @@ export default function App() {
                 type="button"
                 onClick={() => stopScanner()}
                 disabled={!scannerActive}
-                className="rounded-xl bg-white px-3 py-1.5 text-xs hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="tl-soft-btn"
               >
                 Stop
               </button>
@@ -352,17 +353,17 @@ export default function App() {
               muted
               playsInline
               autoPlay
-              className={`mt-2 max-h-48 w-full rounded-xl bg-black object-cover sm:max-h-56 ${scannerActive ? '' : 'hidden'}`}
+              className={`mt-2 max-h-48 w-full border border-slate-200 bg-black object-cover sm:max-h-56 ${scannerActive ? '' : 'hidden'}`}
             />
           </div>
         ) : null}
 
         {isDebugBuild && showTokenDebug ? (
-          <div className="mt-2 grid gap-2 bg-slate-50 p-2 sm:mt-3 sm:grid-cols-2 sm:p-3">
+          <div className="grid gap-2 border-t border-slate-100 px-3 py-2 sm:grid-cols-2 sm:px-4">
             <label className="block text-xs font-medium text-slate-600">
               Observe Token
               <input
-                className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:bg-white"
+                className="tl-input mt-1"
                 value={observeToken}
                 onChange={(e) => setObserveToken(e.target.value.trim())}
                 placeholder="observe token"
@@ -371,7 +372,7 @@ export default function App() {
             <label className="block text-xs font-medium text-slate-600">
               Control Token
               <input
-                className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:bg-white"
+                className="tl-input mt-1"
                 value={controlToken}
                 onChange={(e) => setControlToken(e.target.value.trim())}
                 placeholder="control token"
@@ -381,7 +382,7 @@ export default function App() {
         ) : null}
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-0 pb-[env(safe-area-inset-bottom)] sm:px-4 sm:pt-4">
+      <main className="min-h-0 flex-1 overflow-y-auto px-2 py-2 pb-[env(safe-area-inset-bottom)] sm:px-3">
         {mainView === 'session' && (
           <SessionView
             sessionState={sessionState}
@@ -413,13 +414,13 @@ export default function App() {
           />
         )}
         {mainView === 'project-detail' && !selectedProjectId && (
-          <div className="flex h-full items-center justify-center">
+          <div className="tl-card flex h-full items-center justify-center p-8">
             <div className="text-center">
               <p className="text-sm text-slate-500">No project selected</p>
               <button
                 type="button"
                 onClick={() => setMainView('projects')}
-                className="mt-2 text-sm text-slate-600 hover:text-slate-800"
+                className="tl-soft-btn mt-3"
               >
                 View all projects
               </button>
