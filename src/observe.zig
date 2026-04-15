@@ -1030,9 +1030,15 @@ fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
     if (!authorizedControl(ctx, req)) return respondJson(req, .unauthorized, "{\"error\":\"unauthorized\"}");
     if (req.head.method != .POST) return respondJson(req, .bad_request, "{\"error\":\"method_not_allowed\"}");
 
-    _ = project_id; // Used for validation
-
-    const len_u64 = req.head.content_length orelse return respondJson(req, .bad_request, "{\"error\":\"missing_content_length\"}");
+    // Validate project
+    const project = validateProject(ctx, project_id) catch |err| switch (err) {
+        error.ProjectDisabled => return respondJson(req, .forbidden, "{\"error\":\"project_disabled\"}"),
+        else => return respondJson(req, .bad_request, "{\"error\":\"validation_failed\"}"),
+    };
+    if (project == null) {
+        return respondJson(req, .not_found, "{\"error\":\"project_not_found\"}");
+    }
+    defer if (project) |p| p.deinit(ctx.allocator);    const len_u64 = req.head.content_length orelse return respondJson(req, .bad_request, "{\"error\":\"missing_content_length\"}");
     if (len_u64 == 0 or len_u64 > 1024 * 1024) return respondJson(req, .bad_request, "{\"error\":\"invalid_body\"}");
 
     var buf: [1024]u8 = undefined;
@@ -1065,7 +1071,9 @@ fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
     , .{intent});
     defer ctx.allocator.free(prompt);
 
-    const tmp_path = try std.fmt.allocPrint(ctx.allocator, ".techlead/draft-prompt-{d}.txt", .{std.time.timestamp()});
+    const relative_path = try std.fmt.allocPrint(ctx.allocator, ".techlead/draft-prompt-{d}.txt", .{std.time.timestamp()});
+    defer ctx.allocator.free(relative_path);
+    const tmp_path = try std.fmt.allocPrint(ctx.allocator, "{s}/{s}", .{ project.?.work_dir, relative_path });
     defer ctx.allocator.free(tmp_path);
 
     const file = std.fs.cwd().createFile(tmp_path, .{ .truncate = true }) catch return respondJson(req, .internal_server_error, "{\"error\":\"fs_error\"}");
@@ -1073,7 +1081,8 @@ fn handleDraftTask(ctx: *ServerContext, req: *http.Server.Request, project_id: [
     file.close();
     defer std.fs.cwd().deleteFile(tmp_path) catch {};
 
-    var child = std.process.Child.init(&[_][]const u8{ "acpx", "--approve-all", provider, "exec", "--file", tmp_path }, ctx.allocator);
+    var child = std.process.Child.init(&[_][]const u8{ "acpx", "--approve-all", provider, "exec", "--file", relative_path }, ctx.allocator);
+    child.cwd = project.?.work_dir;
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
